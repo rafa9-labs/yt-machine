@@ -23,6 +23,10 @@ ENV/
 output/audio/*.mp3
 output/footage/*.mp4
 output/videos/*.mp4
+output/_tmp/
+output/assembly/
+output/images/
+output/projects/
 
 # IDE
 .vscode/
