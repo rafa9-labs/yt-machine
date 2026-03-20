@@ -105,19 +105,12 @@ def generate_pixel_art(prompt: str) -> dict:
             lora_prompt = full_prompt + ", pixelart style"
 
             result = fal_client.run(
-                "fal-ai/stable-diffusion-xl-lightning",
+                "fal-ai/flux/schnell",
                 arguments={
                     "prompt": lora_prompt,
                     "image_size": "portrait_4_3",
                     "num_inference_steps": 4,
                     "num_images": 1,
-                    "enable_safety_checker": False,
-                    "loras": [
-                        {
-                            "path": "https://huggingface.co/artificialguybr/PixelArtRedmond/resolve/main/PixelArtRedmond-Lite64.safetensors",
-                            "scale": 0.85
-                        }
-                    ]
                 }
             )
 
@@ -134,17 +127,32 @@ def generate_pixel_art(prompt: str) -> dict:
                 "filename": filename,
                 "path": str(output_path),
                 "prompt_used": lora_prompt,
-                "source": "fal-ai/stable-diffusion-xl-lightning",
-                "lora": "PixelArtRedmond",
-                "lora_scale": 0.85,
+                "source": "fal-ai/flux/schnell",
                 "image_url": image_url,
                 "output_directory": str(OUTPUT_DIR),
             }
 
         except Exception as e:
+            error_msg = str(e)
+            if "balance" in error_msg.lower() or "locked" in error_msg.lower():
+                print(f"⚠️  FAL.ai account balance exhausted. Using placeholder image.")
+                print(f"   Top up at: https://fal.ai/dashboard/billing")
+                
+                _generate_placeholder(prompt, output_path)
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "path": str(output_path),
+                    "prompt_used": full_prompt,
+                    "source": "placeholder",
+                    "note": "FAL.ai balance exhausted - placeholder generated. Top up at fal.ai/dashboard/billing",
+                    "size": "1024x1792",
+                    "output_directory": str(OUTPUT_DIR),
+                }
+            
             return {
                 "success": False,
-                "error": f"Fal.ai SDXL-Lightning generation failed: {str(e)}",
+                "error": f"Fal.ai generation failed: {error_msg}",
                 "fallback_used": False,
             }
 
