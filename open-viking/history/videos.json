@@ -1,0 +1,105 @@
+{
+  "videos": [
+    {
+      "id": 1,
+      "timestamp": "2026-03-19T18:13:01.603121",
+      "topic": "AI Breakthrough in Quantum Computing",
+      "script": {
+        "hook": "Scientists just achieved the impossible",
+        "body": "A new quantum AI system solved a problem that would take classical computers 10,000 years in just 3 minutes",
+        "twist": "But there's a catch - it only works at near absolute zero",
+        "cta": "Follow for more tech news"
+      },
+      "keywords": [
+        "AI",
+        "quantum computing",
+        "technology",
+        "science"
+      ],
+      "video_path": "/output/video_001.mp4",
+      "duration": 45,
+      "source_url": "https://example.com/news/quantum-ai",
+      "performance_metrics": {
+        "views": 125000,
+        "likes": 8500,
+        "shares": 1200,
+        "engagement_rate": 7.76
+      },
+      "platforms": [
+        "youtube",
+        "tiktok",
+        "instagram"
+      ],
+      "status": "published",
+      "last_performance_update": "2026-03-19T18:13:01.629656"
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-03-19T18:13:01.612424",
+      "topic": "Global Climate Summit Reaches Historic Agreement",
+      "script": {
+        "hook": "195 countries just agreed on something unprecedented",
+        "body": "The new climate accord mandates 80% renewable energy by 2035 with binding penalties",
+        "twist": "The biggest polluters actually led the charge this time",
+        "cta": "What do you think? Comment below"
+      },
+      "keywords": [
+        "climate",
+        "environment",
+        "politics",
+        "global"
+      ],
+      "video_path": "/output/video_002.mp4",
+      "duration": 48,
+      "source_url": "https://example.com/news/climate-summit",
+      "performance_metrics": {
+        "views": 89000,
+        "likes": 5200,
+        "shares": 780,
+        "engagement_rate": 6.72
+      },
+      "platforms": [
+        "youtube",
+        "instagram"
+      ],
+      "status": "published",
+      "last_performance_update": "2026-03-19T18:13:01.639361"
+    },
+    {
+      "id": 3,
+      "timestamp": "2026-03-19T18:13:01.620562",
+      "topic": "New Study: Coffee Extends Lifespan by 15%",
+      "script": {
+        "hook": "Your morning coffee might be saving your life",
+        "body": "Harvard researchers tracked 500,000 people for 20 years and found coffee drinkers lived significantly longer",
+        "twist": "But only if you drink it black - sugar negates the benefits",
+        "cta": "Are you a coffee person? Let me know"
+      },
+      "keywords": [
+        "health",
+        "science",
+        "coffee",
+        "lifestyle"
+      ],
+      "video_path": "/output/video_003.mp4",
+      "duration": 42,
+      "source_url": "https://example.com/news/coffee-study",
+      "performance_metrics": {
+        "views": 0,
+        "likes": 0,
+        "shares": 0,
+        "engagement_rate": 0.0
+      },
+      "platforms": [
+        "tiktok",
+        "instagram"
+      ],
+      "status": "generated"
+    }
+  ],
+  "metadata": {
+    "total_count": 3,
+    "last_updated": "2026-03-19T18:13:01.620562",
+    "version": "1.0"
+  }
+}

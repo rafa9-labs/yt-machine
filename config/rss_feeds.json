@@ -1,0 +1,57 @@
+{
+  "feeds": [
+    {
+      "name": "BBC News",
+      "url": "http://feeds.bbci.co.uk/news/rss.xml",
+      "category": "general",
+      "enabled": true
+    },
+    {
+      "name": "Reuters World",
+      "url": "https://www.reutersagency.com/feed/?taxonomy=best-topics&post_type=best",
+      "category": "world",
+      "enabled": true
+    },
+    {
+      "name": "TechCrunch",
+      "url": "https://techcrunch.com/feed/",
+      "category": "technology",
+      "enabled": true
+    },
+    {
+      "name": "The Verge",
+      "url": "https://www.theverge.com/rss/index.xml",
+      "category": "technology",
+      "enabled": true
+    },
+    {
+      "name": "Hacker News",
+      "url": "https://hnrss.org/frontpage",
+      "category": "technology",
+      "enabled": true
+    },
+    {
+      "name": "Science Daily",
+      "url": "https://www.sciencedaily.com/rss/all.xml",
+      "category": "science",
+      "enabled": true
+    },
+    {
+      "name": "NPR News",
+      "url": "https://feeds.npr.org/1001/rss.xml",
+      "category": "general",
+      "enabled": true
+    },
+    {
+      "name": "Associated Press",
+      "url": "https://rsshub.app/apnews/topics/apf-topnews",
+      "category": "general",
+      "enabled": true
+    }
+  ],
+  "settings": {
+    "max_age_hours": 24,
+    "min_virality_score": 3,
+    "max_articles_per_feed": 20
+  }
+}
