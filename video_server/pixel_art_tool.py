@@ -9,7 +9,7 @@ FAL_KEY = os.getenv("FAL_KEY")
 OUTPUT_DIR = Path(__file__).parent.parent / "output" / "images"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-STYLE_SUFFIX = "cinematic 16-bit pixel art, high contrast, tactical lighting, cyberpunk geopolitics"
+STYLE_SUFFIX = "true 16-bit pixel art, retro SNES style, isometric perspective, hard pixel edges, limited color palette, realistic military equipment proportions, flat colors, NO blur"
 
 def _generate_placeholder(prompt: str, output_path: Path) -> None:
     width, height = 1024, 1792
@@ -102,7 +102,7 @@ def generate_pixel_art(prompt: str) -> dict:
 
             os.environ["FAL_KEY"] = FAL_KEY
 
-            lora_prompt = full_prompt + ", pixelart style"
+            lora_prompt = full_prompt
 
             result = fal_client.run(
                 "fal-ai/flux/schnell",
