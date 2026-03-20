@@ -4,7 +4,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, List
 from mcp.server.fastmcp import FastMCP
-from moviepy import (
+from moviepy.editor import (
     VideoFileClip, AudioFileClip, concatenate_videoclips,
     CompositeVideoClip, ImageClip, TextClip, vfx
 )
@@ -54,7 +54,7 @@ def _make_hud_overlay(width: int, height: int, duration: float) -> ImageClip:
     draw.text((16, height - TICKER_H - 38), "● REC", font=font, fill=(255, 40, 40, 255))
     img.save(str(hud_path), format="PNG")
 
-    hud_clip = ImageClip(str(hud_path)).with_duration(duration)
+    hud_clip = ImageClip(str(hud_path)).set_duration(duration)
     return hud_clip
 
 
@@ -85,7 +85,7 @@ def _make_ticker(headlines: List[str], width: int, duration: float) -> Composite
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 0, width, 4], fill=(0, 200, 255, 255))
     img.save(str(bg_path), format="PNG")
-    bg_clip = ImageClip(str(bg_path)).with_duration(duration)
+    bg_clip = ImageClip(str(bg_path)).set_duration(duration)
     try:
         txt_clip = (
             TextClip(
@@ -96,10 +96,10 @@ def _make_ticker(headlines: List[str], width: int, duration: float) -> Composite
                 bg_color="transparent",
                 method="label",
             )
-            .with_duration(duration)
+            .set_duration(duration)
         )
         scroll_speed = 120
-        txt_clip = txt_clip.with_position(lambda t: (width - int(t * scroll_speed) % (txt_clip.w + width), 16))
+        txt_clip = txt_clip.set_position(lambda t: (width - int(t * scroll_speed) % (txt_clip.w + width), 16))
         ticker = CompositeVideoClip([bg_clip, txt_clip], size=(width, TICKER_H))
     except Exception:
         ticker = bg_clip
@@ -153,16 +153,16 @@ def build_final_video(
             if ext in (".mp4", ".mov", ".avi", ".mkv"):
                 clip = VideoFileClip(asset_path)
             elif ext in (".png", ".jpg", ".jpeg", ".bmp"):
-                clip = ImageClip(asset_path).with_duration(clip_dur)
+                clip = ImageClip(asset_path).set_duration(clip_dur)
             else:
                 continue
 
             if is_pixel_art:
-                clip = clip.with_effects([vfx.Resize(lambda t: 1.0 + 0.02 * t)])
+                clip = clip.fl(lambda gf, t: gf(t) * (1.0 + 0.02 * t))
 
-            clip = clip.resized(height=VIDEO_H)
+            clip = clip.resize(height=VIDEO_H)
             if clip.w > VIDEO_W:
-                clip = clip.resized(width=VIDEO_W)
+                clip = clip.resize(width=VIDEO_W)
 
             video_clips.append(clip)
 
@@ -170,20 +170,20 @@ def build_final_video(
             return {"success": False, "error": "No valid clips could be processed"}
 
         base = concatenate_videoclips(video_clips) if len(video_clips) > 1 else video_clips[0]
-        base = base.with_audio(audio_clip)
+        base = base.set_audio(audio_clip)
 
         layers = [base]
 
         if is_pixel_art:
             scanline_path = _make_scanline_overlay(base.w, base.h)
-            scanline_clip = ImageClip(str(scanline_path)).with_duration(total_dur)
+            scanline_clip = ImageClip(str(scanline_path)).set_duration(total_dur)
             layers.append(scanline_clip)
 
         hud = _make_hud_overlay(base.w, base.h, total_dur)
         layers.append(hud)
 
         ticker = _make_ticker(ticker_headlines, base.w, total_dur)
-        ticker = ticker.with_position((0, base.h - TICKER_H))
+        ticker = ticker.set_position((0, base.h - TICKER_H))
         layers.append(ticker)
 
         final_video = CompositeVideoClip(layers, size=(base.w, base.h))
