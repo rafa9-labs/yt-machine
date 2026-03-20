@@ -22,17 +22,107 @@ FPS = 24
 TICKER_H = 60
 HUD_FONT_SIZE = 22
 
+# Camera movement types for professional, studied patterns
+CAMERA_PATTERNS = {
+    'zoom_in': {'start_scale': 1.0, 'end_scale': 1.15},
+    'zoom_out': {'start_scale': 1.15, 'end_scale': 1.0},
+    'pan_right': {'start_x': -50, 'end_x': 0},
+    'pan_left': {'start_x': 0, 'end_x': -50}
+}
 
-def _make_scanline_overlay(width: int, height: int) -> Path:
-    overlay_path = TEMP_DIR / "scanline_overlay.png"
-    if overlay_path.exists():
-        return overlay_path
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    for y in range(0, height, 2):
-        draw.line([(0, y), (width, y)], fill=(0, 0, 0, 38))
-    img.save(str(overlay_path), format="PNG")
-    return overlay_path
+
+def _apply_camera_movement(clip: ImageClip, movement_type: str, duration: float) -> ImageClip:
+    """
+    Apply professional camera movement to image clip.
+    
+    Args:
+        clip: ImageClip to animate
+        movement_type: 'zoom_in', 'zoom_out', 'pan_right', or 'pan_left'
+        duration: Duration of the clip
+    
+    Returns:
+        Animated ImageClip with smooth camera movement
+    """
+    if movement_type == 'zoom_in':
+        # Smooth zoom in from 1.0 to 1.15 scale
+        return clip.resize(lambda t: 1.0 + 0.15 * (t / duration))
+    elif movement_type == 'zoom_out':
+        # Smooth zoom out from 1.15 to 1.0 scale
+        return clip.resize(lambda t: 1.15 - 0.15 * (t / duration))
+    elif movement_type == 'pan_right':
+        # Pan from left to right
+        return clip.set_position(lambda t: (int(-50 + 50 * (t / duration)), 'center'))
+    elif movement_type == 'pan_left':
+        # Pan from right to left
+        return clip.set_position(lambda t: (int(50 * (t / duration)), 'center'))
+    else:
+        return clip
+
+
+def _create_segment_captions(script_text: str, duration: float, width: int, height: int) -> List:
+    """
+    Create bold, centered captions that update every ~7 seconds.
+    Splits the script into timed segments for muted viewing.
+    
+    Args:
+        script_text: Full script text to split into segments
+        duration: Total video duration
+        width: Video width
+        height: Video height
+    
+    Returns:
+        List of TextClip objects with timing
+    """
+    import re
+    import math
+    
+    # Split into sentences first
+    sentences = re.split(r'[.!?]+\s*', script_text.strip())
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    if not sentences:
+        return []
+    
+    # Group sentences into ~7-second segments
+    segment_duration = 7.0
+    n_segments = max(1, math.floor(duration / segment_duration))
+    sentences_per_segment = max(1, math.ceil(len(sentences) / n_segments))
+    
+    segments = []
+    for i in range(0, len(sentences), sentences_per_segment):
+        chunk = sentences[i:i + sentences_per_segment]
+        segments.append(". ".join(chunk))
+    
+    # Recalculate actual segment duration based on real segment count
+    actual_seg_dur = duration / len(segments)
+    
+    caption_clips = []
+    for i, segment_text in enumerate(segments):
+        start_time = i * actual_seg_dur
+        
+        try:
+            txt_clip = TextClip(
+                font="Arial-Bold",
+                text=segment_text,
+                font_size=30,
+                color="white",
+                stroke_color="black",
+                stroke_width=3,
+                method="caption",
+                size=(width - 60, None),
+                align="center"
+            )
+            
+            txt_clip = txt_clip.set_position(("center", height - TICKER_H - 140))
+            txt_clip = txt_clip.set_start(start_time)
+            txt_clip = txt_clip.set_duration(actual_seg_dur)
+            
+            caption_clips.append(txt_clip)
+        except Exception as e:
+            print(f"Warning: Could not create caption for segment {i}: {e}")
+            continue
+    
+    return caption_clips
 
 
 def _make_hud_overlay(width: int, height: int, duration: float) -> ImageClip:
@@ -46,7 +136,7 @@ def _make_hud_overlay(width: int, height: int, duration: float) -> ImageClip:
         font = ImageFont.load_default()
         font_sm = font
     draw.rectangle([8, 8, width - 8, 44], fill=(0, 0, 0, 140), outline=(0, 200, 255, 180), width=1)
-    draw.text((16, 14), "SENTINEL v2.1  |  TACTICAL BRIEFING", font=font_sm, fill=(0, 200, 255, 220))
+    draw.text((16, 14), "SENTINEL v2.3  |  TACTICAL BRIEFING", font=font_sm, fill=(0, 200, 255, 220))
     timecode = "MAR 20 2026  UTC"
     draw.text((width - 16, 14), timecode, font=font_sm, fill=(0, 200, 255, 220), anchor="ra")
     draw.rectangle([8, height - TICKER_H - 44, 110, height - TICKER_H - 12],
@@ -81,9 +171,9 @@ def _make_ticker(headlines: List[str], width: int, duration: float) -> Composite
     joined  = "   ★   ".join(h.upper() for h in headlines) + "   ★   "
     joined  = (joined + "   ") * 4
     bg_path = TEMP_DIR / "ticker_bg.png"
-    img = Image.new("RGBA", (width, TICKER_H), (0, 0, 0, 200))
+    img = Image.new("RGBA", (width, TICKER_H), (0, 0, 0, 255))
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, width, 4], fill=(0, 200, 255, 255))
+    draw.rectangle([0, 0, width, 4], fill=(255, 255, 255, 255))
     img.save(str(bg_path), format="PNG")
     bg_clip = ImageClip(str(bg_path)).set_duration(duration)
     try:
@@ -112,18 +202,20 @@ def build_final_video(
     asset_paths: List[str],
     ticker_headlines: Optional[List[str]] = None,
     is_pixel_art: bool = True,
-    output_filename: Optional[str] = None
+    output_filename: Optional[str] = None,
+    script_text: Optional[str] = None
 ) -> dict:
     """
-    Assemble Sentinel Tactical Briefing video using MoviePy 2.0.
-    Optimised for 6-image sequences at ~7-8 seconds per image (45s total).
+    Assemble Sentinel v2.2 TikTok/Shorts optimized video using MoviePy 2.0.
+    Optimised for 3-image sequences at ~20 seconds per image (60s total).
 
     Args:
         audio_path:       Path to .mp3 voiceover file
-        asset_paths:      List of paths to video clips or images (ideally 6)
+        asset_paths:      List of paths to video clips or images (ideally 3)
         ticker_headlines: Up to 3 short news ticker strings for the scrolling marquee
-        is_pixel_art:     Apply Ken Burns zoom + CRT scanline effects (default True)
+        is_pixel_art:     Apply professional camera movements (default True)
         output_filename:  Custom output filename (default: auto-generated)
+        script_text:      Optional script text for sentence-by-sentence subtitles
 
     Returns:
         dict with success status, output path, and metadata
@@ -147,8 +239,15 @@ def build_final_video(
         n_assets     = max(len(asset_paths), 1)
         clip_dur     = max(total_dur / n_assets, 7.0)
         video_clips  = []
+        
+        # Dynamic camera: zoom_out first (reveals scale), rest randomized
+        import random
+        all_movements = ['zoom_in', 'zoom_out', 'pan_right', 'pan_left']
+        camera_movements = ['zoom_out']  # First image always zoom_out
+        for _ in range(max(0, n_assets - 1)):
+            camera_movements.append(random.choice(all_movements))
 
-        for asset_path in asset_paths:
+        for idx, asset_path in enumerate(asset_paths):
             ext = Path(asset_path).suffix.lower()
             if ext in (".mp4", ".mov", ".avi", ".mkv"):
                 clip = VideoFileClip(asset_path)
@@ -157,8 +256,10 @@ def build_final_video(
             else:
                 continue
 
-            if is_pixel_art:
-                clip = clip.fl(lambda gf, t: gf(t) * (1.0 + 0.02 * t))
+            # Apply dynamic camera movement
+            if is_pixel_art and idx < len(camera_movements):
+                movement = camera_movements[idx]
+                clip = _apply_camera_movement(clip, movement, clip_dur)
 
             clip = clip.resize(height=VIDEO_H)
             if clip.w > VIDEO_W:
@@ -174,10 +275,10 @@ def build_final_video(
 
         layers = [base]
 
-        if is_pixel_art:
-            scanline_path = _make_scanline_overlay(base.w, base.h)
-            scanline_clip = ImageClip(str(scanline_path)).set_duration(total_dur)
-            layers.append(scanline_clip)
+        # Add 7-second segment captions if script text provided
+        if script_text:
+            caption_clips = _create_segment_captions(script_text, total_dur, base.w, base.h)
+            layers.extend(caption_clips)
 
         hud = _make_hud_overlay(base.w, base.h, total_dur)
         layers.append(hud)
@@ -214,7 +315,9 @@ def build_final_video(
 
         effects = []
         if is_pixel_art:
-            effects += ["ken_burns_zoom", "crt_scanlines"]
+            effects += ["random_camera_movements"]
+        if script_text:
+            effects += ["segment_captions"]
         effects += ["ticker_marquee", "hud_overlay"]
 
         return {
