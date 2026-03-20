@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, List
 from mcp.server.fastmcp import FastMCP
 from moviepy.editor import (
+from moviepy.editor import (
     VideoFileClip, AudioFileClip, concatenate_videoclips,
     CompositeVideoClip, ImageClip, TextClip, vfx
 )
@@ -152,6 +153,7 @@ def _make_hud_overlay(width: int, height: int, duration: float, era: str = "2020
     img.save(str(hud_path), format="PNG")
 
     hud_clip = ImageClip(str(hud_path)).set_duration(duration)
+    hud_clip = ImageClip(str(hud_path)).set_duration(duration)
     return hud_clip
 
 
@@ -194,8 +196,10 @@ def _make_ticker(headlines: List[str], width: int, duration: float) -> Composite
                 method="label",
             )
             .set_duration(duration)
+            .set_duration(duration)
         )
         scroll_speed = 120
+        txt_clip = txt_clip.set_position(lambda t: (width - int(t * scroll_speed) % (txt_clip.w + width), 16))
         txt_clip = txt_clip.set_position(lambda t: (width - int(t * scroll_speed) % (txt_clip.w + width), 16))
         ticker = CompositeVideoClip([bg_clip, txt_clip], size=(width, TICKER_H))
     except Exception:
@@ -265,10 +269,8 @@ def build_final_video(
             else:
                 continue
 
-            # Apply dynamic camera movement
-            if is_pixel_art and idx < len(camera_movements):
-                movement = camera_movements[idx]
-                clip = _apply_camera_movement(clip, movement, clip_dur)
+            if is_pixel_art:
+                clip = clip.fl(lambda gf, t: gf(t) * (1.0 + 0.02 * t))
 
             clip = clip.resize(height=VIDEO_H)
             if clip.w > VIDEO_W:
@@ -284,23 +286,13 @@ def build_final_video(
 
         layers = [base]
 
-        # Add 7-second segment captions if script text provided
-        if script_text:
-            caption_clips = _create_segment_captions(script_text, total_dur, base.w, base.h)
-            layers.extend(caption_clips)
+        if is_pixel_art:
+            scanline_path = _make_scanline_overlay(base.w, base.h)
+            scanline_clip = ImageClip(str(scanline_path)).set_duration(total_dur)
+            layers.append(scanline_clip)
 
-        # Add era-specific HUD overlays for each clip
-        if era_tags and len(era_tags) == len(video_clips):
-            # Create separate HUD for each clip with era-specific styling
-            for idx, (clip, era) in enumerate(zip(video_clips, era_tags)):
-                start_time = idx * clip_dur
-                hud_clip = _make_hud_overlay(base.w, base.h, clip_dur, era)
-                hud_clip = hud_clip.set_start(start_time)
-                layers.append(hud_clip)
-        else:
-            # Default single HUD for entire video
-            hud = _make_hud_overlay(base.w, base.h, total_dur)
-            layers.append(hud)
+        hud = _make_hud_overlay(base.w, base.h, total_dur)
+        layers.append(hud)
 
         ticker = _make_ticker(ticker_headlines, base.w, total_dur)
         ticker = ticker.set_position((0, base.h - TICKER_H))

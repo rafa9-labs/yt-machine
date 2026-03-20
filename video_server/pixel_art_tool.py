@@ -105,7 +105,7 @@ def generate_pixel_art(prompt: str) -> dict:
             lora_prompt = full_prompt
 
             result = fal_client.run(
-                "fal-ai/flux-2-pro",
+                "fal-ai/flux/schnell",
                 arguments={
                     "prompt": lora_prompt,
                     "image_size": "portrait_4_3",
@@ -126,12 +126,29 @@ def generate_pixel_art(prompt: str) -> dict:
                 "filename": filename,
                 "path": str(output_path),
                 "prompt_used": lora_prompt,
-                "source": "fal-ai/flux-2-pro",
+                "source": "fal-ai/flux/schnell",
                 "image_url": image_url,
                 "output_directory": str(OUTPUT_DIR),
             }
 
         except Exception as e:
+            error_msg = str(e)
+            if "balance" in error_msg.lower() or "locked" in error_msg.lower():
+                print(f"⚠️  FAL.ai account balance exhausted. Using placeholder image.")
+                print(f"   Top up at: https://fal.ai/dashboard/billing")
+                
+                _generate_placeholder(prompt, output_path)
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "path": str(output_path),
+                    "prompt_used": full_prompt,
+                    "source": "placeholder",
+                    "note": "FAL.ai balance exhausted - placeholder generated. Top up at fal.ai/dashboard/billing",
+                    "size": "1024x1792",
+                    "output_directory": str(OUTPUT_DIR),
+                }
+            
             error_msg = str(e)
             if "balance" in error_msg.lower() or "locked" in error_msg.lower():
                 print(f"⚠️  FAL.ai account balance exhausted. Using placeholder image.")
