@@ -65,7 +65,9 @@ print("\n🔍 STEP 2: NEWS ANALYSIS")
 print("-" * 40)
 
 try:
-    article_text = scraper.get_article_text(article)
+    print("Fetching full article text...")
+    article_text = scraper.get_full_article_text(article)
+    print(f"  Article length: {len(article_text)} chars")
     print("Analyzing article with LLM...")
     
     news_analysis = llm.process_news(article_text)
@@ -111,10 +113,30 @@ try:
         print("❌ Script synthesis failed")
         exit(1)
     
+    # Build full_text from segments if not provided by LLM
+    if 'full_text' not in script or not script['full_text']:
+        segments = []
+        # Support both 6-segment and 5-segment structures
+        if 'historical_1' in script:
+            segment_names = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
+        else:
+            segment_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
+        
+        for seg in segment_names:
+            text = script.get(seg, '')
+            if text:
+                segments.append(text)
+        script['full_text'] = ' '.join(segments)
+    
+    if 'word_count' not in script:
+        script['word_count'] = len(script['full_text'].split())
+        script['estimated_duration'] = int(len(script['full_text'].split()) / 2.5)
+    
     print(f"✅ Script generated")
-    print(f"  Hook: {script.get('hook', 'N/A')}")
-    print(f"  Body: {script.get('body', 'N/A')[:80]}...")
-    print(f"  Twist: {script.get('twist', 'N/A')}")
+    print(f"  Hook: {script.get('hook', 'N/A')[:80]}...")
+    if 'historical_1' in script:
+        print(f"  Historical anchoring: {len([k for k in script.keys() if 'historical' in k])} parallels")
+    print(f"  Words: {script.get('word_count', 0)}")
     print(f"  Duration: ~{script.get('estimated_duration', 0)} seconds")
     
 except Exception as e:
@@ -181,8 +203,8 @@ print("\n🎤 STEP 7: VOICE GENERATION")
 print("-" * 40)
 
 try:
-    # Combine script parts for voiceover
-    full_script = f"{script.get('hook', '')} {script.get('body', '')} {script.get('twist', '')} {script.get('cta', '')}"
+    # Use full_text from script (built from 5 segments)
+    full_script = script.get('full_text', '')
     
     print("Generating voiceover...")
     print(f"Script text: {full_script[:100]}...")

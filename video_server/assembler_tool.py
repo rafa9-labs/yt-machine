@@ -125,8 +125,8 @@ def _create_segment_captions(script_text: str, duration: float, width: int, heig
     return caption_clips
 
 
-def _make_hud_overlay(width: int, height: int, duration: float) -> ImageClip:
-    hud_path = TEMP_DIR / "hud_base.png"
+def _make_hud_overlay(width: int, height: int, duration: float, era: str = "2020s") -> ImageClip:
+    hud_path = TEMP_DIR / f"hud_{era}.png"
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     try:
@@ -135,9 +135,16 @@ def _make_hud_overlay(width: int, height: int, duration: float) -> ImageClip:
     except IOError:
         font = ImageFont.load_default()
         font_sm = font
-    draw.rectangle([8, 8, width - 8, 44], fill=(0, 0, 0, 140), outline=(0, 200, 255, 180), width=1)
-    draw.text((16, 14), "SENTINEL v2.3  |  TACTICAL BRIEFING", font=font_sm, fill=(0, 200, 255, 220))
-    timecode = "MAR 20 2026  UTC"
+    
+    # Add historical archive label for non-current eras
+    if era != "2020s":
+        draw.rectangle([8, 8, width - 8, 44], fill=(0, 0, 0, 140), outline=(200, 150, 0, 180), width=1)
+        draw.text((16, 14), f"HISTORICAL ARCHIVE  |  {era.upper()}", font=font_sm, fill=(200, 150, 0, 220))
+    else:
+        draw.rectangle([8, 8, width - 8, 44], fill=(0, 0, 0, 140), outline=(0, 200, 255, 180), width=1)
+        draw.text((16, 14), "SENTINEL v2.4  |  TACTICAL BRIEFING", font=font_sm, fill=(0, 200, 255, 220))
+    
+    timecode = "MAR 21 2026  UTC"
     draw.text((width - 16, 14), timecode, font=font_sm, fill=(0, 200, 255, 220), anchor="ra")
     draw.rectangle([8, height - TICKER_H - 44, 110, height - TICKER_H - 12],
                    fill=(0, 0, 0, 140), outline=(255, 40, 40, 180), width=1)
@@ -203,19 +210,21 @@ def build_final_video(
     ticker_headlines: Optional[List[str]] = None,
     is_pixel_art: bool = True,
     output_filename: Optional[str] = None,
-    script_text: Optional[str] = None
+    script_text: Optional[str] = None,
+    era_tags: Optional[List[str]] = None
 ) -> dict:
     """
     Assemble Sentinel v2.2 TikTok/Shorts optimized video using MoviePy 2.0.
-    Optimised for 3-image sequences at ~20 seconds per image (60s total).
+    Optimised for 5-6 image sequences at ~10-12 seconds per image (60-80s total).
 
     Args:
         audio_path:       Path to .mp3 voiceover file
-        asset_paths:      List of paths to video clips or images (ideally 3)
+        asset_paths:      List of paths to video clips or images (5-6 for historical anchoring)
         ticker_headlines: Up to 3 short news ticker strings for the scrolling marquee
         is_pixel_art:     Apply professional camera movements (default True)
         output_filename:  Custom output filename (default: auto-generated)
         script_text:      Optional script text for sentence-by-sentence subtitles
+        era_tags:         Optional list of era tags ('2020s', '1990s', etc.) for visual differentiation
 
     Returns:
         dict with success status, output path, and metadata
@@ -280,8 +289,18 @@ def build_final_video(
             caption_clips = _create_segment_captions(script_text, total_dur, base.w, base.h)
             layers.extend(caption_clips)
 
-        hud = _make_hud_overlay(base.w, base.h, total_dur)
-        layers.append(hud)
+        # Add era-specific HUD overlays for each clip
+        if era_tags and len(era_tags) == len(video_clips):
+            # Create separate HUD for each clip with era-specific styling
+            for idx, (clip, era) in enumerate(zip(video_clips, era_tags)):
+                start_time = idx * clip_dur
+                hud_clip = _make_hud_overlay(base.w, base.h, clip_dur, era)
+                hud_clip = hud_clip.set_start(start_time)
+                layers.append(hud_clip)
+        else:
+            # Default single HUD for entire video
+            hud = _make_hud_overlay(base.w, base.h, total_dur)
+            layers.append(hud)
 
         ticker = _make_ticker(ticker_headlines, base.w, total_dur)
         ticker = ticker.set_position((0, base.h - TICKER_H))

@@ -1,8 +1,13 @@
 import os
+import sys
 from dotenv import load_dotenv
 from pathlib import Path
 import json
 import time
+
+# Fix Unicode encoding for Windows console
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 load_dotenv()
 
@@ -33,18 +38,29 @@ try:
     from redfish.rss_scraper import RSScraper
     scraper = RSScraper()
     
-    print("Scraping RSS feeds...")
-    articles = scraper.scrape_all(max_age_hours=24)
-    print(f"Found {len(articles)} articles")
+    # Check if manual selection exists
+    manual_selection_file = Path("output/manual_selection.json")
     
-    viral_articles = scraper.filter_viral_potential(articles, top_n=5)
-    
-    if not viral_articles:
-        print("❌ No suitable articles found")
-        exit(1)
-    
-    article = viral_articles[0]
-    print(f"✅ Selected: {article['title'][:60]}...")
+    if manual_selection_file.exists() and '--manual' in sys.argv:
+        print("Using manually selected article...")
+        with open(manual_selection_file, 'r', encoding='utf-8') as f:
+            article = json.load(f)
+        print(f"✅ Selected: {article['title'][:80]}...")
+        # Delete the selection file after use
+        manual_selection_file.unlink()
+    else:
+        print("Scraping RSS feeds...")
+        articles = scraper.scrape_all(max_age_hours=24)
+        print(f"Found {len(articles)} articles")
+        
+        viral_articles = scraper.filter_viral_potential(articles, top_n=5)
+        
+        if not viral_articles:
+            print("❌ No suitable articles found")
+            exit(1)
+        
+        article = viral_articles[0]
+        print(f"✅ Selected: {article['title'][:80]}...")
     
 except Exception as e:
     print(f"❌ News scraping failed: {e}")
@@ -54,7 +70,9 @@ print("\n🔍 STEP 2: NEWS ANALYSIS")
 print("-" * 40)
 
 try:
-    article_text = scraper.get_article_text(article)
+    print("Fetching full article text...")
+    article_text = scraper.get_full_article_text(article)
+    print(f"  Article length: {len(article_text)} chars")
     news_analysis = llm.process_news(article_text)
     
     if not news_analysis:
@@ -68,6 +86,73 @@ except Exception as e:
     print(f"❌ News analysis failed: {e}")
     exit(1)
 
+print("\n🔬 STEP 2.5: SALIENCE EXTRACTION")
+print("-" * 40)
+
+salience_data = None
+try:
+    from redfish.salience_extractor import SalienceExtractor
+    
+    salience_ext = SalienceExtractor(llm)
+    salience_data = salience_ext.extract(article_text)
+    
+    if salience_data:
+        print(f"✅ Conflict: {salience_data.get('conflict', 'N/A')[:60]}...")
+        print(f"✅ Consequence chain: {len(salience_data.get('consequence_chain', []))} steps")
+        print(f"✅ Emotional anchors: {len(salience_data.get('emotional_anchors', []))} found")
+        print(f"✅ Visual subjects: {len(salience_data.get('key_visual_subjects', []))} found")
+    else:
+        print("⚠️  Salience extraction returned empty")
+    
+except Exception as e:
+    print(f"⚠️  Salience extraction failed: {e}")
+
+print("\n🔬 STEP 2.7: HISTORICAL PARALLEL ANALYSIS")
+print("-" * 40)
+
+historical_parallels = None
+try:
+    from redfish.historical_analyzer import HistoricalAnalyzer
+    
+    hist_analyzer = HistoricalAnalyzer(llm)
+    historical_parallels = hist_analyzer.find_historical_parallels(article_text, news_analysis, max_parallels=3)
+    
+    if historical_parallels and 'parallels' in historical_parallels:
+        print(f"✅ Found {len(historical_parallels['parallels'])} historical parallels:")
+        for i, parallel in enumerate(historical_parallels['parallels'][:2], 1):
+            print(f"  {i}. {parallel.get('event_name', 'N/A')} ({parallel.get('year', 'N/A')})")
+        print(f"✅ Pattern: {historical_parallels.get('historical_pattern', 'N/A')[:60]}...")
+    else:
+        print("⚠️  Historical analysis returned empty")
+    
+except Exception as e:
+    print(f"⚠️  Historical analysis failed: {e}")
+
+print("\n🔬 STEP 2.6: VISUAL ELEMENT EXTRACTION")
+print("-" * 40)
+
+try:
+    from redfish.visual_extractor import VisualElementExtractor
+    from redfish.prompt_generator import VisualPromptGenerator
+    from redfish.prompt_validator import calculate_prompt_relevance
+    
+    visual_extractor = VisualElementExtractor(llm)
+    visual_elements = visual_extractor.extract_visual_elements(article_text)
+    
+    print(f"✅ Subjects: {len(visual_elements.get('primary_subjects', []))} items")
+    print(f"✅ Settings: {len(visual_elements.get('settings', []))} found")
+    print(f"✅ Actions: {len(visual_elements.get('actions', []))} verbs")
+    
+except Exception as e:
+    print(f"⚠️  Visual extraction failed: {e}")
+    visual_elements = {
+        'primary_subjects': [],
+        'settings': [],
+        'actions': [],
+        'mood': 'tense',
+        'temporal_context': ''
+    }
+
 print("\n🎭 STEP 3: DEBATE GENERATION")
 print("-" * 40)
 
@@ -80,50 +165,89 @@ except Exception as e:
     print(f"❌ Debate generation failed: {e}")
     exit(1)
 
-print("\n📝 STEP 4: SCRIPT CREATION")
-print("-" * 40)
-
-# Create simple script
-topic = news_analysis.get('topic', 'Breaking News')
-hook = f"Breaking: {topic}"
-body = f"Latest developments show {news_analysis.get('shift_vector', 'significant changes')}."
-twist = f"But there's more to this story than headlines suggest."
-cta = "Stay informed for real updates."
-
-full_script = f"{hook} {body} {twist} {cta}"
-
-simple_script = {
-    'hook': hook,
-    'body': body,
-    'twist': twist,
-    'cta': cta,
-    'full_text': full_script,
-    'word_count': len(full_script.split()),
-    'estimated_duration': len(full_script.split()) / 2.5
-}
-
-print(f"✅ Script created (~{simple_script['estimated_duration']:.0f}s)")
-
-print("\n🎨 STEP 5: PIXEL ART GENERATION (3 SCENES)")
+print("\n📝 STEP 4: SCRIPT SYNTHESIS (LLM-Generated)")
 print("-" * 40)
 
 try:
-    pixel_prompts = news_analysis.get('pixel_art_prompts', [])
+    print("Synthesizing narrative script with historical anchoring...")
+    script = llm.synthesize_script(news_analysis, skeptic, explainer, salience_data, historical_parallels)
     
-    # ONLY generate 3 images: hook, body, twist
-    scenes_to_generate = [
-        ('hook', pixel_prompts[0] if len(pixel_prompts) > 0 else 'Breaking news scene'),
-        ('body', pixel_prompts[2] if len(pixel_prompts) > 2 else 'Main story scene'),
-        ('twist', pixel_prompts[4] if len(pixel_prompts) > 4 else 'Conclusion scene')
-    ]
+    if not script:
+        print("❌ Script synthesis failed")
+        exit(1)
+    
+    # Build full_text from segments if not provided by LLM
+    if 'full_text' not in script or not script['full_text']:
+        segments = []
+        # Support both 6-segment and 5-segment structures
+        if 'historical_1' in script:
+            segment_names = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
+        else:
+            segment_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
+        
+        for seg in segment_names:
+            text = script.get(seg, '')
+            if text:
+                segments.append(text)
+        script['full_text'] = ' '.join(segments)
+    
+    full_script = script['full_text']
+    
+    # Calculate word count if missing
+    if 'word_count' not in script:
+        script['word_count'] = len(full_script.split())
+        script['estimated_duration'] = int(len(full_script.split()) / 2.5)
+    
+    print(f"✅ Script synthesized (~{script.get('estimated_duration', 0)}s)")
+    print(f"  Hook: {script.get('hook', 'N/A')[:80]}...")
+    print(f"  Words: {script.get('word_count', 0)}")
+    
+except Exception as e:
+    print(f"❌ Script synthesis failed: {e}")
+    import traceback
+    traceback.print_exc()
+    exit(1)
+
+print("\n🎨 STEP 5: PIXEL ART GENERATION")
+print("-" * 40)
+
+try:
+    # Initialize prompt generator with extracted elements and script
+    prompt_generator = VisualPromptGenerator(news_analysis, visual_elements, script)
+    
+    # Generate prompts for all scenes (6 or 5 depending on script structure)
+    scene_prompts = prompt_generator.generate_all_scenes()
+    num_scenes = len(scene_prompts)
+    
+    print(f"Generating {num_scenes} scenes...")
     
     generated_images = []
     image_folder = project_folder / "images"
     image_folder.mkdir(exist_ok=True)
     
-    for scene_name, prompt in scenes_to_generate:
+    # Determine scene names based on script structure
+    if 'historical_1' in script:
+        scene_names = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
+    else:
+        scene_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
+    
+    for scene_name in scene_names:
         print(f"  Generating {scene_name} scene...")
         
+        # Get prompt and calculate relevance
+        prompt = scene_prompts[scene_name]
+        relevance = calculate_prompt_relevance(prompt, article_text)
+        
+        print(f"    Relevance: {relevance}%")
+        
+        # If relevance too low, regenerate with strict constraints
+        if relevance < 50:
+            print(f"    ⚠️  Low relevance, regenerating...")
+            prompt = prompt_generator.regenerate_strict(scene_name)
+            relevance = calculate_prompt_relevance(prompt, article_text)
+            print(f"    New relevance: {relevance}%")
+        
+        # Generate image
         art_result = generate_pixel_art(prompt)
         
         if art_result.get('success'):
@@ -144,6 +268,8 @@ try:
     
 except Exception as e:
     print(f"❌ Pixel art generation failed: {e}")
+    import traceback
+    traceback.print_exc()
     generated_images = []
 
 print("\n🎥 STEP 6: VIDEO FOOTAGE (OPTIONAL)")
@@ -199,12 +325,20 @@ try:
     
     video_filename = f"video_{project_id}.mp4"
     
+    # Extract era tags from script visual_scenes if available
+    era_tags = []
+    if script and 'visual_scenes' in script:
+        for scene in script['visual_scenes']:
+            era_tags.append(scene.get('era', '2020s'))
+    
     assembly_result = build_final_video(
         audio_path=voice_file,
         asset_paths=generated_images,
         ticker_headlines=ticker_headlines,
         is_pixel_art=True,
-        output_filename=video_filename
+        output_filename=video_filename,
+        script_text=full_script,
+        era_tags=era_tags if era_tags else None
     )
     
     if assembly_result.get('success'):
@@ -231,7 +365,31 @@ except Exception as e:
     traceback.print_exc()
     final_video_path = None
 
-print("\n📋 STEP 9: PROJECT SUMMARY")
+print("\n📋 STEP 9: PLATFORM METADATA GENERATION")
+print("-" * 40)
+
+# Generate platform-optimized metadata
+platform_metadata = {}
+try:
+    from redfish.platform_metadata_generator import PlatformMetadataGenerator
+    
+    metadata_gen = PlatformMetadataGenerator()
+    platform_metadata = metadata_gen.generate_all_metadata(script, news_analysis, historical_parallels)
+    
+    # Save platform metadata to file
+    metadata_path = project_folder / 'platform_metadata.json'
+    with open(metadata_path, 'w', encoding='utf-8') as f:
+        json.dump(platform_metadata, f, indent=2, ensure_ascii=False)
+    
+    print(f"✅ Platform metadata generated:")
+    print(f"  TikTok: {platform_metadata['tiktok']['caption'][:60]}...")
+    print(f"  YouTube: {platform_metadata['youtube']['title'][:60]}...")
+    print(f"  Hashtags: {len(platform_metadata['common_hashtags'])} generated")
+    
+except Exception as e:
+    print(f"⚠️  Platform metadata generation failed: {e}")
+
+print("\n📋 STEP 10: PROJECT SUMMARY")
 print("-" * 40)
 
 # Save project manifest
@@ -248,7 +406,9 @@ manifest = {
         'impact_score': news_analysis.get('impact_score'),
         'shift_vector': news_analysis.get('shift_vector')
     },
-    'script': simple_script,
+    'historical_parallels': historical_parallels,
+    'script': script,
+    'platform_metadata': platform_metadata,
     'assets': {
         'images': [str(Path(p).name) for p in generated_images],
         'voiceover': 'voiceover.mp3',

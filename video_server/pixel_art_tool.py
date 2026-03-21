@@ -105,11 +105,10 @@ def generate_pixel_art(prompt: str) -> dict:
             lora_prompt = full_prompt
 
             result = fal_client.run(
-                "fal-ai/flux/schnell",
+                "fal-ai/flux-2-pro",
                 arguments={
                     "prompt": lora_prompt,
                     "image_size": "portrait_4_3",
-                    "num_inference_steps": 4,
                     "num_images": 1,
                 }
             )
@@ -127,7 +126,7 @@ def generate_pixel_art(prompt: str) -> dict:
                 "filename": filename,
                 "path": str(output_path),
                 "prompt_used": lora_prompt,
-                "source": "fal-ai/flux/schnell",
+                "source": "fal-ai/flux-2-pro",
                 "image_url": image_url,
                 "output_directory": str(OUTPUT_DIR),
             }
