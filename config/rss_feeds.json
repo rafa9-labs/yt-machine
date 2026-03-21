@@ -13,27 +13,9 @@
       "enabled": true
     },
     {
-      "name": "TechCrunch",
-      "url": "https://techcrunch.com/feed/",
-      "category": "technology",
-      "enabled": true
-    },
-    {
-      "name": "The Verge",
-      "url": "https://www.theverge.com/rss/index.xml",
-      "category": "technology",
-      "enabled": true
-    },
-    {
-      "name": "Hacker News",
-      "url": "https://hnrss.org/frontpage",
-      "category": "technology",
-      "enabled": true
-    },
-    {
-      "name": "Science Daily",
-      "url": "https://www.sciencedaily.com/rss/all.xml",
-      "category": "science",
+      "name": "Associated Press",
+      "url": "https://rsshub.app/apnews/topics/apf-topnews",
+      "category": "general",
       "enabled": true
     },
     {
@@ -43,9 +25,93 @@
       "enabled": true
     },
     {
-      "name": "Associated Press",
-      "url": "https://rsshub.app/apnews/topics/apf-topnews",
-      "category": "general",
+      "name": "Al Jazeera English",
+      "url": "https://www.aljazeera.com/xml/rss/all.xml",
+      "category": "geopolitical",
+      "enabled": true
+    },
+    {
+      "name": "Foreign Policy",
+      "url": "https://foreignpolicy.com/feed/",
+      "category": "geopolitical",
+      "enabled": true
+    },
+    {
+      "name": "Stratfor",
+      "url": "https://worldview.stratfor.com/rss.xml",
+      "category": "geopolitical",
+      "enabled": true
+    },
+    {
+      "name": "Defense One",
+      "url": "https://www.defenseone.com/rss/all/",
+      "category": "geopolitical",
+      "enabled": true
+    },
+    {
+      "name": "Middle East Eye",
+      "url": "https://www.middleeasteye.net/rss",
+      "category": "geopolitical",
+      "enabled": true
+    },
+    {
+      "name": "The Diplomat",
+      "url": "https://thediplomat.com/feed/",
+      "category": "asia_pacific",
+      "enabled": true
+    },
+    {
+      "name": "South China Morning Post",
+      "url": "https://www.scmp.com/rss",
+      "category": "asia_pacific",
+      "enabled": true
+    },
+    {
+      "name": "Nikkei Asia",
+      "url": "https://asia.nikkei.com/rss",
+      "category": "asia_pacific",
+      "enabled": true
+    },
+    {
+      "name": "EU Observer",
+      "url": "https://euobserver.com/rss",
+      "category": "europe",
+      "enabled": true
+    },
+    {
+      "name": "Deutsche Welle",
+      "url": "https://rss.dw.com/xml/rss-en-all",
+      "category": "europe",
+      "enabled": true
+    },
+    {
+      "name": "Euractiv",
+      "url": "https://www.euractiv.com/feed/",
+      "category": "europe",
+      "enabled": true
+    },
+    {
+      "name": "All Africa",
+      "url": "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf",
+      "category": "africa",
+      "enabled": true
+    },
+    {
+      "name": "African Arguments",
+      "url": "https://africanarguments.org/feed/",
+      "category": "africa",
+      "enabled": true
+    },
+    {
+      "name": "Americas Quarterly",
+      "url": "https://www.americasquarterly.org/feed/",
+      "category": "latin_america",
+      "enabled": true
+    },
+    {
+      "name": "InSight Crime",
+      "url": "https://insightcrime.org/feed/",
+      "category": "latin_america",
       "enabled": true
     }
   ],
