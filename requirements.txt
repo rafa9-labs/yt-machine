@@ -10,3 +10,5 @@ fastmcp>=0.1.0
 opencv-python>=4.9.0
 numpy>=1.26.0
 fal-client>=0.4.0
+spacy>=3.7.0
+trafilatura>=1.6.0

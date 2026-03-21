@@ -154,3 +154,32 @@ class RSScraper:
     def get_article_text(self, article: Dict[str, Any]) -> str:
         text = f"{article['title']}\n\n{article.get('summary', '')}"
         return text.strip()
+
+    def get_full_article_text(self, article: Dict[str, Any]) -> str:
+        """
+        Fetch full article body via trafilatura, fall back to RSS title+summary.
+        
+        Args:
+            article: Article dict with 'link', 'title', 'summary' keys
+            
+        Returns:
+            Full article text or RSS fallback
+        """
+        url = article.get('link', '')
+        if url:
+            try:
+                import trafilatura
+                downloaded = trafilatura.fetch_url(url)
+                if downloaded:
+                    body = trafilatura.extract(
+                        downloaded,
+                        include_comments=False,
+                        include_tables=False,
+                        no_fallback=False
+                    )
+                    if body and len(body) > 100:
+                        return f"{article['title']}\n\n{body}".strip()
+            except Exception as e:
+                print(f"  Full scrape failed for {url[:60]}...: {e}")
+        
+        return self.get_article_text(article)
