@@ -392,6 +392,31 @@ except Exception as e:
 print("\n📋 STEP 10: PROJECT SUMMARY")
 print("-" * 40)
 
+# Track video generation for diversity enforcement
+try:
+    from redfish.category_rotation import CategoryRotation
+    rotation = CategoryRotation()
+    
+    # Detect category and region from article
+    matched_categories = rotation.detect_article_categories(article)
+    category = matched_categories[0] if matched_categories else "other"
+    region = rotation._detect_region_from_title(article.get('title', ''))
+    
+    # Track the video
+    rotation.track_video_generated(
+        topic=news_analysis.get('topic', 'Unknown'),
+        category=category,
+        region=region,
+        article_title=article.get('title', 'Unknown')
+    )
+    
+    print(f"✅ Video tracked for diversity enforcement:")
+    print(f"  Category: {category}")
+    print(f"  Region: {region}")
+    
+except Exception as e:
+    print(f"⚠️  Video tracking failed: {e}")
+
 # Save project manifest
 manifest = {
     'project_id': project_id,

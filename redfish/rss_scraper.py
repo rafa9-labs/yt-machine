@@ -116,6 +116,11 @@ class RSScraper:
     
     def filter_viral_potential(self, articles: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
         scored_articles = []
+        
+        # Import rotation system
+        from .category_rotation import CategoryRotation
+        rotation = CategoryRotation()
+        today_category = rotation.get_today_category()
 
         for article in articles:
             score = 0
@@ -123,28 +128,48 @@ class RSScraper:
             summary_lower = article.get("summary", "").lower()
             combined = title_lower + " " + summary_lower
 
-            for vector, keywords in GEOPOLITICAL_KEYWORDS.items():
+            # Base keyword scoring with expanded categories
+            matched_categories = []
+            for category, keywords in GEOPOLITICAL_KEYWORDS.items():
                 for kw in keywords:
                     if kw in title_lower:
                         score += 4
+                        if category not in matched_categories:
+                            matched_categories.append(category)
                     elif kw in summary_lower:
                         score += 1
 
+            # Category rotation boost (+10 for today's category)
+            rotation_boost = rotation.boost_category_score(article, matched_categories)
+            score += rotation_boost
+
+            # Virality boost keywords
             for kw in VIRALITY_BOOST_KEYWORDS:
                 if kw in title_lower:
                     score += 3
                 elif kw in summary_lower:
                     score += 1
 
+            # Feed priority bonus
             feed_priority = article.get("feed_priority", 2)
             if feed_priority == 1:
                 score += 3
 
+            # Title length bonus
             title_length = len(article["title"])
             if 40 <= title_length <= 100:
                 score += 1
 
+            # Diversity penalty for overused topics
+            if rotation.is_topic_overused(article["title"]):
+                score -= 5  # Penalize repetitive topics
+
+            # Store extra metadata for debugging
             article["virality_score"] = score
+            article["matched_categories"] = matched_categories
+            article["rotation_boost"] = rotation_boost
+            article["today_category"] = today_category
+            
             scored_articles.append(article)
 
         scored_articles.sort(key=lambda x: x["virality_score"], reverse=True)

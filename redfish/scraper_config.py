@@ -50,20 +50,42 @@ GEOPOLITICAL_FEEDS = [
 ]
 
 GEOPOLITICAL_KEYWORDS = {
-    "kinetic_conflict": [
+    "middle_east_conflict": [
+        "iran", "israel", "hormuz", "hezbollah", "irgc", "idf",
+        "gaza", "hamas", "syria", "yemen", "saudi", "uae",
+        "dubai", "qatar", "kuwait", "bahrain", "oman", "iraq",
+        "lebanon", "jordan", "egypt", "sinai", "red sea", "persian gulf"
+    ],
+    "great_power_competition": [
+        "china", "russia", "ukraine", "taiwan", "nato", "quad",
+        "south china sea", "crimea", "donbas", "xi jinping", "putin",
+        "biden", "pentagon", "kremlin", "beijing", "moscow", "kyiv",
+        "aukus", "nord stream", "baltic", "black sea", "indopacific"
+    ],
+    "economic_warfare": [
+        "sanctions", "tariff", "trade war", "embargo", "currency",
+        "swift", "yuan", "petrodollar", "opec", "inflation", "recession",
+        "debt", "default", "supply chain", "semiconductor", "chip", "rare earth",
+        "frozen assets", "central bank", "imf", "world bank", "wto"
+    ],
+    "regional_flashpoints": [
+        "africa", "sahel", "ethiopia", "sudan", "congo", "somalia",
+        "latin america", "venezuela", "colombia", "cuba", "haiti", "mexico",
+        "cartel", "favela", "amazon", "andes", "caribbean", "panama",
+        "asia", "korea", "kashmir", "pakistan", "india", "myanmar", "thailand",
+        "vietnam", "philippines", "indonesia", "japan", "north korea"
+    ],
+    "kinetic_operations": [
         "strike", "airstrike", "missile", "military", "war", "attack",
         "blockade", "naval", "troops", "offensive", "ceasefire", "escalation",
-        "iran", "israel", "hormuz", "hezbollah", "irgc", "idf"
+        "invasion", "bombing", "drone", "fighter jet", "warship", "submarine",
+        "tank", "artillery", "special forces", "exercise", "deployment", "frontline"
     ],
     "diplomatic_pivot": [
-        "negotiation", "deal", "summit", "alliance", "sanctions", "treaty",
+        "negotiation", "deal", "summit", "alliance", "treaty",
         "envoy", "backchannel", "normalization", "pivot", "realignment",
-        "transactional", "leverage", "washington", "state department"
-    ],
-    "economic_leverage": [
-        "oil", "energy", "shipping", "tanker", "strait", "embargo",
-        "currency", "dollar", "yuan", "petrodollar", "opec", "inflation",
-        "supply chain", "chokepoint", "reserve", "freeze"
+        "transactional", "leverage", "washington", "state department",
+        "foreign minister", "ambassador", "un", "security council", "g20"
     ]
 }
 
