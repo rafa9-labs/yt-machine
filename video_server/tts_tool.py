@@ -110,13 +110,10 @@ def _apply_audio_mastering(input_path: Path) -> bool:
             arr = arr * rms_gain
             arr = np.clip(arr, -1.0, 1.0)  # hard limit
 
-        # 3. Write back
+        # 3. Write back — AudioArrayClip requires a 2D numpy ndarray (N, channels)
         fps = 44100
-        # Ensure arr is a list/tuple for AudioArrayClip
-        if isinstance(arr, np.ndarray) and arr.ndim == 1:
-            arr = [arr.tolist()]
-        elif isinstance(arr, np.ndarray) and arr.ndim == 2:
-            arr = arr.tolist()
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
         mastered_clip = AudioArrayClip(arr, fps=fps)
         mastered_clip.write_audiofile(
             str(input_path),
@@ -133,73 +130,89 @@ def _apply_audio_mastering(input_path: Path) -> bool:
 
 def _add_natural_pacing(text: str) -> str:
     """
-    Add strategic pauses for natural speech pacing.
+    Clean script text and prepare it for natural speech.
+    Removes any stray formatting characters, underscores, or markup
+    that would be read literally by TTS.
     
     Args:
         text: Original script text
     
     Returns:
-        Text with pause markers for natural breathing and emphasis
+        Clean plain text safe for TTS or SSML inner content
     """
-    # Add 0.5s pause after commas
-    text = re.sub(r',', ',<break time="500ms"/>', text)
+    # Strip any leftover SSML/XML tags (safety net)
+    text = re.sub(r'<[^>]+>', '', text)
     
-    # Add 1.0s pause after sentences
-    text = re.sub(r'([.!?])\s+', r'\1<break time="1000ms"/> ', text)
+    # Replace underscores used as separators/formatting with a space
+    text = re.sub(r'_+', ' ', text)
     
-    # Add 1.5s pause before dramatic reveals (words like "but", "however", "yet")
-    dramatic_words = r'\b(But|However|Yet|Still|Nevertheless)\b'
-    text = re.sub(dramatic_words, r'<break time="1500ms"/>\1', text)
+    # Replace equals signs used as separators
+    text = re.sub(r'={2,}', ' ', text)
     
-    # Add breathing points every 8-10 words (approximately)
-    words = text.split()
-    result = []
-    word_count = 0
-    for word in words:
-        result.append(word)
-        word_count += 1
-        if word_count >= 9 and not any(pause in word for pause in ['<break', ',', '.', '!', '?']):
-            result.append('<break time="300ms"/>')
-            word_count = 0
+    # Replace dashes used as separators (3+ dashes)
+    text = re.sub(r'-{3,}', ' ', text)
     
-    return ' '.join(result)
+    # Strip markdown bold/italic markers
+    text = re.sub(r'[*#`]', '', text)
+    
+    # Collapse multiple spaces/newlines into single space
+    text = re.sub(r'[\r\n]+', ' ', text)
+    text = re.sub(r' {2,}', ' ', text)
+    
+    return text.strip()
 
 def _apply_ssml_prosody(text: str, voice_tone: str) -> str:
     """
-    Apply SSML prosody tags for professional voice quality.
+    Build a valid SSML document for Edge TTS.
+    Edge TTS only interprets SSML when the text starts with <speak>.
     
     Args:
-        text: Text with pause markers
+        text: Clean plain text (already sanitised by _add_natural_pacing)
         voice_tone: Voice style to determine prosody settings
     
     Returns:
-        SSML-formatted text with prosody controls
+        Valid SSML document string
     """
     # Prosody settings based on voice tone
     prosody_settings = {
-        "authoritative": {"rate": "+0%", "volume": "+5%"},
-        "professional": {"rate": "-5%", "volume": "+2%"},
-        "energetic": {"rate": "+10%", "volume": "+8%"},
-        "calm": {"rate": "-10%", "volume": "+0%"},
-        "deep": {"rate": "-5%", "volume": "+5%"},
-        "female_professional": {"rate": "-3%", "volume": "+3%"},
-        "female_energetic": {"rate": "+8%", "volume": "+6%"},
-        "male_casual": {"rate": "+5%", "volume": "+2%"}
+        "authoritative": {"rate": "+0%",  "pitch": "+0Hz"},
+        "professional":  {"rate": "-5%",  "pitch": "-2Hz"},
+        "energetic":     {"rate": "+10%", "pitch": "+2Hz"},
+        "calm":          {"rate": "-10%", "pitch": "-4Hz"},
+        "deep":          {"rate": "-5%",  "pitch": "-5Hz"},
+        "female_professional": {"rate": "-3%", "pitch": "+0Hz"},
+        "female_energetic":    {"rate": "+8%", "pitch": "+3Hz"},
+        "male_casual":         {"rate": "+5%", "pitch": "+0Hz"},
     }
+    settings = prosody_settings.get(voice_tone, {"rate": "+0%", "pitch": "+0Hz"})
     
-    settings = prosody_settings.get(voice_tone, {"rate": "+0%", "volume": "+0%"})
+    # Escape XML special characters in the plain text
+    import html
+    safe_text = html.escape(text)
     
-    # Add emphasis to key terms (numbers, locations, names in caps)
-    # Emphasize numbers
-    text = re.sub(r'\b(\d+)\b', r'<emphasis level="strong">\1</emphasis>', text)
+    # Insert natural breaks: sentence endings get a short pause
+    safe_text = re.sub(r'([.!?])\s+', r'\1<break time="600ms"/> ', safe_text)
+    # Comma pauses
+    safe_text = re.sub(r',\s+', r', <break time="200ms"/> ', safe_text)
+    # Dramatic conjunctions get a longer pause
+    safe_text = re.sub(
+        r'\b(But|However|Yet|Still|Nevertheless)\b',
+        r'<break time="400ms"/>\1',
+        safe_text
+    )
     
-    # Emphasize capitalized words (likely names/locations)
-    text = re.sub(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', r'<emphasis level="moderate">\1</emphasis>', text)
-    
-    # Wrap in prosody tags
-    ssml_text = f'<prosody rate="{settings["rate"]}" volume="{settings["volume"]}">{text}</prosody>'
-    
-    return ssml_text
+    # Wrap in a valid SSML document
+    ssml = (
+        '<speak version="1.0" '
+        'xmlns="http://www.w3.org/2001/10/synthesis" '
+        'xmlns:mstts="https://www.w3.org/2001/mstts" '
+        'xml:lang="en-US">'
+        f'<prosody rate="{settings["rate"]}" pitch="{settings["pitch"]}">'
+        f'{safe_text}'
+        '</prosody>'
+        '</speak>'
+    )
+    return ssml
 
 @server.tool()
 def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
@@ -236,7 +249,7 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     
     try:
         async def generate_audio():
-            # Use SSML-enhanced text for professional quality
+            # ssml_text is a valid <speak> document — Edge TTS interprets it correctly
             communicate = edge_tts.Communicate(ssml_text, voice)
             await communicate.save(str(filepath))
         
