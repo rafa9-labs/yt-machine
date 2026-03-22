@@ -161,19 +161,18 @@ def _add_natural_pacing(text: str) -> str:
     
     return text.strip()
 
-def _apply_ssml_prosody(text: str, voice_tone: str) -> str:
+def _get_voice_parameters(voice_tone: str) -> dict:
     """
-    Build a valid SSML document for Edge TTS.
-    Edge TTS only interprets SSML when the text starts with <speak>.
+    Get rate and pitch parameters for Edge TTS based on voice tone.
+    Edge TTS does NOT support custom SSML - only plain text with API parameters.
     
     Args:
-        text: Clean plain text (already sanitised by _add_natural_pacing)
         voice_tone: Voice style to determine prosody settings
     
     Returns:
-        Valid SSML document string
+        Dict with 'rate' and 'pitch' keys for edge_tts.Communicate()
     """
-    # Prosody settings based on voice tone
+    # Prosody settings for Edge TTS API parameters
     prosody_settings = {
         "authoritative": {"rate": "+0%",  "pitch": "+0Hz"},
         "professional":  {"rate": "-5%",  "pitch": "-2Hz"},
@@ -184,35 +183,7 @@ def _apply_ssml_prosody(text: str, voice_tone: str) -> str:
         "female_energetic":    {"rate": "+8%", "pitch": "+3Hz"},
         "male_casual":         {"rate": "+5%", "pitch": "+0Hz"},
     }
-    settings = prosody_settings.get(voice_tone, {"rate": "+0%", "pitch": "+0Hz"})
-    
-    # Escape XML special characters in the plain text
-    import html
-    safe_text = html.escape(text)
-    
-    # Insert natural breaks: sentence endings get a short pause
-    safe_text = re.sub(r'([.!?])\s+', r'\1<break time="600ms"/> ', safe_text)
-    # Comma pauses
-    safe_text = re.sub(r',\s+', r', <break time="200ms"/> ', safe_text)
-    # Dramatic conjunctions get a longer pause
-    safe_text = re.sub(
-        r'\b(But|However|Yet|Still|Nevertheless)\b',
-        r'<break time="400ms"/>\1',
-        safe_text
-    )
-    
-    # Wrap in a valid SSML document
-    ssml = (
-        '<speak version="1.0" '
-        'xmlns="http://www.w3.org/2001/10/synthesis" '
-        'xmlns:mstts="https://www.w3.org/2001/mstts" '
-        'xml:lang="en-US">'
-        f'<prosody rate="{settings["rate"]}" pitch="{settings["pitch"]}">'
-        f'{safe_text}'
-        '</prosody>'
-        '</speak>'
-    )
-    return ssml
+    return prosody_settings.get(voice_tone, {"rate": "+0%", "pitch": "+0Hz"})
 
 @server.tool()
 def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
@@ -240,17 +211,24 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
 
     voice = VOICE_MAPPING.get(voice_tone, VOICE_MAPPING["authoritative"])
 
-    # ENHANCED: Add natural pacing and SSML prosody
-    paced_text = _add_natural_pacing(text)
-    ssml_text = _apply_ssml_prosody(paced_text, voice_tone)
+    # Clean the text (remove formatting, underscores, etc.)
+    clean_text = _add_natural_pacing(text)
+    
+    # Get rate/pitch parameters for Edge TTS API
+    voice_params = _get_voice_parameters(voice_tone)
     
     filename = f"voiceover_{voice_tone}_{hash(text) % 10000}.mp3"
     filepath = OUTPUT_DIR / filename
     
     try:
         async def generate_audio():
-            # ssml_text is a valid <speak> document — Edge TTS interprets it correctly
-            communicate = edge_tts.Communicate(ssml_text, voice)
+            # Edge TTS accepts plain text + rate/pitch parameters (NO SSML)
+            communicate = edge_tts.Communicate(
+                clean_text, 
+                voice,
+                rate=voice_params["rate"],
+                pitch=voice_params["pitch"]
+            )
             await communicate.save(str(filepath))
         
         # Retry logic for Edge TTS
