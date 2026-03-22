@@ -33,10 +33,11 @@ CAMERA_PATTERNS = {
 
 def _apply_camera_movement(clip: ImageClip, movement_type: str, duration: float) -> ImageClip:
     """
-    Apply professional camera movement to image clip.
+    FIXED: Apply professional camera movement to image clip.
+    Movements now work properly with smooth animations.
     
     Args:
-        clip: ImageClip to animate
+        clip: ImageClip to animate (should be pre-resized to target dimensions)
         movement_type: 'zoom_in', 'zoom_out', 'pan_right', or 'pan_left'
         duration: Duration of the clip
     
@@ -44,17 +45,19 @@ def _apply_camera_movement(clip: ImageClip, movement_type: str, duration: float)
         Animated ImageClip with smooth camera movement
     """
     if movement_type == 'zoom_in':
-        # Smooth zoom in from 1.0 to 1.15 scale
-        return clip.resize(lambda t: 1.0 + 0.15 * (t / duration))
+        # FIXED: Smooth zoom in from 1.0 to 1.2 scale with center point
+        return clip.resize(lambda t: 1.0 + 0.2 * (t / duration))
     elif movement_type == 'zoom_out':
-        # Smooth zoom out from 1.15 to 1.0 scale
-        return clip.resize(lambda t: 1.15 - 0.15 * (t / duration))
+        # FIXED: Smooth zoom out from 1.2 to 1.0 scale
+        return clip.resize(lambda t: 1.2 - 0.2 * (t / duration))
     elif movement_type == 'pan_right':
-        # Pan from left to right
-        return clip.set_position(lambda t: (int(-50 + 50 * (t / duration)), 'center'))
+        # FIXED: Pan from left to right - increased distance, removed int() for smoothness
+        pan_distance = 150  # Increased from 50 for better visibility
+        return clip.set_position(lambda t: (-pan_distance + pan_distance * (t / duration), 'center'))
     elif movement_type == 'pan_left':
-        # Pan from right to left
-        return clip.set_position(lambda t: (int(50 * (t / duration)), 'center'))
+        # FIXED: Pan from right to left - smooth float calculation
+        pan_distance = 150
+        return clip.set_position(lambda t: (pan_distance - pan_distance * (t / duration), 'center'))
     else:
         return clip
 
@@ -174,6 +177,92 @@ def _make_rec_blink(width: int, height: int, duration: float) -> ImageClip:
     return VideoClip(make_blink_frame, duration=duration).with_fps(FPS)
 
 
+def _create_scene_subcuts(clip: ImageClip, scene_dur: float, movement_type: str) -> List[ImageClip]:
+    """
+    Phase 4.4: Split a single image scene into 2-3 sub-clips with different
+    camera movements. Creates visual variety (2-4s cuts) without needing new images.
+
+    Args:
+        clip: Pre-resized ImageClip
+        scene_dur: Total duration for this scene
+        movement_type: Primary camera movement type
+
+    Returns:
+        List of sub-clips that together equal scene_dur
+    """
+    # Only apply sub-cuts when scene is long enough
+    if scene_dur < 6.0:
+        clip = _apply_camera_movement(clip, movement_type, scene_dur)
+        return [clip]
+
+    # Define complementary movement pairs
+    movement_pairs = {
+        'zoom_in':   ['zoom_in', 'pan_right'],
+        'zoom_out':  ['zoom_out', 'pan_left'],
+        'pan_right': ['pan_right', 'zoom_in'],
+        'pan_left':  ['pan_left', 'zoom_out'],
+    }
+    movements = movement_pairs.get(movement_type, ['zoom_in', 'pan_right'])
+
+    # Split into 2 sub-clips: 55% / 45%
+    dur_a = round(scene_dur * 0.55, 3)
+    dur_b = round(scene_dur - dur_a, 3)
+
+    sub_a = clip.set_duration(dur_a)
+    sub_b = clip.set_duration(dur_b)
+
+    sub_a = _apply_camera_movement(sub_a, movements[0], dur_a)
+    sub_b = _apply_camera_movement(sub_b, movements[1], dur_b)
+
+    return [sub_a, sub_b]
+
+
+def _calculate_dynamic_durations(total_duration: float, num_scenes: int) -> List[float]:
+    """
+    Calculate dynamic scene durations for natural pacing.
+    
+    Args:
+        total_duration: Total video duration in seconds
+        num_scenes: Number of scenes/images
+    
+    Returns:
+        List of durations for each scene
+    """
+    if num_scenes == 1:
+        return [total_duration]
+    
+    # Base duration per scene
+    base_duration = total_duration / num_scenes
+    
+    # Dynamic adjustments:
+    # - First scene (hook): +20% for impact
+    # - Last scene (conclusion): +15% for lasting impression
+    # - Middle scenes: slight variation for rhythm
+    durations = []
+    
+    for i in range(num_scenes):
+        if i == 0:
+            # Hook scene - longer for attention capture
+            duration = base_duration * 1.2
+        elif i == num_scenes - 1:
+            # Final scene - longer for conclusion
+            duration = base_duration * 1.15
+        elif i == num_scenes // 2:
+            # Middle pivot - slightly shorter for pace
+            duration = base_duration * 0.9
+        else:
+            # Other scenes - near base with slight variation
+            duration = base_duration * (0.95 + (i % 2) * 0.1)
+        
+        durations.append(duration)
+    
+    # Normalize to match total duration exactly
+    current_total = sum(durations)
+    scale_factor = total_duration / current_total
+    durations = [d * scale_factor for d in durations]
+    
+    return durations
+
 def _make_ticker(headlines: List[str], width: int, duration: float) -> CompositeVideoClip:
     joined  = "   ★   ".join(h.upper() for h in headlines) + "   ★   "
     joined  = (joined + "   ") * 4
@@ -246,7 +335,12 @@ def build_final_video(
         audio_clip   = AudioFileClip(audio_path)
         total_dur    = audio_clip.duration
         n_assets     = max(len(asset_paths), 1)
-        clip_dur     = max(total_dur / n_assets, 7.0)
+        
+        # PHASE 2.3: Dynamic pacing - calculate varied durations
+        # First and last scenes get slightly more time for impact
+        # Middle scenes vary based on position
+        scene_durations = _calculate_dynamic_durations(total_dur, n_assets)
+        
         video_clips  = []
         
         # Dynamic camera: zoom_out first (reveals scale), rest randomized
@@ -258,23 +352,28 @@ def build_final_video(
 
         for idx, asset_path in enumerate(asset_paths):
             ext = Path(asset_path).suffix.lower()
+            # PHASE 2.3: Use dynamic duration for this scene
+            scene_dur = scene_durations[idx] if idx < len(scene_durations) else scene_durations[-1]
+            
             if ext in (".mp4", ".mov", ".avi", ".mkv"):
                 clip = VideoFileClip(asset_path)
             elif ext in (".png", ".jpg", ".jpeg", ".bmp"):
-                clip = ImageClip(asset_path).set_duration(clip_dur)
+                clip = ImageClip(asset_path).set_duration(scene_dur)
             else:
                 continue
 
-            # Apply dynamic camera movement
-            if is_pixel_art and idx < len(camera_movements):
-                movement = camera_movements[idx]
-                clip = _apply_camera_movement(clip, movement, clip_dur)
-
+            # FIXED: Resize FIRST, then apply camera movement
             clip = clip.resize(height=VIDEO_H)
             if clip.w > VIDEO_W:
                 clip = clip.resize(width=VIDEO_W)
 
-            video_clips.append(clip)
+            # PHASE 4.4: Create sub-cuts for visual variety (2 movements per scene)
+            if is_pixel_art and idx < len(camera_movements):
+                movement = camera_movements[idx]
+                subcuts = _create_scene_subcuts(clip, scene_dur, movement)
+                video_clips.extend(subcuts)
+            else:
+                video_clips.append(clip)
 
         if not video_clips:
             return {"success": False, "error": "No valid clips could be processed"}
@@ -282,29 +381,29 @@ def build_final_video(
         base = concatenate_videoclips(video_clips) if len(video_clips) > 1 else video_clips[0]
         base = base.set_audio(audio_clip)
 
+        # PHASE 2.1: Clean video - no text overlays for professional appearance
         layers = [base]
 
-        # Add 7-second segment captions if script text provided
-        if script_text:
-            caption_clips = _create_segment_captions(script_text, total_dur, base.w, base.h)
-            layers.extend(caption_clips)
+        # DISABLED: Text captions removed for clean visual presentation
+        # if script_text:
+        #     caption_clips = _create_segment_captions(script_text, total_dur, base.w, base.h)
+        #     layers.extend(caption_clips)
 
-        # Add era-specific HUD overlays for each clip
-        if era_tags and len(era_tags) == len(video_clips):
-            # Create separate HUD for each clip with era-specific styling
-            for idx, (clip, era) in enumerate(zip(video_clips, era_tags)):
-                start_time = idx * clip_dur
-                hud_clip = _make_hud_overlay(base.w, base.h, clip_dur, era)
-                hud_clip = hud_clip.set_start(start_time)
-                layers.append(hud_clip)
-        else:
-            # Default single HUD for entire video
-            hud = _make_hud_overlay(base.w, base.h, total_dur)
-            layers.append(hud)
+        # DISABLED: HUD overlays removed - audio narration carries all information
+        # if era_tags and len(era_tags) == len(video_clips):
+        #     for idx, (clip, era) in enumerate(zip(video_clips, era_tags)):
+        #         start_time = idx * clip_dur
+        #         hud_clip = _make_hud_overlay(base.w, base.h, clip_dur, era)
+        #         hud_clip = hud_clip.set_start(start_time)
+        #         layers.append(hud_clip)
+        # else:
+        #     hud = _make_hud_overlay(base.w, base.h, total_dur)
+        #     layers.append(hud)
 
-        ticker = _make_ticker(ticker_headlines, base.w, total_dur)
-        ticker = ticker.set_position((0, base.h - TICKER_H))
-        layers.append(ticker)
+        # DISABLED: Ticker marquee removed for clean composition
+        # ticker = _make_ticker(ticker_headlines, base.w, total_dur)
+        # ticker = ticker.set_position((0, base.h - TICKER_H))
+        # layers.append(ticker)
 
         final_video = CompositeVideoClip(layers, size=(base.w, base.h))
 
@@ -334,10 +433,9 @@ def build_final_video(
 
         effects = []
         if is_pixel_art:
-            effects += ["random_camera_movements"]
-        if script_text:
-            effects += ["segment_captions"]
-        effects += ["ticker_marquee", "hud_overlay"]
+            effects += ["camera_movements"]
+        # PHASE 2.1: Text overlays removed
+        effects += ["clean_video", "audio_only_narration"]
 
         return {
             "success": True,
