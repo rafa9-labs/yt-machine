@@ -297,21 +297,6 @@ Synthesize this into a compelling 45-second script."""
             return None
         
         script = self._extract_json(response)
-        
-        # TEMP: Try relaxed parsing if strict fails
-        if not script or not isinstance(script, dict):
-            try:
-                import json
-                cleaned = response.strip().replace('\n', ' ').replace('\r', '')
-                start = cleaned.find('{')
-                end = cleaned.rfind('}') + 1
-                if start != -1 and end > start:
-                    json_str = cleaned[start:end]
-                    script = json.loads(json_str)
-                    print("  [TEMP] Parsed script JSON with relaxed rules")
-            except:
-                pass
-        
         if not script or not isinstance(script, dict):
             print(f"Failed to parse script JSON or invalid format")
 <<<<<<< HEAD
