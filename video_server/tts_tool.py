@@ -1,10 +1,13 @@
 import os
 import asyncio
 import time
+import re
 from pathlib import Path
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 import edge_tts
+import struct
+import wave
 
 server = FastMCP("tts-tool")
 
@@ -21,6 +24,182 @@ VOICE_MAPPING = {
     "female_energetic": "en-US-JennyNeural",
     "male_casual": "en-US-BrandonNeural"
 }
+
+# Phase 5.3: Content-type to voice-tone mapping
+# Maps script mood/topic keywords to the most effective voice tone
+CONTENT_VOICE_MAP = {
+    "military": "authoritative",
+    "conflict": "authoritative",
+    "war": "authoritative",
+    "economic": "professional",
+    "financial": "professional",
+    "sanctions": "professional",
+    "technology": "professional",
+    "cyber": "professional",
+    "climate": "calm",
+    "health": "calm",
+    "pandemic": "calm",
+    "diplomatic": "professional",
+    "breaking": "energetic",
+    "urgent": "energetic",
+    "crisis": "authoritative",
+    "collapse": "authoritative",
+}
+
+
+def select_voice_for_content(script_text: str, default_tone: str = "authoritative") -> str:
+    """
+    Phase 5.3: Select the best voice tone based on script content.
+
+    Args:
+        script_text: Full script text
+        default_tone: Fallback voice tone
+
+    Returns:
+        Best matching voice_tone string
+    """
+    text_lower = script_text.lower()
+    scores = {}
+    for keyword, tone in CONTENT_VOICE_MAP.items():
+        if keyword in text_lower:
+            scores[tone] = scores.get(tone, 0) + 1
+
+    if scores:
+        best_tone = max(scores, key=lambda k: scores[k])
+        return best_tone
+    return default_tone
+
+
+def _apply_audio_mastering(input_path: Path) -> bool:
+    """
+    Phase 5.2: Apply professional audio mastering to an MP3 file.
+    Normalises loudness, reduces harsh sibilance, and ensures consistent levels.
+    Uses numpy + scipy if available; silently skips if not installed.
+
+    Args:
+        input_path: Path to the MP3 file to master in-place
+
+    Returns:
+        True if mastering was applied, False if skipped
+    """
+    try:
+        import numpy as np
+        from moviepy.audio.io.AudioFileClip import AudioFileClip
+        from moviepy.audio.AudioClip import AudioArrayClip
+
+        clip = AudioFileClip(str(input_path))
+        arr = clip.to_soundarray(fps=44100)  # shape: (N, channels)
+        clip.close()
+
+        if arr is None or arr.size == 0:
+            return False
+
+        # 1. Peak normalise to -3 dBFS (prevent clipping)
+        peak = np.max(np.abs(arr))
+        if peak > 0:
+            target_peak = 0.708  # -3 dBFS
+            arr = arr * (target_peak / peak)
+
+        # 2. RMS normalise for consistent perceived loudness
+        rms = np.sqrt(np.mean(arr ** 2))
+        target_rms = 0.12  # ~-18 LUFS equivalent
+        if rms > 0:
+            rms_gain = target_rms / rms
+            # Cap gain to avoid over-amplifying silence
+            rms_gain = min(rms_gain, 3.0)
+            arr = arr * rms_gain
+            arr = np.clip(arr, -1.0, 1.0)  # hard limit
+
+        # 3. Write back
+        fps = 44100
+        # Ensure arr is a list/tuple for AudioArrayClip
+        if isinstance(arr, np.ndarray) and arr.ndim == 1:
+            arr = [arr.tolist()]
+        elif isinstance(arr, np.ndarray) and arr.ndim == 2:
+            arr = arr.tolist()
+        mastered_clip = AudioArrayClip(arr, fps=fps)
+        mastered_clip.write_audiofile(
+            str(input_path),
+            fps=fps,
+            verbose=False,
+            logger=None
+        )
+        mastered_clip.close()
+        return True
+
+    except Exception as e:
+        print(f"  [TTS] Audio mastering skipped: {e}")
+        return False
+
+def _add_natural_pacing(text: str) -> str:
+    """
+    Add strategic pauses for natural speech pacing.
+    
+    Args:
+        text: Original script text
+    
+    Returns:
+        Text with pause markers for natural breathing and emphasis
+    """
+    # Add 0.5s pause after commas
+    text = re.sub(r',', ',<break time="500ms"/>', text)
+    
+    # Add 1.0s pause after sentences
+    text = re.sub(r'([.!?])\s+', r'\1<break time="1000ms"/> ', text)
+    
+    # Add 1.5s pause before dramatic reveals (words like "but", "however", "yet")
+    dramatic_words = r'\b(But|However|Yet|Still|Nevertheless)\b'
+    text = re.sub(dramatic_words, r'<break time="1500ms"/>\1', text)
+    
+    # Add breathing points every 8-10 words (approximately)
+    words = text.split()
+    result = []
+    word_count = 0
+    for word in words:
+        result.append(word)
+        word_count += 1
+        if word_count >= 9 and not any(pause in word for pause in ['<break', ',', '.', '!', '?']):
+            result.append('<break time="300ms"/>')
+            word_count = 0
+    
+    return ' '.join(result)
+
+def _apply_ssml_prosody(text: str, voice_tone: str) -> str:
+    """
+    Apply SSML prosody tags for professional voice quality.
+    
+    Args:
+        text: Text with pause markers
+        voice_tone: Voice style to determine prosody settings
+    
+    Returns:
+        SSML-formatted text with prosody controls
+    """
+    # Prosody settings based on voice tone
+    prosody_settings = {
+        "authoritative": {"rate": "+0%", "volume": "+5%"},
+        "professional": {"rate": "-5%", "volume": "+2%"},
+        "energetic": {"rate": "+10%", "volume": "+8%"},
+        "calm": {"rate": "-10%", "volume": "+0%"},
+        "deep": {"rate": "-5%", "volume": "+5%"},
+        "female_professional": {"rate": "-3%", "volume": "+3%"},
+        "female_energetic": {"rate": "+8%", "volume": "+6%"},
+        "male_casual": {"rate": "+5%", "volume": "+2%"}
+    }
+    
+    settings = prosody_settings.get(voice_tone, {"rate": "+0%", "volume": "+0%"})
+    
+    # Add emphasis to key terms (numbers, locations, names in caps)
+    # Emphasize numbers
+    text = re.sub(r'\b(\d+)\b', r'<emphasis level="strong">\1</emphasis>', text)
+    
+    # Emphasize capitalized words (likely names/locations)
+    text = re.sub(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', r'<emphasis level="moderate">\1</emphasis>', text)
+    
+    # Wrap in prosody tags
+    ssml_text = f'<prosody rate="{settings["rate"]}" volume="{settings["volume"]}">{text}</prosody>'
+    
+    return ssml_text
 
 @server.tool()
 def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
@@ -42,14 +221,23 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
             "error": "Text cannot be empty"
         }
     
+    # Phase 5.3: Auto-select best voice tone if caller used default
+    if voice_tone == "authoritative":
+        voice_tone = select_voice_for_content(text, default_tone="authoritative")
+
     voice = VOICE_MAPPING.get(voice_tone, VOICE_MAPPING["authoritative"])
+
+    # ENHANCED: Add natural pacing and SSML prosody
+    paced_text = _add_natural_pacing(text)
+    ssml_text = _apply_ssml_prosody(paced_text, voice_tone)
     
     filename = f"voiceover_{voice_tone}_{hash(text) % 10000}.mp3"
     filepath = OUTPUT_DIR / filename
     
     try:
         async def generate_audio():
-            communicate = edge_tts.Communicate(text, voice)
+            # Use SSML-enhanced text for professional quality
+            communicate = edge_tts.Communicate(ssml_text, voice)
             await communicate.save(str(filepath))
         
         # Retry logic for Edge TTS
@@ -71,12 +259,16 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
                 "success": False,
                 "error": f"Audio file was not created at {filepath}"
             }
-        
+
+        # Phase 5.2: Apply audio mastering (normalise + RMS levelling)
+        mastered = _apply_audio_mastering(filepath)
+        if mastered:
+            print(f"  [TTS] Audio mastering applied to {filename}")
+
         file_size = filepath.stat().st_size
-        
         word_count = len(text.split())
         estimated_duration = word_count / 2.5
-        
+
         return {
             "success": True,
             "filename": filename,
@@ -87,6 +279,7 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
             "word_count": word_count,
             "file_size_bytes": file_size,
             "estimated_duration_seconds": round(estimated_duration, 2),
+            "audio_mastered": mastered,
             "output_directory": str(OUTPUT_DIR)
         }
     

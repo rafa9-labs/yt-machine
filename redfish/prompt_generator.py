@@ -1,6 +1,7 @@
 """
 Visual Prompt Generator - Narrative-driven prompt construction for image generation
 Builds 5 scene prompts from extracted visual elements + script segments
+Phase 4.2: Now integrated with ScriptParser for action-specific prompts
 """
 
 import random
@@ -8,6 +9,7 @@ from typing import Dict, Any, List, Optional
 from .action_mapping import enhance_action, get_dynamic_action_phrase, SCENE_ACTION_MODIFIERS
 from .military_equipment_db import normalize_equipment
 from .historical_equipment_db import get_equipment_for_era, normalize_historical_equipment
+from .script_parser import ScriptParser
 
 
 # Scene composition templates — 6 scenes matching script segments with historical anchoring
@@ -53,8 +55,8 @@ SCENE_TEMPLATES = {
 
 class VisualPromptGenerator:
     """
-    Generates 5 narrative-driven image prompts from visual elements and script segments.
-    Each prompt is co-derived from the script to ensure visual-narrative coherence.
+    Generates 5-6 narrative-driven image prompts from visual elements and script segments.
+    Phase 4.2: Now uses ScriptParser for action-specific, script-matched prompts.
     """
     
     def __init__(self, news_analysis: Dict[str, Any], visual_elements: Dict[str, Any],
@@ -68,51 +70,64 @@ class VisualPromptGenerator:
         self.news_analysis = news_analysis
         self.visual_elements = visual_elements
         self.script = script or {}
-        self.style_suffix = "true 16-bit pixel art, retro SNES style, isometric perspective, hard pixel edges, limited color palette, detailed proportions, flat colors, NO blur"
+        self.style_suffix = "true 16-bit pixel art, retro SNES style, isometric perspective, hard pixel edges, limited color palette with dark navy blues and amber accents, detailed proportions, flat colors, NO blur, NO text"
+        # Phase 4.2: Script parser for action-specific prompts
+        self._parser = ScriptParser()
+        # Pre-parse all segments upfront
+        self._parsed_segments: Dict[str, Dict] = {}
+        if self.script:
+            for seg in self._parser.parse_all_segments(self.script):
+                self._parsed_segments[seg['segment']] = seg
     
     def generate_scene_prompt(self, scene_type: str, fallback_prompt: str = None) -> str:
         """
         Generate dynamic prompt for a specific scene.
+        Phase 4.2: Prioritises ScriptParser action-specific prompt over generic extraction.
         
         Args:
-            scene_type: One of hook, context, escalation, consequence, twist
+            scene_type: One of hook, historical_1, historical_2, modern_pivot, consequence, future_outlook
             fallback_prompt: Optional fallback if extraction fails
             
         Returns:
             Complete image generation prompt
         """
-        # Fallback to 'hook' if scene_type not found (works for both 5 and 6 segment structures)
         template = SCENE_TEMPLATES.get(scene_type, SCENE_TEMPLATES['hook'])
         
-        # Try to use visual_scenes from script first (LLM-generated descriptions)
+        # Phase 4.2: Try script-parser-driven prompt first (highest relevance)
+        if scene_type in self._parsed_segments:
+            parsed = self._parsed_segments[scene_type]
+            parser_prompt = self._parser.build_action_prompt(parsed, self.style_suffix)
+            if parser_prompt and len(parser_prompt) > 30:
+                return parser_prompt
+        
+        # Fallback 1: LLM-generated visual scene description
         llm_scene_desc = self._get_script_visual_scene(scene_type)
-        
         if llm_scene_desc and len(llm_scene_desc) > 20:
-            # LLM provided a visual scene description — use it as the base
             base_prompt = f"{template['perspective']}: {llm_scene_desc}"
-        else:
-            # Build from extracted visual elements
-            subject = self._get_subject_for_scene(scene_type)
-            setting = self._get_setting_for_scene(scene_type)
-            action = self._get_action_for_scene(scene_type)
-            context = self._get_temporal_context()
-            
-            prompt_parts = []
-            if subject:
-                prompt_parts.append(f"{template['perspective']}: {subject}")
-            if action:
-                prompt_parts.append(action)
-            if setting:
-                prompt_parts.append(f"at {setting}")
-            if context:
-                prompt_parts.append(context)
-            
-            if len(prompt_parts) < 2 and fallback_prompt:
-                base_prompt = fallback_prompt
-            else:
-                base_prompt = " ".join(filter(None, prompt_parts))
+            return f"{base_prompt}, {self.style_suffix}"
         
-        # Ensure we have something
+        # Fallback 2: Build from extracted visual elements
+        subject = self._get_subject_for_scene(scene_type)
+        setting = self._get_setting_for_scene(scene_type)
+        action = self._get_action_for_scene(scene_type)
+        context = self._get_temporal_context()
+        
+        prompt_parts = []
+        if subject:
+            prompt_parts.append(f"{template['perspective']}: {subject}")
+        if action:
+            prompt_parts.append(action)
+        if setting:
+            prompt_parts.append(f"at {setting}")
+        if context:
+            prompt_parts.append(context)
+        
+        if len(prompt_parts) < 2 and fallback_prompt:
+            base_prompt = fallback_prompt
+        else:
+            base_prompt = " ".join(filter(None, prompt_parts))
+        
+        # Final fallback
         if not base_prompt or len(base_prompt) < 10:
             topic = self.news_analysis.get('topic', 'geopolitical event')
             base_prompt = f"{template['perspective']}: {topic}, {template['focus']}"

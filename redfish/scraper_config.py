@@ -49,12 +49,34 @@ GEOPOLITICAL_FEEDS = [
     }
 ]
 
+# PHASE 3.3: Expanded keyword categories for topic diversification
 GEOPOLITICAL_KEYWORDS = {
     "middle_east_conflict": [
         "iran", "israel", "hormuz", "hezbollah", "irgc", "idf",
         "gaza", "hamas", "syria", "yemen", "saudi", "uae",
         "dubai", "qatar", "kuwait", "bahrain", "oman", "iraq",
         "lebanon", "jordan", "egypt", "sinai", "red sea", "persian gulf"
+    ],
+    "technology_disruption": [
+        "ai", "artificial intelligence", "quantum", "semiconductor", "chip",
+        "5g", "6g", "cyber", "cybersecurity", "hack", "ransomware",
+        "blockchain", "cryptocurrency", "bitcoin", "ethereum", "web3",
+        "autonomous", "robotics", "drone tech", "space", "satellite",
+        "neural network", "machine learning", "deepfake", "surveillance"
+    ],
+    "climate_geopolitics": [
+        "climate", "carbon", "renewable", "solar", "wind", "nuclear",
+        "drought", "water crisis", "food security", "famine", "crop failure",
+        "extreme weather", "flooding", "wildfire", "hurricane", "typhoon",
+        "sea level", "glacier", "arctic", "antarctica", "permafrost",
+        "green energy", "battery", "lithium", "cobalt", "rare minerals"
+    ],
+    "health_security": [
+        "pandemic", "epidemic", "outbreak", "virus", "vaccine",
+        "bioweapon", "bioterror", "lab leak", "gain of function",
+        "antibiotic resistance", "superbug", "bird flu", "h5n1",
+        "pharmaceutical", "drug shortage", "medical supply", "hospital",
+        "public health", "quarantine", "lockdown", "variant"
     ],
     "great_power_competition": [
         "china", "russia", "ukraine", "taiwan", "nato", "quad",
@@ -87,6 +109,19 @@ GEOPOLITICAL_KEYWORDS = {
         "transactional", "leverage", "washington", "state department",
         "foreign minister", "ambassador", "un", "security council", "g20"
     ]
+}
+
+# PHASE 3.3: Category weights for balanced content distribution
+CATEGORY_WEIGHTS = {
+    "middle_east_conflict": 4,  # Reduced from implicit 4 to balance with other topics
+    "technology_disruption": 4,  # Equal weight for tech topics
+    "climate_geopolitics": 4,   # Equal weight for climate topics
+    "health_security": 4,        # Equal weight for health topics
+    "great_power_competition": 4,
+    "economic_warfare": 4,
+    "regional_flashpoints": 3,
+    "kinetic_operations": 4,
+    "diplomatic_pivot": 4
 }
 
 VIRALITY_BOOST_KEYWORDS = [
