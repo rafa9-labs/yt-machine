@@ -52,28 +52,28 @@ def test_camera_movements():
         return False
 
 def test_voice_enhancements():
-    """Test voice quality enhancements with SSML."""
+    """Test voice quality enhancements with Edge TTS API."""
     print("\n🎤 Testing Voice Quality Enhancements...")
     
     try:
-        from video_server.tts_tool import _add_natural_pacing, _apply_ssml_prosody
+        from video_server.tts_tool import _add_natural_pacing, _get_voice_parameters
         
         test_text = "Today is March 21, 2026. Oil_prices hit one hundred twelve dollars per barrel. This is the third time in forty years."
         
-        # Test natural pacing: should clean underscores, stray tags, formatting
-        paced_text = _add_natural_pacing(test_text)
-        if '_' not in paced_text and '<' not in paced_text:
-            print("  ✅ Natural pacing: Text cleaned (no underscores or raw tags)")
+        # Test text cleaning: should remove underscores, stray tags, formatting
+        cleaned_text = _add_natural_pacing(test_text)
+        if '_' not in cleaned_text and '<' not in cleaned_text and '=' not in cleaned_text:
+            print("  ✅ Text cleaning: No underscores, tags, or formatting chars")
         else:
-            print("  ❌ Natural pacing: Text not properly sanitised")
+            print("  ❌ Text cleaning: Formatting characters still present")
             return False
         
-        # Test SSML prosody: must be a valid <speak> document with <break> tags
-        ssml_text = _apply_ssml_prosody(paced_text, "authoritative")
-        if ssml_text.strip().startswith('<speak') and '<break time=' in ssml_text and '<prosody' in ssml_text:
-            print("  ✅ SSML prosody: Valid <speak> document with breaks")
+        # Test voice parameters: should return rate and pitch for Edge TTS API
+        params = _get_voice_parameters("authoritative")
+        if 'rate' in params and 'pitch' in params and isinstance(params['rate'], str) and isinstance(params['pitch'], str):
+            print("  ✅ Voice parameters: rate and pitch configured")
         else:
-            print("  ❌ SSML prosody: Not a valid SSML document")
+            print("  ❌ Voice parameters: Missing or invalid")
             return False
         
         print("  ✅ Voice enhancements functional")

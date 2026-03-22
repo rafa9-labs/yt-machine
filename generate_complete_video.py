@@ -202,6 +202,17 @@ try:
     print(f"  Hook: {script.get('hook', 'N/A')[:80]}...")
     print(f"  Words: {script.get('word_count', 0)}")
     
+    # Save script files for debugging
+    import json
+    script_file = project_folder / "script.txt"
+    script_file.write_text(full_script, encoding='utf-8')
+    
+    segments_file = project_folder / "script_segments.json"
+    segments_data = {k: v for k, v in script.items() if k in ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook', 'context', 'escalation', 'twist']}
+    segments_file.write_text(json.dumps(segments_data, indent=2, ensure_ascii=False), encoding='utf-8')
+    
+    print(f"  📄 Script saved: {script_file.name}, {segments_file.name}")
+    
 except Exception as e:
     print(f"❌ Script synthesis failed: {e}")
     import traceback
