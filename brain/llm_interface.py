@@ -61,6 +61,25 @@ class LLMInterface:
                             return json.loads(json_str)
             except:
                 pass
+            
+            # Last resort: Try to close incomplete JSON
+            try:
+                json_str = response[json_start:]
+                # Count open braces/brackets
+                open_braces = json_str.count('{') - json_str.count('}')
+                open_brackets = json_str.count('[') - json_str.count(']')
+                
+                # Add closing characters
+                json_str += '}' * open_braces
+                json_str += ']' * open_brackets
+                
+                # Remove trailing commas before closing
+                json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                
+                return json.loads(json_str)
+            except:
+                pass
+            
             return None
     
     def _make_request(self, endpoint: str, payload: Dict[str, Any], attempt: int = 1) -> Optional[Dict[str, Any]]:
@@ -220,21 +239,21 @@ class LLMInterface:
             salience_block = f"""
 Salience Analysis:
 - Conflict: {salience_data.get('conflict', 'N/A')}
-- Consequence Chain: {' -> '.join(salience_data.get('consequence_chain', []))}
-- Emotional Anchors: {', '.join(salience_data.get('emotional_anchors', []))}
+- Consequence Chain: {' -> '.join(salience_data.get('consequence_chain') or [])}
+- Emotional Anchors: {', '.join(salience_data.get('emotional_anchors') or [])}
 - Surprise Angle: {salience_data.get('surprise_angle', 'N/A')}
 - Human Impact: {salience_data.get('human_impact', 'N/A')}
-- Key Visual Subjects: {', '.join(salience_data.get('key_visual_subjects', []))}
+- Key Visual Subjects: {', '.join(salience_data.get('key_visual_subjects') or [])}
 """
         
         historical_block = ""
         if historical_parallels and 'parallels' in historical_parallels:
             historical_block = "\nHistorical Parallels to Reference:\n"
             for i, parallel in enumerate(historical_parallels['parallels'][:3], 1):
-                equipment_str = ', '.join(parallel.get('military_equipment', [])[:3])
+                equipment_str = ', '.join((parallel.get('military_equipment') or [])[:3])
                 historical_block += f"""
 {i}. {parallel.get('event_name', 'N/A')} ({parallel.get('year', 'N/A')}):
-   - Players: {', '.join(parallel.get('key_players', []))}
+   - Players: {', '.join(parallel.get('key_players') or [])}
    - Equipment: {equipment_str}
    - Outcome: {parallel.get('outcome', 'N/A')}
    - Relevance: {parallel.get('relevance_to_current', 'N/A')}
