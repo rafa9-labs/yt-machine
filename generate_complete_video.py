@@ -204,20 +204,9 @@ try:
     
 except Exception as e:
     print(f"❌ Script synthesis failed: {e}")
-    print("🔄 Using fallback test script for pipeline validation...")
-    
-    # Fallback script for testing
-    script = {
-        "hook": "Three missiles streaked across the Strait of Hormuz at zero four hundred hours. Twenty one percent of global oil just stopped flowing.",
-        "historical_1": "This is not the first time. In nineteen eighty seven, Iranian speedboats attacked tankers in the Persian Gulf during the Tanker War.",
-        "historical_2": "And in nineteen ninety one, coalition F-117 Nighthawks struck Iraqi air defenses in the opening hours of Desert Storm.",
-        "modern_pivot": "But twenty twenty six is different. Iran now fields hypersonic missiles and drone swarms.",
-        "consequence": "In Tokyo, fuel prices hit record highs. Your gas bill just went up thirty percent.",
-        "future_outlook": "The next seventy two hours will determine whether this blockade holds. And the barrel price? Still climbing.",
-        "full_text": "Three missiles streaked across the Strait of Hormuz at zero four hundred hours. Twenty one percent of global oil just stopped flowing. This is not the first time. In nineteen eighty seven, Iranian speedboats attacked tankers in the Persian Gulf during the Tanker War. And in nineteen ninety one, coalition F-117 Nighthawks struck Iraqi air defenses in the opening hours of Desert Storm. But twenty twenty six is different. Iran now fields hypersonic missiles and drone swarms. In Tokyo, fuel prices hit record highs. Your gas bill just went up thirty percent. The next seventy two hours will determine whether this blockade holds. And the barrel price? Still climbing.",
-        "word_count": 105,
-        "estimated_duration": 42
-    }
+    import traceback
+    traceback.print_exc()
+    exit(1)
 
 print("\n🎨 STEP 5: PIXEL ART GENERATION")
 print("-" * 40)
