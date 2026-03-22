@@ -15,7 +15,31 @@
       "region": "middle_east",
       "article_title": "Iran claims missile attacks on key Israeli military bases",
       "created_at": "2026-03-22 16:18:35"
+    },
+    {
+      "project_id": 1774197351,
+      "topic": "Ukraine and Russia Resume Talks Amid Ongoing Conflict",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
+      "created_at": "2026-03-22 16:35:51"
+    },
+    {
+      "project_id": 1774198160,
+      "topic": "Iran Strikes Back at Israel",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Iran claims missile attacks on key Israeli military bases",
+      "created_at": "2026-03-22 16:49:20"
+    },
+    {
+      "project_id": 1774198491,
+      "topic": "US and Ukraine Meet Amid Ukraine-Russia Strikes",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
+      "created_at": "2026-03-22 16:54:51"
     }
   ],
-  "last_updated": "2026-03-22 16:18:35"
+  "last_updated": "2026-03-22 16:54:51"
 }

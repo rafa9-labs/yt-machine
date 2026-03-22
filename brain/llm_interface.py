@@ -24,16 +24,11 @@ class LLMInterface:
     def _extract_json(self, response: str) -> Optional[Dict[str, Any]]:
         import re
         
-<<<<<<< HEAD
         # Remove markdown code blocks if present
         response = re.sub(r'```json\s*', '', response)
         response = re.sub(r'```\s*', '', response)
         
         # Find JSON boundaries
-=======
-        response = response.replace('```json', '').replace('```', '')
-        
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
         json_start = response.find('{')
         json_end = response.rfind('}') + 1
         
@@ -42,15 +37,11 @@ class LLMInterface:
         
         json_str = response[json_start:json_end]
         
-<<<<<<< HEAD
         # Remove trailing commas
-=======
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
         json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
         
         try:
             return json.loads(json_str)
-<<<<<<< HEAD
         except json.JSONDecodeError as e:
             # Try to extract just the outermost JSON object
             try:
@@ -70,9 +61,25 @@ class LLMInterface:
                             return json.loads(json_str)
             except:
                 pass
-=======
-        except json.JSONDecodeError:
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
+            
+            # Last resort: Try to close incomplete JSON
+            try:
+                json_str = response[json_start:]
+                # Count open braces/brackets
+                open_braces = json_str.count('{') - json_str.count('}')
+                open_brackets = json_str.count('[') - json_str.count(']')
+                
+                # Add closing characters
+                json_str += '}' * open_braces
+                json_str += ']' * open_brackets
+                
+                # Remove trailing commas before closing
+                json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                
+                return json.loads(json_str)
+            except:
+                pass
+            
             return None
     
     def _make_request(self, endpoint: str, payload: Dict[str, Any], attempt: int = 1) -> Optional[Dict[str, Any]]:
@@ -221,7 +228,6 @@ class LLMInterface:
         self,
         news_summary: Dict[str, Any],
         skeptic_response: Dict[str, Any],
-<<<<<<< HEAD
         explainer_response: Dict[str, Any],
         salience_data: Optional[Dict[str, Any]] = None,
         historical_parallels: Optional[Dict[str, Any]] = None
@@ -233,21 +239,21 @@ class LLMInterface:
             salience_block = f"""
 Salience Analysis:
 - Conflict: {salience_data.get('conflict', 'N/A')}
-- Consequence Chain: {' -> '.join(salience_data.get('consequence_chain', []))}
-- Emotional Anchors: {', '.join(salience_data.get('emotional_anchors', []))}
+- Consequence Chain: {' -> '.join(salience_data.get('consequence_chain') or [])}
+- Emotional Anchors: {', '.join(salience_data.get('emotional_anchors') or [])}
 - Surprise Angle: {salience_data.get('surprise_angle', 'N/A')}
 - Human Impact: {salience_data.get('human_impact', 'N/A')}
-- Key Visual Subjects: {', '.join(salience_data.get('key_visual_subjects', []))}
+- Key Visual Subjects: {', '.join(salience_data.get('key_visual_subjects') or [])}
 """
         
         historical_block = ""
         if historical_parallels and 'parallels' in historical_parallels:
             historical_block = "\nHistorical Parallels to Reference:\n"
             for i, parallel in enumerate(historical_parallels['parallels'][:3], 1):
-                equipment_str = ', '.join(parallel.get('military_equipment', [])[:3])
+                equipment_str = ', '.join((parallel.get('military_equipment') or [])[:3])
                 historical_block += f"""
 {i}. {parallel.get('event_name', 'N/A')} ({parallel.get('year', 'N/A')}):
-   - Players: {', '.join(parallel.get('key_players', []))}
+   - Players: {', '.join(parallel.get('key_players') or [])}
    - Equipment: {equipment_str}
    - Outcome: {parallel.get('outcome', 'N/A')}
    - Relevance: {parallel.get('relevance_to_current', 'N/A')}
@@ -256,35 +262,20 @@ Salience Analysis:
             historical_block += f"\nKey Difference in 2026: {historical_parallels.get('key_difference_2026', 'N/A')}\n"
         
         prompt = f"""Create a 60-80 second news narration script with historical anchoring from this analysis:
-=======
-        explainer_response: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        prompt_config = self.config["prompts"]["script_synthesizer"]
-        
-        prompt = f"""Create a viral short-form video script from this debate:
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
 
 Topic: {news_summary.get('topic', '')}
 Key Facts: {', '.join(news_summary.get('key_facts', []))}
 Angle: {news_summary.get('angle', '')}
-<<<<<<< HEAD
 {salience_block}{historical_block}
-=======
-
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
 Skeptic's Critique: {skeptic_response.get('critique', '')}
 Skeptic's Question: {skeptic_response.get('key_question', '')}
 
 Explainer's Response: {explainer_response.get('explanation', '')}
 Explainer's Analogy: {explainer_response.get('analogy', '')}
 
-<<<<<<< HEAD
 CRITICAL: Output ONLY the JSON object. NO explanatory text before or after. NO markdown. Start with {{ and end with }}.
 
 Synthesize into a compelling 60-80 second professional news narration script with 6 segments that weaves historical parallels into the narrative."""
-=======
-Synthesize this into a compelling 45-second script."""
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
         
         response = self.generate(
             prompt=prompt,
@@ -299,12 +290,8 @@ Synthesize this into a compelling 45-second script."""
         script = self._extract_json(response)
         if not script or not isinstance(script, dict):
             print(f"Failed to parse script JSON or invalid format")
-<<<<<<< HEAD
             print(f"Raw response: {response[:1000]}")
             print(f"Response length: {len(response)} chars")
-=======
-            print(f"Raw response: {response[:300]}")
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
             return None
         
         if "word_count" not in script:
@@ -316,7 +303,6 @@ Synthesize this into a compelling 45-second script."""
                     return sum(len(str(item).split()) for item in value)
                 return 0
             
-<<<<<<< HEAD
             # Support both 5-segment and 6-segment structures
             if "historical_1" in script:
                 # 6-segment structure
@@ -329,10 +315,6 @@ Synthesize this into a compelling 45-second script."""
                              count_words("escalation") + count_words("consequence") + \
                              count_words("twist")
             
-=======
-            total_words = count_words("hook") + count_words("body") + \
-                         count_words("twist") + count_words("cta")
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
             script["word_count"] = total_words
             script["estimated_duration"] = int(total_words / 2.5)
         return script
@@ -360,7 +342,6 @@ Synthesize this into a compelling 45-second script."""
         except Exception as e:
             print(f"Warmup failed: {e}")
             return False
-<<<<<<< HEAD
     
     def extract_visual_elements(self, article_text: str) -> Optional[Dict[str, Any]]:
         """
@@ -406,5 +387,3 @@ Include BOTH military AND non-military subjects."""
             'mood': 'tense',
             'temporal_context': ''
         }
-=======
->>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)

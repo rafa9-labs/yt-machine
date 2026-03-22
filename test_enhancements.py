@@ -58,22 +58,22 @@ def test_voice_enhancements():
     try:
         from video_server.tts_tool import _add_natural_pacing, _apply_ssml_prosody
         
-        test_text = "Today is March 21, 2026. Oil prices hit one hundred twelve dollars per barrel. This is the third time in forty years."
+        test_text = "Today is March 21, 2026. Oil_prices hit one hundred twelve dollars per barrel. This is the third time in forty years."
         
-        # Test natural pacing
+        # Test natural pacing: should clean underscores, stray tags, formatting
         paced_text = _add_natural_pacing(test_text)
-        if '<break time=' in paced_text:
-            print("  ✅ Natural pacing: Pauses added")
+        if '_' not in paced_text and '<' not in paced_text:
+            print("  ✅ Natural pacing: Text cleaned (no underscores or raw tags)")
         else:
-            print("  ❌ Natural pacing: No pauses detected")
+            print("  ❌ Natural pacing: Text not properly sanitised")
             return False
         
-        # Test SSML prosody
+        # Test SSML prosody: must be a valid <speak> document with <break> tags
         ssml_text = _apply_ssml_prosody(paced_text, "authoritative")
-        if '<prosody' in ssml_text and '<emphasis' in ssml_text:
-            print("  ✅ SSML prosody: Applied successfully")
+        if ssml_text.strip().startswith('<speak') and '<break time=' in ssml_text and '<prosody' in ssml_text:
+            print("  ✅ SSML prosody: Valid <speak> document with breaks")
         else:
-            print("  ❌ SSML prosody: Not properly applied")
+            print("  ❌ SSML prosody: Not a valid SSML document")
             return False
         
         print("  ✅ Voice enhancements functional")
