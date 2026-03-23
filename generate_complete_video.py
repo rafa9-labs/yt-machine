@@ -128,7 +128,27 @@ try:
 except Exception as e:
     print(f"⚠️  Historical analysis failed: {e}")
 
-print("\n🔬 STEP 2.6: VISUAL ELEMENT EXTRACTION")
+print("\n� STEP 2.6: TRENDING CONTEXT ANALYSIS")
+print("-" * 40)
+
+try:
+    from redfish.trending_analyzer import TrendingAnalyzer
+    
+    trending_analyzer = TrendingAnalyzer()
+    trending_context = trending_analyzer.analyze(articles, top_n=40)
+    
+    print(f"✅ Trending terms extracted: {len(trending_context)} terms")
+    
+    # Show top 5 trending terms
+    top_trending = sorted(trending_context.items(), key=lambda x: x[1]['score'], reverse=True)[:5]
+    for term, data in top_trending:
+        print(f"  • {term}: {data['category']} (score: {data['score']:.2f})")
+    
+except Exception as e:
+    print(f"⚠️  Trending analysis failed: {e}")
+    trending_context = {}
+
+print("\n🔬 STEP 2.7: VISUAL ELEMENT EXTRACTION (FALLBACK)")
 print("-" * 40)
 
 try:
@@ -139,9 +159,9 @@ try:
     visual_extractor = VisualElementExtractor(llm)
     visual_elements = visual_extractor.extract_visual_elements(article_text)
     
-    print(f"✅ Subjects: {len(visual_elements.get('primary_subjects', []))} items")
-    print(f"✅ Settings: {len(visual_elements.get('settings', []))} found")
-    print(f"✅ Actions: {len(visual_elements.get('actions', []))} verbs")
+    print(f"✅ Subjects: {len(visual_elements.get('primary_subjects', []))} items (fallback)")
+    print(f"✅ Settings: {len(visual_elements.get('settings', []))} found (fallback)")
+    print(f"✅ Actions: {len(visual_elements.get('actions', []))} verbs (fallback)")
     
 except Exception as e:
     print(f"⚠️  Visual extraction failed: {e}")
@@ -219,27 +239,31 @@ except Exception as e:
     traceback.print_exc()
     exit(1)
 
-print("\n🎨 STEP 5: PIXEL ART GENERATION")
+print("\n🎨 STEP 5: PIXEL ART GENERATION (SCRIPT-FIRST)")
 print("-" * 40)
 
 try:
-    # Phase 4.5: Import script parser for action-specific prompts
+    # Phase 5.0: Script-first prompt generation with trending context
     from redfish.script_parser import ScriptParser
-    script_parser = ScriptParser()
-    parsed_segments = script_parser.parse_all_segments(script)
-    print(f"✅ Script parsed: {len(parsed_segments)} segments")
-    for ps in parsed_segments:
-        print(f"  [{ps['segment']}] action={ps['action']} | subject={ps['subject']} | setting={ps['setting']}")
-
-    # Initialize prompt generator with extracted elements and script
-    # ScriptParser is now embedded inside VisualPromptGenerator (Phase 4.2)
-    prompt_generator = VisualPromptGenerator(news_analysis, visual_elements, script)
     
-    # Generate prompts for all scenes (6 or 5 depending on script structure)
+    print("Initializing script-first prompt generator...")
+    
+    # NEW: Script-first approach with trending context
+    prompt_generator = VisualPromptGenerator(
+        script=script,
+        trending_context=trending_context,
+        news_analysis=news_analysis,
+        visual_elements=visual_elements
+    )
+    
+    print(f"✅ Visual concepts extracted from script segments")
+    
+    # Generate prompts FROM SCRIPT (not from article)
+    print("\nGenerating image prompts from script content...")
     scene_prompts = prompt_generator.generate_all_scenes()
     num_scenes = len(scene_prompts)
     
-    print(f"Generating {num_scenes} scenes...")
+    print(f"\n✅ {num_scenes} script-based prompts generated")
     
     generated_images = []
     image_folder = project_folder / "images"
@@ -252,20 +276,28 @@ try:
         scene_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
     
     for scene_name in scene_names:
-        print(f"  Generating {scene_name} scene...")
+        print(f"\n  Generating {scene_name} scene...")
         
-        # Get prompt and calculate relevance
+        # Get prompt (already generated from script)
         prompt = scene_prompts[scene_name]
-        relevance = calculate_prompt_relevance(prompt, article_text)
         
-        print(f"    Relevance: {relevance}%")
+        # Show script segment preview
+        segment_text = script.get(scene_name, '')[:100]
+        print(f"    Script: {segment_text}...")
+        
+        # Calculate relevance to script (not article)
+        relevance = calculate_prompt_relevance(prompt, segment_text)
+        print(f"    Script relevance: {relevance}%")
         
         # If relevance too low, regenerate with strict constraints
-        if relevance < 50:
-            print(f"    ⚠️  Low relevance, regenerating...")
+        if relevance < 40:
+            print(f"    ⚠️  Low script relevance, regenerating...")
             prompt = prompt_generator.regenerate_strict(scene_name)
-            relevance = calculate_prompt_relevance(prompt, article_text)
+            relevance = calculate_prompt_relevance(prompt, segment_text)
             print(f"    New relevance: {relevance}%")
+        
+        # Show prompt preview
+        print(f"    Prompt: {prompt[:120]}...")
         
         # Generate image
         art_result = generate_pixel_art(prompt)
