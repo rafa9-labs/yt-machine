@@ -3,6 +3,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from PIL import Image, ImageDraw, ImageFont
+from typing import Dict, Any
 
 # Load environment variables from .env file
 load_dotenv()
@@ -17,13 +18,45 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 FAL_MODEL = "fal-ai/flux-lora"  # Primary: LoRA-capable model
 FAL_FALLBACK_MODELS = ["fal-ai/flux/dev", "fal-ai/flux/schnell"]  # Fallback chain
 
-# Pixel Art LoRA Configuration
-# Using Retro-Pixel-Flux-LoRA for authentic 16-bit SNES style
-# Model: prithivMLmods/Retro-Pixel-Flux-LoRA
-# Trigger word: "Retro Pixel" (automatically included in STYLE_SUFFIX)
+# Pixel Art LoRA Configuration - Enhanced modular system
+# Using different LoRA configurations for different visual types
 PIXEL_ART_LORA = {
-    "path": "prithivMLmods/Retro-Pixel-Flux-LoRA",  # Hugging Face model reference
-    "scale": 0.85  # LoRA strength (0.8-1.0 for strong pixel art effect)
+    "path": "prithivMLmods/Retro-Pixel-Flux-LoRA",  # Base Hugging Face model
+    "scale": 0.85  # Default LoRA strength
+}
+
+# Modular LoRA configurations for different visual types
+STYLE_LORAS = {
+    'military': {
+        'path': "prithivMLmods/Retro-Pixel-Flux-LoRA",
+        'scale': 0.9,  # Stronger for military detail
+        'trigger': "tactical pixel",
+        'additional_prompts': "detailed equipment, strategic formations"
+    },
+    'economic': {
+        'path': "prithivMLmods/Retro-Pixel-Flux-LoRA", 
+        'scale': 0.8,  # Moderate for economic scenes
+        'trigger': "market pixel",
+        'additional_prompts': "data visualization, price displays, human scale"
+    },
+    'diplomatic': {
+        'path': "prithivMLmods/Retro-Pixel-Flux-LoRA",
+        'scale': 0.85,  # Standard for diplomatic
+        'trigger': "formal pixel",
+        'additional_prompts': "professional setting, official insignia, balanced composition"
+    },
+    'human_impact': {
+        'path': "prithivMLmods/Retro-Pixel-Flux-LoRA",
+        'scale': 0.85,  # Standard for human scenes
+        'trigger': "emotional pixel", 
+        'additional_prompts': "relatable imagery, emotional composition, human perspective"
+    },
+    'general': {
+        'path': "prithivMLmods/Retro-Pixel-Flux-LoRA",
+        'scale': 0.85,  # Default strength
+        'trigger': "Retro Pixel",
+        'additional_prompts': ""
+    }
 }
 
 # PHASE 2.4: Brand color palette for visual consistency
@@ -34,7 +67,7 @@ BRAND_COLORS = {
     "neutral": "slate gray (#4A5568)"
 }
 
-STYLE_SUFFIX = "Retro Pixel, true 16-bit pixel art, retro SNES style, isometric perspective, hard pixel edges, limited color palette with dark navy blues, amber accents, and cyan highlights, detailed proportions, flat colors, dramatic lighting, NO blur, NO text, NO watermark, NO letters, NO UI elements, NO speech bubbles"
+STYLE_SUFFIX = "Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), isometric perspective, (hard pixel edges:1.2), limited color palette with dark navy blues, amber accents, and cyan highlights, detailed proportions, flat colors, dramatic lighting, NO blur, NO text, NO watermark, NO letters, NO UI elements, NO speech bubbles"
 
 # Phase 5.1: Negative prompt — explicit exclusions sent to the model
 NEGATIVE_PROMPT = (
@@ -75,7 +108,7 @@ def _sanitize_prompt_for_api(prompt: str) -> str:
 
 def _detect_visual_type(prompt: str) -> str:
     """
-    Detect the visual type of a prompt based on content.
+    Enhanced visual type detection with improved keyword recognition.
     Returns: 'military', 'economic', 'diplomatic', 'human_impact', or 'general'
     """
     prompt_lower = prompt.lower()
@@ -87,66 +120,108 @@ def _detect_visual_type(prompt: str) -> str:
         'human_impact': 0
     }
     
-    # Military keywords
+    # Enhanced military keywords with more specific terms
     military_kw = [
         'military', 'forces', 'troops', 'missile', 'tank', 'warship',
         'aircraft', 'strike', 'attack', 'war', 'combat', 'naval', 'drone',
-        'bombing', 'invasion', 'blockade', 'weapon'
+        'bombing', 'invasion', 'blockade', 'weapon', 'fighter', 'destroyer',
+        'submarine', 'convoy', 'carrier', 'artillery', 'intercept', 'deployment',
+        'f-35', 'f-16', 's-400', 'ah-64', 'mq-9', 'uav', 'stealth'
     ]
     for kw in military_kw:
         if kw in prompt_lower:
             scores['military'] += 1
     
-    # Economic keywords
+    # Enhanced economic keywords
     economic_kw = [
         'price', 'economy', 'market', 'inflation', 'trading', 'stock',
         'gas station', 'oil prices', 'dollar', 'shortage', 'queue', 'shelves',
-        'cost', 'surge', 'supply'
+        'cost', 'surge', 'supply', 'commodity', 'trading floor', 'wall street',
+        'financial', 'economic', 'revenue', 'budget', 'tariff', 'sanctions'
     ]
     for kw in economic_kw:
         if kw in prompt_lower:
             scores['economic'] += 1
     
-    # Diplomatic keywords
+    # Enhanced diplomatic keywords
     diplomatic_kw = [
         'diplomatic', 'summit', 'treaty', 'negotiation', 'agreement',
-        'minister', 'ambassador', 'embassy', 'talks', 'meeting', 'officials'
+        'minister', 'ambassador', 'embassy', 'talks', 'meeting', 'officials',
+        'foreign', 'policy', 'envoy', 'delegation', 'ceasefire', 'accord'
     ]
     for kw in diplomatic_kw:
         if kw in prompt_lower:
             scores['diplomatic'] += 1
     
-    # Human impact keywords
+    # Enhanced human impact keywords
     human_kw = [
         'civilian', 'families', 'people', 'protest', 'refugees',
-        'crowd', 'residents', 'evacuees', 'victims', 'humanitarian'
+        'crowd', 'residents', 'evacuees', 'victims', 'humanitarian',
+        'casualties', 'displaced', 'emergency', 'aid', 'shelter', 'queue'
     ]
     for kw in human_kw:
         if kw in prompt_lower:
             scores['human_impact'] += 1
     
-    # Return type with highest score
+    # Weighted scoring for mixed content
     max_score = max(scores.values())
     if max_score == 0:
         return 'general'
     
+    # Check for strong dominance (70% of total)
+    total_score = sum(scores.values())
+    if max_score / total_score >= 0.7:
+        return max(scores.items(), key=lambda x: x[1])[0]
+    
+    # Check for military-economic mix (common in geopolitics)
+    if scores['military'] >= 2 and scores['economic'] >= 2:
+        return 'military'  # Prioritize military in mixed cases
+    
+    # Return highest scoring type
     return max(scores.items(), key=lambda x: x[1])[0]
 
 
 def _get_adaptive_enrichment(visual_type: str) -> str:
     """
-    Get adaptive enrichment text based on visual type.
-    Replaces the old military-only fallback with context-aware enrichment.
+    Get adaptive enrichment text based on visual type with structured prompting.
+    Enhanced to work with the new hierarchical prompt system.
     """
     enrichments = {
-        'military': 'aerial isometric view of strategic forces in tactical positioning, dark navy sky, amber highlights, high tension',
-        'economic': 'isometric view of trading floor or market scene, price indicators visible, human scale perspective, amber and cyan data highlights',
-        'diplomatic': 'formal meeting setting, isometric conference room or summit hall, official flags and insignia, professional atmosphere',
-        'human_impact': 'civilian perspective, everyday life scene, human scale composition, emotional impact, relatable imagery',
-        'general': 'dramatic isometric composition, strategic perspective, balanced lighting'
+        'military': '(tactical positioning:1.3), (strategic forces:1.2), (naval formations:1.2), (dramatic military lighting:1.1), (high tension atmosphere:1.2)',
+        'economic': '(market indicators visible:1.3), (price displays:1.2), (human scale perspective:1.2), (financial data visualization:1.1), (economic impact focus:1.2)',
+        'diplomatic': '(formal meeting setting:1.3), (official flags and insignia:1.2), (professional atmosphere:1.2), (diplomatic context:1.1), (balanced composition:1.1)',
+        'human_impact': '(civilian perspective:1.3), (emotional impact:1.2), (relatable imagery:1.2), (everyday life context:1.1), (human scale composition:1.2)',
+        'general': '(dramatic composition:1.2), (strategic perspective:1.1), (balanced lighting:1.1), (professional atmosphere:1.1)'
     }
     
     return enrichments.get(visual_type, enrichments['general'])
+
+
+def _select_style_lora(visual_type: str) -> Dict[str, Any]:
+    """
+    Select appropriate LoRA configuration based on visual type.
+    Returns the LoRA config to use for generation.
+    """
+    return STYLE_LORAS.get(visual_type, STYLE_LORAS['general'])
+
+
+def _enhance_prompt_with_lora_trigger(prompt: str, visual_type: str) -> str:
+    """
+    Enhance prompt with LoRA-specific trigger words and additional prompts.
+    """
+    lora_config = _select_style_lora(visual_type)
+    trigger = lora_config.get('trigger', 'Retro Pixel')
+    additional = lora_config.get('additional_prompts', '')
+    
+    # Add trigger if not already present
+    if trigger.lower() not in prompt.lower():
+        prompt = f"{trigger}, {prompt}"
+    
+    # Add additional prompts if specified
+    if additional and additional.lower() not in prompt.lower():
+        prompt = f"{prompt}, {additional}"
+    
+    return prompt
 
 
 def _score_prompt_specificity(prompt: str) -> int:
@@ -305,6 +380,7 @@ def _generate_placeholder(prompt: str, output_path: Path) -> None:
 def generate_pixel_art(prompt: str) -> dict:
     """
     Generate a 16-bit cyberpunk pixel art image for a given scene prompt.
+    Enhanced with visual type detection and structured prompting.
 
     Args:
         prompt: Scene description (e.g. "Strait of Hormuz blockade at dusk")
@@ -315,6 +391,10 @@ def generate_pixel_art(prompt: str) -> dict:
     if not prompt or not prompt.strip():
         return {"success": False, "error": "Prompt cannot be empty"}
 
+    # Enhanced visual type detection
+    visual_type = _detect_visual_type(prompt)
+    print(f"  [IMG] Visual type detected: {visual_type}")
+
     # Phase 5.1: Score and optionally enrich low-specificity prompts
     specificity = _score_prompt_specificity(prompt)
     print(f"  [IMG] Specificity score: {specificity}/100")
@@ -322,15 +402,20 @@ def generate_pixel_art(prompt: str) -> dict:
     # If too generic, append adaptive scene-grounding fallback
     enriched_prompt = prompt.strip()
     if specificity < 35:
-        # Determine visual type from prompt content
-        visual_type = _detect_visual_type(prompt)
+        # Determine visual type from prompt content (already done above)
         enrichment = _get_adaptive_enrichment(visual_type)
         enriched_prompt += f", {enrichment}"
         print(f"  [IMG] Low specificity — {visual_type} enrichment applied")
 
     # Sanitize for FAL.ai content policy before building final prompt
     sanitized_prompt = _sanitize_prompt_for_api(enriched_prompt)
-    full_prompt = f"{sanitized_prompt}, {STYLE_SUFFIX}"
+    
+    # Enhance with LoRA trigger and additional prompts
+    enhanced_prompt = _enhance_prompt_with_lora_trigger(sanitized_prompt, visual_type)
+    
+    # Build final prompt with style suffix
+    full_prompt = f"{enhanced_prompt}, {STYLE_SUFFIX}"
+    
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in prompt[:40])
     filename = f"pixel_art_{safe_name}_{hash(prompt) % 100000}.png"
     output_path = OUTPUT_DIR / filename
@@ -354,12 +439,18 @@ def generate_pixel_art(prompt: str) -> dict:
                     
                     # Build arguments based on model type
                     if model == "fal-ai/flux-lora":
-                        # LoRA-enabled model with pixel art weights
+                        # Get visual type-specific LoRA configuration
+                        lora_config = _select_style_lora(visual_type)
+                        
+                        # LoRA-enabled model with visual type-specific weights
                         arguments = {
                             "prompt": full_prompt,
                             "image_size": "portrait_4_3",
                             "num_images": 1,
-                            "loras": [PIXEL_ART_LORA],
+                            "loras": [{
+                                "path": lora_config['path'],
+                                "scale": lora_config['scale']
+                            }],
                             "enable_safety_checker": False,
                         }
                     else:
@@ -401,8 +492,10 @@ def generate_pixel_art(prompt: str) -> dict:
                 "prompt_used": full_prompt,
                 "negative_prompt": NEGATIVE_PROMPT,
                 "specificity_score": specificity,
+                "visual_type": visual_type,
                 "source": model_used,
                 "lora_used": model_used == "fal-ai/flux-lora",
+                "lora_config": _select_style_lora(visual_type) if model_used == "fal-ai/flux-lora" else None,
                 "image_url": image_url,
                 "output_directory": str(OUTPUT_DIR),
             }
@@ -419,6 +512,7 @@ def generate_pixel_art(prompt: str) -> dict:
                     "filename": filename,
                     "path": str(output_path),
                     "prompt_used": full_prompt,
+                    "visual_type": visual_type,
                     "source": "placeholder",
                     "note": "FAL.ai balance exhausted - placeholder generated. Top up at fal.ai/dashboard/billing",
                     "size": "1024x1792",
@@ -440,8 +534,9 @@ def generate_pixel_art(prompt: str) -> dict:
                 "filename": filename,
                 "path": str(output_path),
                 "prompt_used": full_prompt,
+                "visual_type": visual_type,
                 "source": "placeholder",
-                "note": "OPENAI_API_KEY not set — placeholder image generated",
+                "note": "FAL_KEY not set — placeholder image generated",
                 "size": "1024x1792",
                 "output_directory": str(OUTPUT_DIR),
             }
