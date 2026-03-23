@@ -189,8 +189,9 @@ class VisualPromptGenerator:
     
     def _build_prompt_from_concepts(self, concepts: Dict[str, Any], scene_type: str) -> str:
         """
-        Build image prompt from extracted visual concepts.
+        Build image prompt from extracted visual concepts with structured hierarchy.
         This is the PRIMARY method for script-to-image synchronization.
+        Enhanced with token weighting and structured hierarchy.
         """
         template = SCENE_TEMPLATES.get(scene_type, SCENE_TEMPLATES['hook'])
         
@@ -204,45 +205,159 @@ class VisualPromptGenerator:
         emphasis = concepts.get('emphasis', '')
         trending_boost = concepts.get('trending_boost', 0.0)
         
-        # Build prompt parts
+        # Build structured prompt with hierarchy: Subject → Description → Style
         prompt_parts = []
         
-        # Start with perspective from template
-        prompt_parts.append(template['perspective'])
-        
-        # Add primary concept or build from subjects/action
-        if primary_concept:
-            prompt_parts.append(primary_concept)
-        elif subjects:
-            subject_str = subjects[0]
-            if action and action != 'in dramatic confrontation':
-                prompt_parts.append(f"{subject_str} {action}")
+        # 1. Subject (highest priority - weighted)
+        if subjects:
+            # Weight primary subject more heavily
+            primary_subject = subjects[0]
+            if visual_type == 'military' and any(kw in primary_subject.lower() for kw in ['missile', 'tank', 'aircraft', 'warship']):
+                prompt_parts.append(f"({primary_subject}:1.4)")  # Critical military equipment
+            elif visual_type == 'economic' and any(kw in primary_subject.lower() for kw in ['oil', 'prices', 'market']):
+                prompt_parts.append(f"({primary_subject}:1.3)")  # Critical economic elements
             else:
-                prompt_parts.append(subject_str)
-            
-            if setting:
-                prompt_parts.append(f"at {setting}")
+                prompt_parts.append(f"({primary_subject}:1.2)")  # Standard subject weighting
         
-        # Add emphasis based on visual type
-        if emphasis:
-            prompt_parts.append(emphasis)
+        # 2. Action/Description (medium priority)
+        if action and action != 'in dramatic confrontation':
+            action_enhanced = self._enhance_action_with_visuals(action, visual_type)
+            prompt_parts.append(action_enhanced)
         
-        # Add mood/atmosphere
+        # 3. Setting/Context (medium priority)
+        if setting:
+            setting_enhanced = self._enhance_setting_with_context(setting, visual_type)
+            prompt_parts.append(f"at {setting_enhanced}")
+        
+        # 4. Composition instructions (enhanced based on visual type)
+        composition = self._get_composition_instructions(visual_type, scene_type)
+        if composition:
+            prompt_parts.append(composition)
+        
+        # 5. Mood/Atmosphere (lower priority)
         mood_descriptors = {
-            'tense': 'high tension atmosphere',
-            'chaotic': 'chaotic energy',
-            'economic': 'economic impact focus',
-            'hopeful': 'hopeful tone',
-            'historical': 'historical accuracy'
+            'tense': '(high tension atmosphere:1.2)',
+            'chaotic': '(chaotic energy:1.1)',
+            'economic': '(economic impact focus:1.2)',
+            'hopeful': '(hopeful tone:1.1)',
+            'historical': '(historical accuracy:1.2)'
         }
         if mood in mood_descriptors:
             prompt_parts.append(mood_descriptors[mood])
         
-        # Boost trending elements
+        # 6. Emphasis based on visual type
+        if emphasis:
+            prompt_parts.append(f"({emphasis}:1.1)")
+        
+        # 7. Trending boost (if significant)
         if trending_boost > 0.5:
-            prompt_parts.append('emphasize key trending elements')
+            prompt_parts.append("(emphasize key trending elements:1.3)")
+        
+        # 8. Style weighting (ensure pixel art style is prominent)
+        style_weighting = self._get_style_weighting(visual_type)
+        prompt_parts.append(style_weighting)
+        
+        # 9. Visual grounding (spatial relationships)
+        grounding = self._parser.add_visual_grounding(concepts, scene_type)
+        if grounding:
+            prompt_parts.append(grounding)
         
         return ', '.join(prompt_parts)
+    
+    def _enhance_action_with_visuals(self, action: str, visual_type: str) -> str:
+        """Enhance action with visual type-specific details"""
+        action_enhancements = {
+            'military': {
+                'launch': 'missile launch with dramatic exhaust trail',
+                'strike': 'precision airstrike with explosion plume',
+                'deploy': 'military deployment in tactical formation',
+                'blockade': 'naval blockade with warship line',
+                'patrol': 'naval patrol cutting through waves'
+            },
+            'economic': {
+                'surge': 'price surge with market indicators',
+                'collapse': 'market collapse with falling screens',
+                'trading': 'active trading floor with data screens'
+            },
+            'diplomatic': {
+                'negotiate': 'high-level diplomatic negotiation',
+                'sign': 'formal treaty signing ceremony',
+                'meet': 'official summit meeting'
+            },
+            'human_impact': {
+                'protest': 'mass civilian protest demonstration',
+                'evacuate': 'emergency evacuation with crowds',
+                'queue': 'civilian queue formation'
+            }
+        }
+        
+        type_enhancements = action_enhancements.get(visual_type, {})
+        return type_enhancements.get(action, action)
+    
+    def _enhance_setting_with_context(self, setting: str, visual_type: str) -> str:
+        """Enhance setting with visual type-specific context"""
+        setting_enhancements = {
+            'military': {
+                'strait of hormuz': 'Strait of Hormuz with naval vessels and oil tankers',
+                'persian gulf': 'Persian Gulf with military activity',
+                'border': 'border region with fortified positions'
+            },
+            'economic': {
+                'wall street': 'Wall Street trading floor with stock tickers',
+                'market': 'financial market with price displays',
+                'gas station': 'gas station with price board and queues'
+            },
+            'diplomatic': {
+                'washington': 'Washington DC with government buildings',
+                'summit': 'summit venue with flags and officials',
+                'embassy': 'embassy with diplomatic insignia'
+            },
+            'human_impact': {
+                'city': 'city with civilian activity',
+                'residential': 'residential area with everyday life',
+                'street': 'street level with people'
+            }
+        }
+        
+        type_enhancements = setting_enhancements.get(visual_type, {})
+        return type_enhancements.get(setting.lower(), setting)
+    
+    def _get_composition_instructions(self, visual_type: str, scene_type: str) -> str:
+        """Get composition instructions based on visual type and scene"""
+        base_compositions = {
+            'military': 'isometric tactical view, strategic overview, formations visible',
+            'economic': 'isometric market view, human scale, activity centers',
+            'diplomatic': 'formal balanced composition, professional setting',
+            'human_impact': 'ground-level perspective, emotional framing'
+        }
+        
+        scene_modifiers = {
+            'hook': 'dramatic foreground, attention-grabbing',
+            'historical_1': 'historical perspective, archival feel',
+            'historical_2': 'strategic overview, tactical display',
+            'modern_pivot': 'dynamic composition, contemporary feel',
+            'consequence': 'human-scale composition, relatable',
+            'future_outlook': 'revealing perspective, strategic depth'
+        }
+        
+        base = base_compositions.get(visual_type, 'isometric view, balanced composition')
+        modifier = scene_modifiers.get(scene_type, '')
+        
+        return f"{base}, {modifier}" if modifier else base
+    
+    def _get_style_weighting(self, visual_type: str) -> str:
+        """Get style weighting based on visual type"""
+        base_style = "(true 16-bit pixel art:1.5), (retro SNES style:1.3), (isometric perspective:1.2)"
+        
+        type_specific = {
+            'military': '(tactical pixel art:1.2), (detailed equipment:1.1)',
+            'economic': '(market pixel style:1.2), (data visualization:1.1)',
+            'diplomatic': '(formal pixel style:1.2), (official insignia:1.1)',
+            'human_impact': '(emotional pixel style:1.2), (relatable imagery:1.1)'
+        }
+        
+        specific = type_specific.get(visual_type, '')
+        return f"{base_style}, {specific}" if specific else base_style
     
     def _get_script_visual_scene(self, scene_type: str) -> str:
         """Get the LLM-generated visual_scene description for this segment."""
