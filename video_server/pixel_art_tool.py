@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from PIL import Image, ImageDraw, ImageFont
 from typing import Dict, Any
+from redfish.geopolitical_validator import GeopoliticalValidator
 
 # Load environment variables from .env file
 load_dotenv()
@@ -377,19 +378,32 @@ def _generate_placeholder(prompt: str, output_path: Path) -> None:
 
 
 @server.tool()
-def generate_pixel_art(prompt: str) -> dict:
+def generate_pixel_art(prompt: str, script_text: str = None) -> dict:
     """
     Generate a 16-bit cyberpunk pixel art image for a given scene prompt.
-    Enhanced with visual type detection and structured prompting.
+    Enhanced with visual type detection, structured prompting, and geopolitical accuracy validation.
 
     Args:
         prompt: Scene description (e.g. "Strait of Hormuz blockade at dusk")
+        script_text: Original script text for geopolitical context (optional)
 
     Returns:
         dict with success status, image path, and metadata
     """
     if not prompt or not prompt.strip():
         return {"success": False, "error": "Prompt cannot be empty"}
+
+    # NEW: Geopolitical accuracy validation before generation
+    geo_validator = GeopoliticalValidator()
+    should_proceed, geo_error = geo_validator.validate_before_generation(script_text or "", prompt)
+    
+    if not should_proceed:
+        return {
+            "success": False, 
+            "error": f"Geopolitical accuracy validation failed: {geo_error}",
+            "validation_type": "geopolitical",
+            "accuracy_blocked": True
+        }
 
     # Enhanced visual type detection
     visual_type = _detect_visual_type(prompt)
@@ -415,6 +429,19 @@ def generate_pixel_art(prompt: str) -> dict:
     
     # Build final prompt with style suffix
     full_prompt = f"{enhanced_prompt}, {STYLE_SUFFIX}"
+    
+    # NEW: Final geopolitical validation of the complete prompt
+    final_geo_validation = geo_validator.validate_prompt_geopolitical_accuracy(full_prompt, script_text)
+    print(f"  [IMG] Geopolitical accuracy score: {final_geo_validation['accuracy_score']}%")
+    
+    if not final_geo_validation['passed'] and geo_validator.validation_rules['strict_mode']:
+        return {
+            "success": False,
+            "error": f"Final prompt failed geopolitical validation: {'; '.join(final_geo_validation['issues'][:2])}",
+            "validation_type": "geopolitical_final",
+            "accuracy_score": final_geo_validation['accuracy_score'],
+            "issues": final_geo_validation['issues']
+        }
     
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in prompt[:40])
     filename = f"pixel_art_{safe_name}_{hash(prompt) % 100000}.png"
@@ -498,6 +525,11 @@ def generate_pixel_art(prompt: str) -> dict:
                 "lora_config": _select_style_lora(visual_type) if model_used == "fal-ai/flux-lora" else None,
                 "image_url": image_url,
                 "output_directory": str(OUTPUT_DIR),
+                # NEW: Geopolitical accuracy metadata
+                "geopolitical_validation": final_geo_validation,
+                "accuracy_score": final_geo_validation['accuracy_score'],
+                "countries_detected": final_geo_validation['country_analysis'].keys(),
+                "equipment_validated": not any(analysis['issues'] for analysis in final_geo_validation['equipment_analysis'].values())
             }
 
         except Exception as e:
@@ -517,6 +549,7 @@ def generate_pixel_art(prompt: str) -> dict:
                     "note": "FAL.ai balance exhausted - placeholder generated. Top up at fal.ai/dashboard/billing",
                     "size": "1024x1792",
                     "output_directory": str(OUTPUT_DIR),
+                    "geopolitical_validation": final_geo_validation
                 }
             
             return {
@@ -539,6 +572,7 @@ def generate_pixel_art(prompt: str) -> dict:
                 "note": "FAL_KEY not set — placeholder image generated",
                 "size": "1024x1792",
                 "output_directory": str(OUTPUT_DIR),
+                "geopolitical_validation": final_geo_validation
             }
 
         except Exception as e:
