@@ -1,11 +1,13 @@
 """
 Prompt Quality Validator - Ensures generated prompts meet quality standards
 Validates prompts for specificity, accuracy, and relevance
+Enhanced with geopolitical accuracy validation
 """
 
 import re
 from typing import Dict, Any, List
 from .military_equipment_db import get_all_locations, MILITARY_EQUIPMENT_DB
+from .geopolitical_validator import GeopoliticalValidator
 
 
 def validate_prompt_quality(prompt: str) -> Dict[str, Any]:
@@ -285,69 +287,67 @@ def _get_check_details(checks: Dict[str, bool]) -> List[str]:
     return details
 
 
-def validate_article_prompt_correlation(
+def validate_article_prompt_correlation_with_geopolitical(
     prompt: str,
     article_text: str,
-    visual_elements: Dict[str, Any]
+    visual_elements: Dict[str, Any],
+    script_text: str = None
 ) -> Dict[str, Any]:
     """
-    Comprehensive validation of prompt against article and extracted elements
+    Comprehensive validation including geopolitical accuracy.
     
     Args:
         prompt: Generated prompt
-        article_text: Original article
+        article_text: Original article text
         visual_elements: Extracted visual elements
+        script_text: Original script text for context (optional)
         
     Returns:
-        Validation results with recommendations
+        Enhanced validation results with geopolitical accuracy
     """
-    quality = validate_prompt_quality(prompt)
-    relevance = calculate_prompt_relevance(prompt, article_text)
+    # Standard validation
+    standard_validation = validate_article_prompt_correlation(prompt, article_text, visual_elements)
     
-    # Check correlation with extracted elements
-    correlation_checks = {
-        'equipment_match': False,
-        'location_match': False,
-        'action_match': False
+    # Geopolitical validation
+    geo_validator = GeopoliticalValidator()
+    geopolitical_validation = geo_validator.validate_prompt_geopolitical_accuracy(prompt, script_text)
+    
+    # Combine results
+    combined_validation = {
+        'standard': standard_validation,
+        'geopolitical': geopolitical_validation,
+        'overall_pass': (
+            standard_validation['overall_pass'] and 
+            geopolitical_validation['passed']
+        ),
+        'combined_score': (
+            (standard_validation['relevance_score'] + geopolitical_validation['accuracy_score']) / 2
+        ),
+        'total_issues': (
+            len(standard_validation['recommendation'].split(', ') if standard_validation['recommendation'] != "ACCEPT" else []) +
+            len(geopolitical_validation['issues'])
+        ),
+        'recommendations': {
+            'standard': standard_validation['recommendation'],
+            'geopolitical': geopolitical_validation['recommendations']
+        }
     }
     
-    # Check subject correlation (supports both old and new schema)
-    subjects = visual_elements.get('primary_subjects', visual_elements.get('military_equipment', []))
-    if subjects:
-        for subj in subjects:
-            if subj.lower() in prompt.lower():
-                correlation_checks['equipment_match'] = True
-                break
+    # Final recommendation
+    if combined_validation['overall_pass']:
+        if combined_validation['combined_score'] >= 85:
+            combined_validation['final_recommendation'] = "ACCEPT - High quality with geopolitical accuracy"
+        else:
+            combined_validation['final_recommendation'] = "ACCEPT - Good quality, acceptable accuracy"
+    else:
+        if not standard_validation['overall_pass']:
+            combined_validation['final_recommendation'] = f"REGENERATE - Quality issues: {standard_validation['recommendation']}"
+        elif not geopolitical_validation['passed']:
+            combined_validation['final_recommendation'] = f"REGENERATE - Geopolitical issues: {'; '.join(geopolitical_validation['issues'][:2])}"
+        else:
+            combined_validation['final_recommendation'] = "REGENERATE - Multiple issues detected"
     
-    # Check location/setting correlation (supports both old and new schema)
-    settings = visual_elements.get('settings', visual_elements.get('locations', []))
-    if settings:
-        for loc in settings:
-            if loc.lower() in prompt.lower():
-                correlation_checks['location_match'] = True
-                break
-    
-    # Check action correlation
-    if visual_elements.get('actions'):
-        for action in visual_elements['actions']:
-            if action.lower() in prompt.lower():
-                correlation_checks['action_match'] = True
-                break
-    
-    # Overall assessment
-    overall_pass = (
-        quality['passed'] and
-        relevance >= 50 and
-        sum(correlation_checks.values()) >= 2
-    )
-    
-    return {
-        'quality': quality,
-        'relevance_score': relevance,
-        'correlation': correlation_checks,
-        'overall_pass': overall_pass,
-        'recommendation': _get_recommendation(quality, relevance, correlation_checks)
-    }
+    return combined_validation
 
 
 def _get_recommendation(
