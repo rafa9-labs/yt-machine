@@ -33,31 +33,38 @@ CAMERA_PATTERNS = {
 
 def _apply_camera_movement(clip: ImageClip, movement_type: str, duration: float) -> ImageClip:
     """
-    FIXED: Apply professional camera movement to image clip.
-    Movements now work properly with smooth animations.
+    Apply alternating zoom in/out camera movement with black bars.
+    Zoom happens from the center of the image.
     
     Args:
         clip: ImageClip to animate (should be pre-resized to target dimensions)
-        movement_type: 'zoom_in', 'zoom_out', 'pan_right', or 'pan_left'
+        movement_type: 'zoom_in' or 'zoom_out'
         duration: Duration of the clip
     
     Returns:
-        Animated ImageClip with smooth camera movement
+        Animated ImageClip with smooth zoom movement and black bars
     """
     if movement_type == 'zoom_in':
-        # FIXED: Smooth zoom in from 1.0 to 1.2 scale with center point
-        return clip.resize(lambda t: 1.0 + 0.2 * (t / duration))
+        # Zoom in from 1.0 to 1.3 scale, centered
+        def make_frame(t):
+            scale = 1.0 + 0.3 * (t / duration)
+            return clip.resize(scale).get_frame(t)
+        
+        from moviepy.video.VideoClip import VideoClip
+        zoomed = VideoClip(make_frame, duration=duration).set_fps(clip.fps if hasattr(clip, 'fps') else FPS)
+        # Center the zoomed clip with black bars
+        return zoomed.set_position('center')
+        
     elif movement_type == 'zoom_out':
-        # FIXED: Smooth zoom out from 1.2 to 1.0 scale
-        return clip.resize(lambda t: 1.2 - 0.2 * (t / duration))
-    elif movement_type == 'pan_right':
-        # FIXED: Pan from left to right - increased distance, removed int() for smoothness
-        pan_distance = 150  # Increased from 50 for better visibility
-        return clip.set_position(lambda t: (-pan_distance + pan_distance * (t / duration), 'center'))
-    elif movement_type == 'pan_left':
-        # FIXED: Pan from right to left - smooth float calculation
-        pan_distance = 150
-        return clip.set_position(lambda t: (pan_distance - pan_distance * (t / duration), 'center'))
+        # Zoom out from 1.3 to 1.0 scale, centered with black bars
+        def make_frame(t):
+            scale = 1.3 - 0.3 * (t / duration)
+            return clip.resize(scale).get_frame(t)
+        
+        from moviepy.video.VideoClip import VideoClip
+        zoomed = VideoClip(make_frame, duration=duration).set_fps(clip.fps if hasattr(clip, 'fps') else FPS)
+        # Center the zoomed clip with black bars
+        return zoomed.set_position('center')
     else:
         return clip
 
@@ -179,42 +186,20 @@ def _make_rec_blink(width: int, height: int, duration: float) -> ImageClip:
 
 def _create_scene_subcuts(clip: ImageClip, scene_dur: float, movement_type: str) -> List[ImageClip]:
     """
-    Phase 4.4: Split a single image scene into 2-3 sub-clips with different
-    camera movements. Creates visual variety (2-4s cuts) without needing new images.
+    Apply single zoom movement to the entire scene.
+    No sub-cuts - just one continuous zoom in or zoom out.
 
     Args:
         clip: Pre-resized ImageClip
         scene_dur: Total duration for this scene
-        movement_type: Primary camera movement type
+        movement_type: 'zoom_in' or 'zoom_out'
 
     Returns:
-        List of sub-clips that together equal scene_dur
+        List with single clip (for consistency with original interface)
     """
-    # Only apply sub-cuts when scene is long enough
-    if scene_dur < 6.0:
-        clip = _apply_camera_movement(clip, movement_type, scene_dur)
-        return [clip]
-
-    # Define complementary movement pairs
-    movement_pairs = {
-        'zoom_in':   ['zoom_in', 'pan_right'],
-        'zoom_out':  ['zoom_out', 'pan_left'],
-        'pan_right': ['pan_right', 'zoom_in'],
-        'pan_left':  ['pan_left', 'zoom_out'],
-    }
-    movements = movement_pairs.get(movement_type, ['zoom_in', 'pan_right'])
-
-    # Split into 2 sub-clips: 55% / 45%
-    dur_a = round(scene_dur * 0.55, 3)
-    dur_b = round(scene_dur - dur_a, 3)
-
-    sub_a = clip.set_duration(dur_a)
-    sub_b = clip.set_duration(dur_b)
-
-    sub_a = _apply_camera_movement(sub_a, movements[0], dur_a)
-    sub_b = _apply_camera_movement(sub_b, movements[1], dur_b)
-
-    return [sub_a, sub_b]
+    # Apply the zoom movement to the entire scene duration
+    clip = _apply_camera_movement(clip, movement_type, scene_dur)
+    return [clip]
 
 
 def _calculate_dynamic_durations(total_duration: float, num_scenes: int) -> List[float]:
@@ -343,12 +328,11 @@ def build_final_video(
         
         video_clips  = []
         
-        # Dynamic camera: zoom_out first (reveals scale), rest randomized
-        import random
-        all_movements = ['zoom_in', 'zoom_out', 'pan_right', 'pan_left']
-        camera_movements = ['zoom_out']  # First image always zoom_out
-        for _ in range(max(0, n_assets - 1)):
-            camera_movements.append(random.choice(all_movements))
+        # Alternating zoom pattern: zoom_in, zoom_out, zoom_in, zoom_out, etc.
+        camera_movements = []
+        for i in range(n_assets):
+            # Alternate between zoom_in (even indices) and zoom_out (odd indices)
+            camera_movements.append('zoom_in' if i % 2 == 0 else 'zoom_out')
 
         for idx, asset_path in enumerate(asset_paths):
             ext = Path(asset_path).suffix.lower()

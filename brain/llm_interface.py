@@ -294,6 +294,24 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             print(f"Response length: {len(response)} chars")
             return None
         
+        # CRITICAL FIX: Build full_text from segments if missing or incomplete
+        # This ensures TTS gets the complete narration, not just the title/hook
+        if 'full_text' not in script or not script['full_text'] or len(script['full_text'].split()) < 50:
+            segments = []
+            # Support both 6-segment and 5-segment structures
+            if 'historical_1' in script:
+                segment_names = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
+            else:
+                segment_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
+            
+            for seg in segment_names:
+                text = script.get(seg, '')
+                if text:
+                    segments.append(text)
+            
+            script['full_text'] = ' '.join(segments)
+            print(f"  [SCRIPT] Built full_text from {len(segments)} segments ({len(script['full_text'].split())} words)")
+        
         if "word_count" not in script:
             def count_words(field):
                 value = script.get(field, "")

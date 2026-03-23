@@ -336,3 +336,289 @@ class ScriptParser:
     def _get_setting_visual(self, setting: str) -> str:
         """Look up enhanced visual description for a setting."""
         return SETTING_VISUAL_CONTEXT.get(setting.lower().strip(), "")
+    
+    def extract_visual_concepts(self, segment_text: str, trending_context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Extract ALL visual concepts from a script segment for precise image generation.
+        This is the primary method for script-to-image synchronization.
+        
+        Args:
+            segment_text: The script segment text
+            trending_context: Optional trending words dictionary from TrendingAnalyzer
+            
+        Returns:
+            Dictionary with comprehensive visual concept data:
+            {
+                "primary_concept": str,
+                "secondary_concepts": List[str],
+                "visual_type": str,  # military, economic, diplomatic, human_impact, mixed
+                "trending_boost": float,  # 0.0-1.0
+                "action": str,
+                "subjects": List[str],
+                "setting": str,
+                "mood": str,
+                "numbers": List[str],
+                "emphasis": str  # What to emphasize in the image
+            }
+        """
+        if not segment_text:
+            return self._get_empty_concepts()
+        
+        text_lower = segment_text.lower()
+        trending_context = trending_context or {}
+        
+        # Extract basic elements
+        action = self._extract_primary_action(text_lower)
+        primary_subject = self._extract_primary_subject(text_lower)
+        setting = self._extract_primary_setting(text_lower)
+        mood = self._extract_mood(text_lower)
+        numbers = self._extract_key_numbers(segment_text)
+        
+        # Extract ALL subjects (not just primary)
+        all_subjects = self._extract_all_subjects(text_lower)
+        if primary_subject and primary_subject not in all_subjects:
+            all_subjects.insert(0, primary_subject)
+        
+        # Extract secondary concepts
+        secondary_concepts = self._extract_secondary_concepts(text_lower)
+        
+        # Determine visual type
+        visual_type = self._determine_visual_type(text_lower, all_subjects, action)
+        
+        # Calculate trending boost
+        trending_boost = self._calculate_trending_boost(
+            segment_text, all_subjects, action, setting, trending_context
+        )
+        
+        # Determine primary concept (what the image should show)
+        primary_concept = self._determine_primary_concept(
+            text_lower, all_subjects, action, setting, visual_type
+        )
+        
+        # Determine emphasis
+        emphasis = self._determine_emphasis(visual_type, primary_concept, trending_boost)
+        
+        return {
+            "primary_concept": primary_concept,
+            "secondary_concepts": secondary_concepts,
+            "visual_type": visual_type,
+            "trending_boost": trending_boost,
+            "action": action,
+            "subjects": all_subjects,
+            "setting": setting,
+            "mood": mood,
+            "numbers": numbers,
+            "emphasis": emphasis
+        }
+    
+    def _extract_all_subjects(self, text: str) -> List[str]:
+        """Extract all visual subjects mentioned in text."""
+        subjects = []
+        
+        # Check all known subjects
+        for subject_key in SUBJECT_VISUAL_ENHANCEMENTS.keys():
+            if subject_key in text:
+                subjects.append(subject_key)
+        
+        # Economic subjects
+        economic_subjects = [
+            'oil prices', 'gas prices', 'stock market', 'trading floor',
+            'price board', 'gas station', 'families', 'civilians', 'queues',
+            'shelves', 'market', 'inflation', 'dollar', 'economy'
+        ]
+        for subj in economic_subjects:
+            if subj in text and subj not in subjects:
+                subjects.append(subj)
+        
+        # Diplomatic subjects
+        diplomatic_subjects = [
+            'summit', 'negotiation', 'treaty', 'agreement', 'diplomats',
+            'ministers', 'officials', 'meeting', 'talks', 'embassy'
+        ]
+        for subj in diplomatic_subjects:
+            if subj in text and subj not in subjects:
+                subjects.append(subj)
+        
+        # Human impact subjects
+        human_subjects = [
+            'families', 'civilians', 'people', 'residents', 'refugees',
+            'protesters', 'crowds', 'victims', 'evacuees'
+        ]
+        for subj in human_subjects:
+            if subj in text and subj not in subjects:
+                subjects.append(subj)
+        
+        return subjects[:5]  # Limit to top 5
+    
+    def _extract_secondary_concepts(self, text: str) -> List[str]:
+        """Extract secondary visual concepts."""
+        concepts = []
+        
+        # Look for specific visual elements
+        visual_elements = [
+            'explosion', 'smoke', 'fire', 'debris', 'wreckage',
+            'convoy', 'formation', 'patrol', 'surveillance',
+            'screens', 'charts', 'graphs', 'data', 'indicators',
+            'flags', 'insignia', 'uniforms', 'equipment',
+            'buildings', 'infrastructure', 'facilities'
+        ]
+        
+        for element in visual_elements:
+            if element in text:
+                concepts.append(element)
+        
+        return concepts[:3]  # Limit to top 3
+    
+    def _determine_visual_type(self, text: str, subjects: List[str], action: str) -> str:
+        """Determine the primary visual type of the segment."""
+        scores = {
+            'military': 0,
+            'economic': 0,
+            'diplomatic': 0,
+            'human_impact': 0
+        }
+        
+        # Military keywords
+        military_kw = [
+            'military', 'forces', 'troops', 'missile', 'strike', 'attack',
+            'war', 'combat', 'weapon', 'tank', 'aircraft', 'naval', 'drone',
+            'bombing', 'invasion', 'blockade'
+        ]
+        for kw in military_kw:
+            if kw in text:
+                scores['military'] += 1
+        
+        # Economic keywords
+        economic_kw = [
+            'price', 'economy', 'market', 'inflation', 'dollar', 'oil',
+            'gas', 'trade', 'cost', 'surge', 'shortage', 'supply'
+        ]
+        for kw in economic_kw:
+            if kw in text:
+                scores['economic'] += 1
+        
+        # Diplomatic keywords
+        diplomatic_kw = [
+            'diplomatic', 'negotiation', 'treaty', 'summit', 'talks',
+            'agreement', 'deal', 'minister', 'ambassador', 'envoy'
+        ]
+        for kw in diplomatic_kw:
+            if kw in text:
+                scores['diplomatic'] += 1
+        
+        # Human impact keywords
+        human_kw = [
+            'families', 'civilians', 'people', 'queue', 'protest',
+            'refugees', 'evacuate', 'shelter', 'crisis', 'panic'
+        ]
+        for kw in human_kw:
+            if kw in text:
+                scores['human_impact'] += 1
+        
+        # Check subjects
+        for subject in subjects:
+            if any(kw in subject for kw in ['price', 'gas station', 'market', 'economy']):
+                scores['economic'] += 2
+            if any(kw in subject for kw in ['families', 'civilians', 'people']):
+                scores['human_impact'] += 2
+        
+        # Return type with highest score
+        max_score = max(scores.values())
+        if max_score == 0:
+            return 'military'  # Default
+        
+        # If multiple types have high scores, return mixed
+        high_scorers = [k for k, v in scores.items() if v >= max_score * 0.7]
+        if len(high_scorers) > 1:
+            return 'mixed'
+        
+        return max(scores.items(), key=lambda x: x[1])[0]
+    
+    def _calculate_trending_boost(self, text: str, subjects: List[str], 
+                                   action: str, setting: str, 
+                                   trending_context: Dict[str, Any]) -> float:
+        """Calculate boost score based on trending context."""
+        if not trending_context:
+            return 0.0
+        
+        boost_scores = []
+        text_lower = text.lower()
+        
+        # Check if any trending terms appear in text
+        for trending_term, data in trending_context.items():
+            if trending_term in text_lower:
+                boost_scores.append(data.get('score', 0.0))
+        
+        # Check subjects
+        for subject in subjects:
+            for trending_term, data in trending_context.items():
+                if trending_term in subject.lower() or subject.lower() in trending_term:
+                    boost_scores.append(data.get('score', 0.0))
+        
+        # Check setting
+        if setting:
+            for trending_term, data in trending_context.items():
+                if trending_term in setting.lower() or setting.lower() in trending_term:
+                    boost_scores.append(data.get('score', 0.0))
+        
+        return max(boost_scores) if boost_scores else 0.0
+    
+    def _determine_primary_concept(self, text: str, subjects: List[str], 
+                                    action: str, setting: str, 
+                                    visual_type: str) -> str:
+        """Determine the primary visual concept (what image should show)."""
+        # Build concept from available elements
+        parts = []
+        
+        if subjects:
+            parts.append(subjects[0])
+        
+        if action and action != "in dramatic confrontation":
+            parts.append(action)
+        
+        if setting:
+            parts.append(f"at {setting}")
+        
+        if parts:
+            return " ".join(parts)
+        
+        # Fallback: extract key phrase from text
+        sentences = text.split('.')
+        if sentences:
+            return sentences[0][:80]
+        
+        return "geopolitical scene"
+    
+    def _determine_emphasis(self, visual_type: str, primary_concept: str, 
+                           trending_boost: float) -> str:
+        """Determine what to emphasize in the image."""
+        emphasis_map = {
+            'military': 'tactical positioning, equipment detail, strategic perspective',
+            'economic': 'price indicators, market data, human scale impact',
+            'diplomatic': 'formal setting, official insignia, meeting atmosphere',
+            'human_impact': 'civilian perspective, emotional impact, everyday life',
+            'mixed': 'balanced composition, multiple perspectives'
+        }
+        
+        base_emphasis = emphasis_map.get(visual_type, 'dramatic composition')
+        
+        # Add trending boost note
+        if trending_boost > 0.5:
+            base_emphasis += ', emphasize trending elements'
+        
+        return base_emphasis
+    
+    def _get_empty_concepts(self) -> Dict[str, Any]:
+        """Return empty concepts structure."""
+        return {
+            "primary_concept": "",
+            "secondary_concepts": [],
+            "visual_type": "military",
+            "trending_boost": 0.0,
+            "action": "",
+            "subjects": [],
+            "setting": "",
+            "mood": "tense",
+            "numbers": [],
+            "emphasis": ""
+        }

@@ -1,13 +1,30 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from PIL import Image, ImageDraw, ImageFont
+
+# Load environment variables from .env file
+load_dotenv()
 
 server = FastMCP("pixel-art-tool")
 
 FAL_KEY = os.getenv("FAL_KEY")
 OUTPUT_DIR = Path(__file__).parent.parent / "output" / "images"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# FAL Model Configuration - LoRA-based pixel art generation
+FAL_MODEL = "fal-ai/flux-lora"  # Primary: LoRA-capable model
+FAL_FALLBACK_MODELS = ["fal-ai/flux/dev", "fal-ai/flux/schnell"]  # Fallback chain
+
+# Pixel Art LoRA Configuration
+# Using Retro-Pixel-Flux-LoRA for authentic 16-bit SNES style
+# Model: prithivMLmods/Retro-Pixel-Flux-LoRA
+# Trigger word: "Retro Pixel" (automatically included in STYLE_SUFFIX)
+PIXEL_ART_LORA = {
+    "path": "prithivMLmods/Retro-Pixel-Flux-LoRA",  # Hugging Face model reference
+    "scale": 0.85  # LoRA strength (0.8-1.0 for strong pixel art effect)
+}
 
 # PHASE 2.4: Brand color palette for visual consistency
 BRAND_COLORS = {
@@ -17,7 +34,7 @@ BRAND_COLORS = {
     "neutral": "slate gray (#4A5568)"
 }
 
-STYLE_SUFFIX = "true 16-bit pixel art, retro SNES style, isometric perspective, hard pixel edges, limited color palette with dark navy blues, amber accents, and cyan highlights, realistic military equipment proportions, flat colors, dramatic lighting, NO blur, NO text, NO watermark, NO letters, NO UI elements, NO speech bubbles"
+STYLE_SUFFIX = "Retro Pixel, true 16-bit pixel art, retro SNES style, isometric perspective, hard pixel edges, limited color palette with dark navy blues, amber accents, and cyan highlights, detailed proportions, flat colors, dramatic lighting, NO blur, NO text, NO watermark, NO letters, NO UI elements, NO speech bubbles"
 
 # Phase 5.1: Negative prompt — explicit exclusions sent to the model
 NEGATIVE_PROMPT = (
@@ -31,31 +48,16 @@ NEGATIVE_PROMPT = (
 # Phase 5.1: Quality check keywords — prompt must contain enough specificity
 MIN_SPECIFICITY_WORDS = 4  # Below this, prompt is flagged as too generic
 
-# FAL.ai content-policy safe substitutions
-# Replace explicit military action words with neutral visual descriptions
+# FAL.ai content-policy safe substitutions - MINIMAL LAYER
+# Only replace extreme terms that actually trigger content policy violations
+# flux-lora and flux/dev are permissive - most military/geopolitical terms are fine
 _SAFE_SUBSTITUTIONS = [
-    (r'\bstrik(?:e|ing|es)\b',       'silhouette over'),
-    (r'\bbomb(?:ing|ed|s)?\b',        'aircraft over'),
-    (r'\bexplosion(?:s)?\b',          'bright light burst'),
-    (r'\bfiring\b',                   'launching flare'),
-    (r'\battack(?:ing|s|ed)?\b',      'advancing toward'),
-    (r'\bkill(?:ing|ed|s)?\b',        'approaching'),
-    (r'\bdestroi(?:ed|ing)\b',        'silhouette of ruined'),
-    (r'\binvad(?:e|ing|ed)\b',        'crossing into'),
-    (r'\bdetonat(?:e|ing|ed)\b',      'bright flare over'),
-    (r'\bbombardment\b',              'aerial formation'),
-    (r'\bwar(?:zone|fare)?\b',        'conflict zone'),
-    (r'\bdramatic explosions?\b',     'dramatic light burst'),
-    (r'\bair defenses?\b',            'defensive array'),
-    (r'\bF-117\b',                    'stealth aircraft'),
-    (r'\bNighthawks?\b',              'stealth aircraft'),
-    (r'\bScud missiles?\b',           'ballistic projectile'),
-    (r'\bExocet missiles?\b',         'sea-launched projectile'),
-    (r'\bhypersonic missiles?\b',     'high-speed projectile'),
-    (r'\bballistic missiles?\b',      'long-range projectile'),
-    (r'\bmissile(?:s)?\b',            'projectile'),
-    (r'\bhuman(?:s)? fleeing\b',      'figures evacuating'),
+    (r'\bgore\b',                     'aftermath'),
+    (r'\bblood(?:y|ied)?\b',          'impact scene'),
     (r'\bcasualt(?:y|ies)\b',         'aftermath scene'),
+    (r'\bdead bodies\b',              'aftermath scene'),
+    (r'\bcorpse(?:s)?\b',             'aftermath scene'),
+    (r'\bexecution(?:s)?\b',          'confrontation'),
 ]
 
 
@@ -69,6 +71,82 @@ def _sanitize_prompt_for_api(prompt: str) -> str:
     for pattern, replacement in _SAFE_SUBSTITUTIONS:
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
     return result
+
+
+def _detect_visual_type(prompt: str) -> str:
+    """
+    Detect the visual type of a prompt based on content.
+    Returns: 'military', 'economic', 'diplomatic', 'human_impact', or 'general'
+    """
+    prompt_lower = prompt.lower()
+    
+    scores = {
+        'military': 0,
+        'economic': 0,
+        'diplomatic': 0,
+        'human_impact': 0
+    }
+    
+    # Military keywords
+    military_kw = [
+        'military', 'forces', 'troops', 'missile', 'tank', 'warship',
+        'aircraft', 'strike', 'attack', 'war', 'combat', 'naval', 'drone',
+        'bombing', 'invasion', 'blockade', 'weapon'
+    ]
+    for kw in military_kw:
+        if kw in prompt_lower:
+            scores['military'] += 1
+    
+    # Economic keywords
+    economic_kw = [
+        'price', 'economy', 'market', 'inflation', 'trading', 'stock',
+        'gas station', 'oil prices', 'dollar', 'shortage', 'queue', 'shelves',
+        'cost', 'surge', 'supply'
+    ]
+    for kw in economic_kw:
+        if kw in prompt_lower:
+            scores['economic'] += 1
+    
+    # Diplomatic keywords
+    diplomatic_kw = [
+        'diplomatic', 'summit', 'treaty', 'negotiation', 'agreement',
+        'minister', 'ambassador', 'embassy', 'talks', 'meeting', 'officials'
+    ]
+    for kw in diplomatic_kw:
+        if kw in prompt_lower:
+            scores['diplomatic'] += 1
+    
+    # Human impact keywords
+    human_kw = [
+        'civilian', 'families', 'people', 'protest', 'refugees',
+        'crowd', 'residents', 'evacuees', 'victims', 'humanitarian'
+    ]
+    for kw in human_kw:
+        if kw in prompt_lower:
+            scores['human_impact'] += 1
+    
+    # Return type with highest score
+    max_score = max(scores.values())
+    if max_score == 0:
+        return 'general'
+    
+    return max(scores.items(), key=lambda x: x[1])[0]
+
+
+def _get_adaptive_enrichment(visual_type: str) -> str:
+    """
+    Get adaptive enrichment text based on visual type.
+    Replaces the old military-only fallback with context-aware enrichment.
+    """
+    enrichments = {
+        'military': 'aerial isometric view of strategic forces in tactical positioning, dark navy sky, amber highlights, high tension',
+        'economic': 'isometric view of trading floor or market scene, price indicators visible, human scale perspective, amber and cyan data highlights',
+        'diplomatic': 'formal meeting setting, isometric conference room or summit hall, official flags and insignia, professional atmosphere',
+        'human_impact': 'civilian perspective, everyday life scene, human scale composition, emotional impact, relatable imagery',
+        'general': 'dramatic isometric composition, strategic perspective, balanced lighting'
+    }
+    
+    return enrichments.get(visual_type, enrichments['general'])
 
 
 def _score_prompt_specificity(prompt: str) -> int:
@@ -105,11 +183,35 @@ def _score_prompt_specificity(prompt: str) -> int:
         score += 20
 
     # Military/subject keywords add 15 pts
-    subjects = [
+    military_subjects = [
         "missile", "tank", "warship", "aircraft", "soldier", "drone",
         "fighter", "destroyer", "submarine", "convoy", "carrier", "artillery"
     ]
-    if any(s in prompt_lower for s in subjects):
+    if any(s in prompt_lower for s in military_subjects):
+        score += 15
+    
+    # Economic subjects add 15 pts (equal weight)
+    economic_subjects = [
+        "trading", "market", "price", "inflation", "shortage", "queue",
+        "gas station", "stock", "economy", "dollar", "oil prices", "shelves"
+    ]
+    if any(s in prompt_lower for s in economic_subjects):
+        score += 15
+    
+    # Diplomatic subjects add 15 pts (equal weight)
+    diplomatic_subjects = [
+        "summit", "treaty", "negotiation", "embassy", "minister",
+        "diplomat", "agreement", "talks", "meeting", "officials"
+    ]
+    if any(s in prompt_lower for s in diplomatic_subjects):
+        score += 15
+    
+    # Human impact subjects add 15 pts (equal weight)
+    human_subjects = [
+        "civilian", "family", "families", "protest", "refugee", "crowd",
+        "people", "residents", "evacuees", "victims"
+    ]
+    if any(s in prompt_lower for s in human_subjects):
         score += 15
 
     # Lighting/atmosphere adds 10 pts
@@ -217,14 +319,14 @@ def generate_pixel_art(prompt: str) -> dict:
     specificity = _score_prompt_specificity(prompt)
     print(f"  [IMG] Specificity score: {specificity}/100")
 
-    # If too generic, append a scene-grounding fallback
+    # If too generic, append adaptive scene-grounding fallback
     enriched_prompt = prompt.strip()
     if specificity < 35:
-        enriched_prompt += (
-            ", aerial isometric view of military forces in dramatic confrontation, "
-            "dark navy sky, amber explosion light, high tension"
-        )
-        print(f"  [IMG] Low specificity — enriched prompt applied")
+        # Determine visual type from prompt content
+        visual_type = _detect_visual_type(prompt)
+        enrichment = _get_adaptive_enrichment(visual_type)
+        enriched_prompt += f", {enrichment}"
+        print(f"  [IMG] Low specificity — {visual_type} enrichment applied")
 
     # Sanitize for FAL.ai content policy before building final prompt
     sanitized_prompt = _sanitize_prompt_for_api(enriched_prompt)
@@ -240,14 +342,49 @@ def generate_pixel_art(prompt: str) -> dict:
 
             os.environ["FAL_KEY"] = FAL_KEY
 
-            result = fal_client.run(
-                "fal-ai/flux-2-pro",
-                arguments={
-                    "prompt": full_prompt,
-                    "image_size": "portrait_4_3",
-                    "num_images": 1,
-                }
-            )
+            # Try LoRA model first, then fallback chain
+            models_to_try = [FAL_MODEL] + FAL_FALLBACK_MODELS
+            result = None
+            model_used = None
+            last_error = None
+            
+            for model in models_to_try:
+                try:
+                    print(f"  [IMG] Trying model: {model}")
+                    
+                    # Build arguments based on model type
+                    if model == "fal-ai/flux-lora":
+                        # LoRA-enabled model with pixel art weights
+                        arguments = {
+                            "prompt": full_prompt,
+                            "image_size": "portrait_4_3",
+                            "num_images": 1,
+                            "loras": [PIXEL_ART_LORA],
+                            "enable_safety_checker": False,
+                        }
+                    else:
+                        # Standard flux models
+                        arguments = {
+                            "prompt": full_prompt,
+                            "image_size": "portrait_4_3",
+                            "num_images": 1,
+                        }
+                    
+                    result = fal_client.run(model, arguments=arguments)
+                    model_used = model
+                    print(f"  [IMG] ✓ Success with {model}")
+                    break
+                    
+                except Exception as model_error:
+                    last_error = str(model_error)
+                    print(f"  [IMG] ✗ {model} failed: {last_error[:100]}")
+                    if model == models_to_try[-1]:
+                        # Last model failed, re-raise
+                        raise
+                    continue
+            
+            if not result:
+                raise Exception(f"All models failed. Last error: {last_error}")
 
             image_url = result["images"][0]["url"]
 
@@ -264,7 +401,8 @@ def generate_pixel_art(prompt: str) -> dict:
                 "prompt_used": full_prompt,
                 "negative_prompt": NEGATIVE_PROMPT,
                 "specificity_score": specificity,
-                "source": "fal-ai/flux-2-pro",
+                "source": model_used,
+                "lora_used": model_used == "fal-ai/flux-lora",
                 "image_url": image_url,
                 "output_directory": str(OUTPUT_DIR),
             }
