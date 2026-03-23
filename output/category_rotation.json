@@ -1,13 +1,17 @@
 {
   "current_cycle": {
-    "day_index": 1,
-    "category": "great_power_competition",
-    "date": "2026-03-22"
+    "day_index": 2,
+    "category": "economic_warfare",
+    "date": "2026-03-23"
   },
   "history": [
     {
       "date": "2026-03-21",
       "category": "great_power_competition"
+    },
+    {
+      "date": "2026-03-22",
+      "category": "economic_warfare"
     }
   ]
 }
