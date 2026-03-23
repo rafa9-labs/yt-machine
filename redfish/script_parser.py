@@ -1,10 +1,21 @@
 """
 Script Parser - Extracts specific actions, subjects, and settings from script segments
 to drive highly relevant, action-specific image generation prompts.
+Enhanced with geopolitical accuracy system for zero-tolerance hallucination prevention.
 """
 
 import re
 from typing import Dict, Any, List, Optional
+from .geopolitical_accuracy import (
+    COUNTRY_VISUAL_SPECS, 
+    validate_country_equipment_combination,
+    get_country_visual_spec,
+    get_required_country_elements,
+    check_hallucination_risks,
+    extract_countries_from_text,
+    extract_equipment_from_text,
+    validate_geopolitical_accuracy
+)
 
 
 # Action verb categories mapped to visual descriptions
@@ -330,8 +341,29 @@ class ScriptParser:
         return ACTION_VISUAL_MAPPINGS.get(action.lower().strip(), "")
 
     def _get_subject_visual(self, subject: str) -> str:
-        """Look up enhanced visual description for a subject."""
-        return SUBJECT_VISUAL_ENHANCEMENTS.get(subject.lower().strip(), "")
+        """Look up enhanced visual description using geopolitical accuracy system."""
+        subject_lower = subject.lower().strip()
+        
+        # Check if subject is a country
+        if subject_lower in COUNTRY_VISUAL_SPECS:
+            country_spec = get_country_visual_spec(subject_lower)
+            # Return primary military branch description
+            if 'military_branches' in country_spec:
+                # Get the first military branch as default
+                first_branch = list(country_spec['military_branches'].values())[0]
+                return first_branch
+            return f"{subject.title()} military forces"
+        
+        # Check if subject is equipment - get country-specific variant
+        countries = extract_countries_from_text("")  # Will need context for this
+        if countries:
+            for country in countries:
+                if validate_country_equipment_combination(country, subject):
+                    from .military_equipment_db import get_country_specific_variant
+                    return get_country_specific_variant(subject, country)
+        
+        # Fallback to original system for non-geopolitical subjects
+        return SUBJECT_VISUAL_ENHANCEMENTS.get(subject_lower, "")
 
     def _get_setting_visual(self, setting: str) -> str:
         """Look up enhanced visual description for a setting."""
@@ -341,25 +373,7 @@ class ScriptParser:
         """
         Extract ALL visual concepts from a script segment for precise image generation.
         This is the primary method for script-to-image synchronization.
-        
-        Args:
-            segment_text: The script segment text
-            trending_context: Optional trending words dictionary from TrendingAnalyzer
-            
-        Returns:
-            Dictionary with comprehensive visual concept data:
-            {
-                "primary_concept": str,
-                "secondary_concepts": List[str],
-                "visual_type": str,  # military, economic, diplomatic, human_impact, mixed
-                "trending_boost": float,  # 0.0-1.0
-                "action": str,
-                "subjects": List[str],
-                "setting": str,
-                "mood": str,
-                "numbers": List[str],
-                "emphasis": str  # What to emphasize in the image
-            }
+        Enhanced with geopolitical accuracy validation.
         """
         if not segment_text:
             return self._get_empty_concepts()
@@ -398,6 +412,29 @@ class ScriptParser:
         # Determine emphasis
         emphasis = self._determine_emphasis(visual_type, primary_concept, trending_boost)
         
+        # NEW: Geopolitical accuracy validation
+        geopolitical_validation = validate_geopolitical_accuracy(segment_text)
+        
+        # Extract countries and equipment for accuracy checks
+        countries = extract_countries_from_text(segment_text)
+        equipment = extract_equipment_from_text(segment_text)
+        
+        # Validate country-equipment combinations
+        accuracy_issues = []
+        for country in countries:
+            for equip in equipment:
+                if not validate_country_equipment_combination(country, equip):
+                    accuracy_issues.append(f"Invalid: {country} does not use {equip}")
+                
+                # Check hallucination risks
+                risks = check_hallucination_risks(country, equip)
+                accuracy_issues.extend(risks)
+        
+        # Add required country elements
+        required_elements = []
+        for country in countries:
+            required_elements.extend(get_required_country_elements(country))
+        
         return {
             "primary_concept": primary_concept,
             "secondary_concepts": secondary_concepts,
@@ -408,7 +445,14 @@ class ScriptParser:
             "setting": setting,
             "mood": mood,
             "numbers": numbers,
-            "emphasis": emphasis
+            "emphasis": emphasis,
+            # NEW: Geopolitical accuracy data
+            "countries": countries,
+            "equipment": equipment,
+            "geopolitical_validation": geopolitical_validation,
+            "accuracy_issues": accuracy_issues,
+            "required_elements": required_elements,
+            "accuracy_score": geopolitical_validation.get('accuracy_score', 100)
         }
     
     def _extract_all_subjects(self, text: str) -> List[str]:
@@ -609,7 +653,7 @@ class ScriptParser:
         return base_emphasis
     
     def _get_empty_concepts(self) -> Dict[str, Any]:
-        """Return empty concepts structure."""
+        """Return empty concepts structure with geopolitical accuracy fields."""
         return {
             "primary_concept": "",
             "secondary_concepts": [],
@@ -620,7 +664,14 @@ class ScriptParser:
             "setting": "",
             "mood": "tense",
             "numbers": [],
-            "emphasis": ""
+            "emphasis": "",
+            # Geopolitical accuracy fields
+            "countries": [],
+            "equipment": [],
+            "geopolitical_validation": {"accuracy_score": 100, "combinations_valid": True, "risks": []},
+            "accuracy_issues": [],
+            "required_elements": [],
+            "accuracy_score": 100
         }
     
     def add_visual_grounding(self, concepts: Dict[str, Any], scene_type: str) -> str:

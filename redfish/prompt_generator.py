@@ -10,6 +10,7 @@ from .action_mapping import enhance_action, get_dynamic_action_phrase, SCENE_ACT
 from .military_equipment_db import normalize_equipment
 from .historical_equipment_db import get_equipment_for_era, normalize_historical_equipment
 from .script_parser import ScriptParser
+from .geopolitical_accuracy import get_country_visual_spec, validate_country_equipment_combination
 
 
 # Scene composition templates — 6 scenes matching script segments with historical anchoring
@@ -191,7 +192,7 @@ class VisualPromptGenerator:
         """
         Build image prompt from extracted visual concepts with structured hierarchy.
         This is the PRIMARY method for script-to-image synchronization.
-        Enhanced with token weighting and structured hierarchy.
+        Enhanced with token weighting and geopolitical accuracy.
         """
         template = SCENE_TEMPLATES.get(scene_type, SCENE_TEMPLATES['hook'])
         
@@ -205,10 +206,31 @@ class VisualPromptGenerator:
         emphasis = concepts.get('emphasis', '')
         trending_boost = concepts.get('trending_boost', 0.0)
         
+        # NEW: Geopolitical accuracy elements
+        countries = concepts.get('countries', [])
+        equipment = concepts.get('equipment', [])
+        required_elements = concepts.get('required_elements', [])
+        accuracy_score = concepts.get('accuracy_score', 100)
+        
         # Build structured prompt with hierarchy: Subject → Description → Style
         prompt_parts = []
         
-        # 1. Subject (highest priority - weighted)
+        # 1. Country identification (highest priority for geopolitical content)
+        if countries:
+            for country in countries:
+                country_spec = get_country_visual_spec(country)
+                if country_spec:
+                    # Add flag colors and military branch
+                    if 'flag_colors' in country_spec:
+                        prompt_parts.append(f"({country_spec['flag_colors']}:1.3)")
+                    
+                    # Add military branch if available
+                    if 'military_branches' in country_spec:
+                        branches = list(country_spec['military_branches'].values())
+                        if branches:
+                            prompt_parts.append(f"({branches[0]}:1.2)")
+        
+        # 2. Subject (highest priority - weighted)
         if subjects:
             # Weight primary subject more heavily
             primary_subject = subjects[0]
@@ -219,22 +241,40 @@ class VisualPromptGenerator:
             else:
                 prompt_parts.append(f"({primary_subject}:1.2)")  # Standard subject weighting
         
-        # 2. Action/Description (medium priority)
+        # 3. Equipment with country-specific variants
+        for equip in equipment:
+            for country in countries:
+                from .military_equipment_db import get_country_specific_variant, get_equipment_markings
+                if validate_country_equipment_combination(country, equip):
+                    # Get country-specific variant
+                    variant = get_country_specific_variant(equip, country)
+                    prompt_parts.append(f"({variant}:1.3)")
+                    
+                    # Add appropriate markings
+                    markings = get_equipment_markings(equip, country)
+                    if markings:
+                        prompt_parts.append(f"({markings}:1.2)")
+        
+        # 4. Action/Description (medium priority)
         if action and action != 'in dramatic confrontation':
             action_enhanced = self._enhance_action_with_visuals(action, visual_type)
             prompt_parts.append(action_enhanced)
         
-        # 3. Setting/Context (medium priority)
+        # 5. Setting/Context (medium priority)
         if setting:
             setting_enhanced = self._enhance_setting_with_context(setting, visual_type)
             prompt_parts.append(f"at {setting_enhanced}")
         
-        # 4. Composition instructions (enhanced based on visual type)
+        # 6. Required visual elements (mandatory for accuracy)
+        for element in required_elements:
+            prompt_parts.append(f"({element}:1.3)")
+        
+        # 7. Composition instructions (enhanced based on visual type)
         composition = self._get_composition_instructions(visual_type, scene_type)
         if composition:
             prompt_parts.append(composition)
         
-        # 5. Mood/Atmosphere (lower priority)
+        # 8. Mood/Atmosphere (lower priority)
         mood_descriptors = {
             'tense': '(high tension atmosphere:1.2)',
             'chaotic': '(chaotic energy:1.1)',
@@ -245,19 +285,19 @@ class VisualPromptGenerator:
         if mood in mood_descriptors:
             prompt_parts.append(mood_descriptors[mood])
         
-        # 6. Emphasis based on visual type
+        # 9. Emphasis based on visual type
         if emphasis:
             prompt_parts.append(f"({emphasis}:1.1)")
         
-        # 7. Trending boost (if significant)
+        # 10. Trending boost (if significant)
         if trending_boost > 0.5:
             prompt_parts.append("(emphasize key trending elements:1.3)")
         
-        # 8. Style weighting (ensure pixel art style is prominent)
+        # 11. Style weighting (ensure pixel art style is prominent)
         style_weighting = self._get_style_weighting(visual_type)
         prompt_parts.append(style_weighting)
         
-        # 9. Visual grounding (spatial relationships)
+        # 12. Visual grounding (spatial relationships)
         grounding = self._parser.add_visual_grounding(concepts, scene_type)
         if grounding:
             prompt_parts.append(grounding)
