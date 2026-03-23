@@ -10,7 +10,7 @@ from .military_equipment_db import get_all_locations, MILITARY_EQUIPMENT_DB
 
 def validate_prompt_quality(prompt: str) -> Dict[str, Any]:
     """
-    Validate prompt quality against multiple criteria
+    Enhanced prompt quality validation with keyword presence detection.
     
     Args:
         prompt: Generated image prompt
@@ -23,7 +23,9 @@ def validate_prompt_quality(prompt: str) -> Dict[str, Any]:
         'has_real_location': _check_real_location(prompt),
         'has_action_verb': _check_action_verb(prompt),
         'no_generic_terms': _check_no_generic_terms(prompt),
-        'has_style_suffix': _check_style_suffix(prompt)
+        'has_style_suffix': _check_style_suffix(prompt),
+        'has_token_weighting': _check_token_weighting(prompt),
+        'has_visual_grounding': _check_visual_grounding(prompt)
     }
     
     passed = sum(checks.values())
@@ -33,8 +35,76 @@ def validate_prompt_quality(prompt: str) -> Dict[str, Any]:
     return {
         'score': score,
         'checks': checks,
-        'passed': passed >= 4,  # Must pass at least 4/5 checks
+        'passed': passed >= 5,  # Must pass at least 5/7 checks now
         'details': _get_check_details(checks)
+    }
+
+
+def check_keyword_presence(prompt: str, critical_keywords: List[str]) -> Dict[str, Any]:
+    """
+    Check if critical keywords are present and properly weighted in the prompt.
+    
+    Args:
+        prompt: Generated image prompt
+        critical_keywords: List of keywords that must be present
+        
+    Returns:
+        Dictionary with presence analysis
+    """
+    prompt_lower = prompt.lower()
+    present_keywords = []
+    missing_keywords = []
+    weighted_keywords = []
+    
+    for keyword in critical_keywords:
+        if keyword.lower() in prompt_lower:
+            present_keywords.append(keyword)
+            # Check if keyword is weighted
+            if f"({keyword}" in prompt_lower or f"{keyword}:" in prompt_lower:
+                weighted_keywords.append(keyword)
+        else:
+            missing_keywords.append(keyword)
+    
+    return {
+        'present': present_keywords,
+        'missing': missing_keywords,
+        'weighted': weighted_keywords,
+        'presence_rate': len(present_keywords) / len(critical_keywords) if critical_keywords else 0,
+        'weighting_rate': len(weighted_keywords) / len(present_keywords) if present_keywords else 0,
+        'passes': len(missing_keywords) == 0
+    }
+
+
+def validate_visual_type_correlation(prompt: str, visual_type: str) -> Dict[str, Any]:
+    """
+    Validate that prompt matches the expected visual type characteristics.
+    
+    Args:
+        prompt: Generated image prompt
+        visual_type: Expected visual type (military, economic, diplomatic, human_impact)
+        
+    Returns:
+        Validation results
+    """
+    type_keywords = {
+        'military': ['missile', 'tank', 'aircraft', 'warship', 'naval', 'tactical', 'formation'],
+        'economic': ['market', 'price', 'trading', 'financial', 'indicator', 'display'],
+        'diplomatic': ['summit', 'negotiation', 'official', 'formal', 'treaty', 'agreement'],
+        'human_impact': ['civilian', 'people', 'crowd', 'protest', 'evacuee', 'human scale']
+    }
+    
+    expected_keywords = type_keywords.get(visual_type, [])
+    prompt_lower = prompt.lower()
+    
+    found_keywords = [kw for kw in expected_keywords if kw in prompt_lower]
+    correlation_score = len(found_keywords) / len(expected_keywords) if expected_keywords else 0
+    
+    return {
+        'visual_type': visual_type,
+        'expected_keywords': expected_keywords,
+        'found_keywords': found_keywords,
+        'correlation_score': correlation_score,
+        'passes': correlation_score >= 0.3  # At least 30% of expected keywords
     }
 
 
@@ -163,6 +233,22 @@ def _check_style_suffix(prompt: str) -> bool:
     """Check if prompt contains required pixel art style suffix"""
     required_elements = ['isometric', 'pixel art']
     return all(elem in prompt.lower() for elem in required_elements)
+
+
+def _check_token_weighting(prompt: str) -> bool:
+    """Check if prompt uses token weighting for emphasis"""
+    # Look for (keyword:weight) pattern
+    weighting_pattern = r'\([^:]+:[\d.]+\)'
+    return bool(re.search(weighting_pattern, prompt))
+
+
+def _check_visual_grounding(prompt: str) -> bool:
+    """Check if prompt contains visual grounding instructions"""
+    grounding_indicators = [
+        'formation', 'positioned', 'arrangement', 'layout',
+        'perspective', 'composition', 'foreground', 'background'
+    ]
+    return any(indicator in prompt.lower() for indicator in grounding_indicators)
 
 
 def _extract_equipment_from_prompt(prompt: str) -> List[str]:

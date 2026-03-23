@@ -622,3 +622,79 @@ class ScriptParser:
             "numbers": [],
             "emphasis": ""
         }
+    
+    def add_visual_grounding(self, concepts: Dict[str, Any], scene_type: str) -> str:
+        """
+        Add spatial grounding instructions for better object positioning.
+        This ensures objects are arranged logically in the scene.
+        """
+        subjects = concepts.get('subjects', [])
+        action = concepts.get('action', '')
+        setting = concepts.get('setting', '')
+        visual_type = concepts.get('visual_type', 'general')
+        
+        grounding_instructions = []
+        
+        # Military spatial arrangements
+        if visual_type == 'military':
+            if 'blockade' in action.lower() or 'naval' in setting.lower():
+                grounding_instructions.append("(warships in tactical line formation:1.3)")
+                grounding_instructions.append("(strait visible in background:1.1)")
+            
+            if 'missile' in ' '.join(subjects).lower():
+                grounding_instructions.append("(missile positioned prominently:1.2)")
+                grounding_instructions.append("(launch trajectory visible:1.1)")
+            
+            if 'tank' in ' '.join(subjects).lower() or 'armor' in action.lower():
+                grounding_instructions.append("(armored formation in foreground:1.2)")
+                grounding_instructions.append("(tactical spacing visible:1.1)")
+        
+        # Economic spatial arrangements
+        elif visual_type == 'economic':
+            if 'market' in setting.lower() or 'trading' in action.lower():
+                grounding_instructions.append("(market displays prominent:1.2)")
+                grounding_instructions.append("(human scale perspective:1.1)")
+            
+            if 'gas station' in setting.lower():
+                grounding_instructions.append("(price board clearly visible:1.3)")
+                grounding_instructions.append("(queue formation organized:1.1)")
+        
+        # Diplomatic spatial arrangements
+        elif visual_type == 'diplomatic':
+            if 'summit' in setting.lower() or 'negotiation' in action.lower():
+                grounding_instructions.append("(officials around formal table:1.2)")
+                grounding_instructions.append("(flags and insignia visible:1.1)")
+            
+            if 'treaty' in action.lower() or 'agreement' in action.lower():
+                grounding_instructions.append("(document signing focus:1.2)")
+                grounding_instructions.append("(professional setting balanced:1.1)")
+        
+        # Human impact spatial arrangements
+        elif visual_type == 'human_impact':
+            if 'protest' in action.lower():
+                grounding_instructions.append("(crowd formation dynamic:1.2)")
+                grounding_instructions.append("(signs and banners visible:1.1)")
+            
+            if 'evacuee' in ' '.join(subjects).lower() or 'refugee' in ' '.join(subjects).lower():
+                grounding_instructions.append("(human scale perspective:1.3)")
+                grounding_instructions.append("(emotional composition:1.2)")
+        
+        # Scene-specific composition
+        scene_grounding = self._get_scene_grounding(scene_type)
+        if scene_grounding:
+            grounding_instructions.append(scene_grounding)
+        
+        return ', '.join(grounding_instructions)
+    
+    def _get_scene_grounding(self, scene_type: str) -> str:
+        """Get scene-specific spatial grounding instructions."""
+        scene_grounding = {
+            'hook': '(dramatic foreground composition:1.2)',
+            'historical_1': '(historical perspective depth:1.1)',
+            'historical_2': '(strategic overview layout:1.2)',
+            'modern_pivot': '(dynamic contemporary composition:1.1)',
+            'consequence': '(human-centered framing:1.2)',
+            'future_outlook': '(revealing strategic perspective:1.1)'
+        }
+        
+        return scene_grounding.get(scene_type, '')
