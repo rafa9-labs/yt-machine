@@ -185,7 +185,8 @@ def validate_country_equipment_combination(country: str, equipment: str) -> bool
     # Check if equipment is in country's approved list
     country_equipment = COUNTRY_EQUIPMENT_MAPPING[country]
     for approved in country_equipment:
-        if approved.lower() in equipment.lower():
+        # Check for partial matches (e.g., "F-14 Tomcat" should match "F-14")
+        if approved.lower() in equipment.lower() or equipment.lower() in approved.lower():
             return True
     
     return False
