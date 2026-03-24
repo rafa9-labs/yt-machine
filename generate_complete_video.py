@@ -269,21 +269,32 @@ try:
     image_folder = project_folder / "images"
     image_folder.mkdir(exist_ok=True)
     
+    # Seed strategy: base_seed from project_id for batch consistency
+    # All 6 images in one video share a related seed family = consistent style
+    # Different videos get different base seeds = fresh content
+    base_seed = project_id % (2**32)  # Keep within 32-bit range
+    print(f"  Batch seed: {base_seed} (derived from project_id)")
+    
     # Determine scene names based on script structure
     if 'historical_1' in script:
         scene_names = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
     else:
         scene_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
     
-    for scene_name in scene_names:
+    for scene_idx, scene_name in enumerate(scene_names):
         print(f"\n  Generating {scene_name} scene...")
         
         # Get prompt (already generated from script)
         prompt = scene_prompts[scene_name]
         
         # Show script segment preview
-        segment_text = script.get(scene_name, '')[:100]
-        print(f"    Script: {segment_text}...")
+        segment_data = script.get(scene_name, '')
+        if isinstance(segment_data, dict):
+            segment_text = segment_data.get('text', segment_data.get('content', str(segment_data)))
+        else:
+            segment_text = str(segment_data) if segment_data else ''
+        segment_preview = segment_text[:100]
+        print(f"    Script: {segment_preview}...")
         
         # Calculate relevance to script (not article)
         relevance = calculate_prompt_relevance(prompt, segment_text)
@@ -299,8 +310,10 @@ try:
         # Show prompt preview
         print(f"    Prompt: {prompt[:120]}...")
         
-        # Generate image
-        art_result = generate_pixel_art(prompt)
+        # Generate image with seed for batch consistency
+        scene_seed = base_seed + scene_idx
+        art_result = generate_pixel_art(prompt, script_text=segment_text, seed=scene_seed)
+        print(f"    Seed: {scene_seed}")
         
         if art_result.get('success'):
             # Move image to project folder
