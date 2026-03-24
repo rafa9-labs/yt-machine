@@ -182,17 +182,22 @@ def _check_specific_equipment(prompt: str) -> bool:
         r'USS\s+\w+',               # USS Boxer
         r'M\d+A?\d?\s+\w+',         # M1A2 Abrams
         r'MQ-\d+\s+\w+',            # MQ-9 Reaper
-        r'AH-\d+\s+\w+',            # AH-64 Apache
-        r'Type\s+\d+',              # Type 055
     ]
     
+    # Check regex patterns first
     for pattern in patterns:
         if re.search(pattern, prompt, re.IGNORECASE):
             return True
     
-    # Also check against equipment database
+    # Then check against equipment database
     for category, equipment_dict in MILITARY_EQUIPMENT_DB.items():
-        for full_name in equipment_dict.values():
+        for equipment_key, equipment_info in equipment_dict.items():
+            # Handle both old string format and new dict format
+            if isinstance(equipment_info, dict):
+                full_name = equipment_info.get('full_name', equipment_key)
+            else:
+                full_name = equipment_info
+            
             if full_name.lower() in prompt.lower():
                 return True
     
@@ -258,7 +263,13 @@ def _extract_equipment_from_prompt(prompt: str) -> List[str]:
     equipment_found = []
     
     for category, equipment_dict in MILITARY_EQUIPMENT_DB.items():
-        for full_name in equipment_dict.values():
+        for equipment_key, equipment_info in equipment_dict.items():
+            # Handle both old string format and new dict format
+            if isinstance(equipment_info, dict):
+                full_name = equipment_info.get('full_name', equipment_key)
+            else:
+                full_name = equipment_info
+            
             if full_name.lower() in prompt.lower():
                 equipment_found.append(full_name)
     
