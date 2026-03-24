@@ -1,0 +1,120 @@
+{
+  "version": "1.0",
+  "description": "Single source of truth for image generation style. Both pixel_art_tool.py and prompt_generator.py read from this file.",
+
+  "style_suffix": "Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), isometric perspective, (hard pixel edges:1.2), limited color palette, detailed proportions, flat colors, dramatic lighting",
+
+  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, labels, annotations, blurry, low quality, jpeg artifacts, pixelated noise, distorted proportions, photorealistic, 3D render, CGI, anime style, cartoon, sketch, pencil drawing, nsfw, gore, violence close-up, human faces distorted",
+
+  "brand_colors": {
+    "primary": "#0A1628",
+    "primary_name": "dark navy blue",
+    "accent": "#FFA500",
+    "accent_name": "amber orange",
+    "highlight": "#00D4FF",
+    "highlight_name": "cyan blue",
+    "neutral": "#4A5568",
+    "neutral_name": "slate gray"
+  },
+
+  "color_palette_prompt": "color palette: dark navy blue (#0A1628), amber orange (#FFA500), cyan blue (#00D4FF), slate gray (#4A5568)",
+
+  "generation_params": {
+    "guidance_scale": 3.5,
+    "num_inference_steps": 28,
+    "image_size": "portrait_4_3",
+    "output_format": "png",
+    "enable_safety_checker": false
+  },
+
+  "lora_defaults": {
+    "path": "prithivMLmods/Retro-Pixel-Flux-LoRA",
+    "scale": 0.85,
+    "trigger_word": "Retro Pixel"
+  },
+
+  "lora_by_visual_type": {
+    "military": {
+      "scale": 0.9,
+      "trigger": "tactical pixel",
+      "additional_prompts": "detailed equipment, strategic formations"
+    },
+    "economic": {
+      "scale": 0.8,
+      "trigger": "market pixel",
+      "additional_prompts": "data visualization, price displays, human scale"
+    },
+    "diplomatic": {
+      "scale": 0.85,
+      "trigger": "formal pixel",
+      "additional_prompts": "professional setting, official insignia, balanced composition"
+    },
+    "human_impact": {
+      "scale": 0.85,
+      "trigger": "emotional pixel",
+      "additional_prompts": "relatable imagery, emotional composition, human perspective"
+    },
+    "general": {
+      "scale": 0.85,
+      "trigger": "Retro Pixel",
+      "additional_prompts": ""
+    }
+  },
+
+  "scene_composition": {
+    "hook": {
+      "camera": "dramatic close-up or wide aerial view",
+      "framing": "single focal subject, attention-grabbing",
+      "lighting": "high contrast, dramatic dusk lighting with orange and red sky",
+      "spatial": "subject centered in foreground, environment pushed back"
+    },
+    "historical_1": {
+      "camera": "wide historical panoramic view",
+      "framing": "era-accurate equipment and settings, archival feel",
+      "lighting": "sepia-amber tint, grainy vintage film look, muted warm tones",
+      "spatial": "wide establishing shot, formations visible in mid-ground"
+    },
+    "historical_2": {
+      "camera": "strategic overhead or tactical angle",
+      "framing": "different era than historical_1, multi-layered context",
+      "lighting": "cold war era palette, olive drab and high contrast",
+      "spatial": "strategic overview, tactical positions mapped across frame"
+    },
+    "modern_pivot": {
+      "camera": "dynamic diagonal angle, contemporary perspective",
+      "framing": "modern equipment, 2020s technology, sharp clean lines",
+      "lighting": "modern HD lighting, bright contemporary feel, sharp shadows",
+      "spatial": "dynamic composition with depth, foreground action leading to background context"
+    },
+    "consequence": {
+      "camera": "ground-level human perspective, eye-height",
+      "framing": "civilian scale, everyday life impacted, emotional framing",
+      "lighting": "harsh midday light or cold blue economic lighting",
+      "spatial": "subject at human scale in foreground, wider impact visible in background"
+    },
+    "future_outlook": {
+      "camera": "wide strategic map view or revealing pullback shot",
+      "framing": "forward-looking, geopolitical positioning, strategic depth",
+      "lighting": "golden hour or twilight, contemplative atmosphere",
+      "spatial": "wide frame revealing full strategic picture, lingering perspective"
+    },
+    "context": {
+      "camera": "medium establishing shot",
+      "framing": "context-setting, background information visual",
+      "lighting": "neutral balanced lighting",
+      "spatial": "balanced mid-ground composition"
+    },
+    "escalation": {
+      "camera": "dynamic action angle, tilted perspective",
+      "framing": "intensity building, multiple elements in motion",
+      "lighting": "harsh dramatic lighting, high contrast, stormy",
+      "spatial": "converging elements, tension in spatial arrangement"
+    },
+    "twist": {
+      "camera": "revealing wide shot or unexpected angle",
+      "framing": "surprise element, hidden connections exposed",
+      "lighting": "dramatic reveal lighting, spotlight effect",
+      "spatial": "new perspective revealing what was hidden"
+    }
+  }
+}

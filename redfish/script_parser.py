@@ -99,7 +99,7 @@ class ScriptParser:
         """
         text_lower = segment_text.lower()
 
-        action = self._extract_primary_action(text_lower)
+        action = self._extract_primary_action(text_lower, segment_name)
         subject = self._extract_primary_subject(text_lower)
         setting = self._extract_primary_setting(text_lower)
         era = self._extract_era(segment_text, segment_name)
@@ -219,20 +219,57 @@ class ScriptParser:
 
     # ─── Private helpers ───────────────────────────────────────────────────────
 
-    def _extract_primary_action(self, text: str) -> str:
+    def _extract_primary_action(self, text: str, segment_name: str = None) -> str:
         """Find the most visually significant action verb in text."""
+        # First try exact matches from ACTION_VISUAL_MAPPINGS
         for verb in ACTION_VISUAL_MAPPINGS:
             if verb in text:
                 return verb
-        # Fallback: look for any strong verb
+        
+        # Expanded verb list for better coverage
         strong_verbs = [
-            "attacking", "defending", "crossing", "advancing", "retreating",
-            "collapsing", "surging", "halting", "marching", "fleeing",
-            "trading", "bombing", "firing", "moving"
+            "intercepting", "launching", "striking", "deploying", "bombing",
+            "blockading", "invading", "evacuating", "sanctioning", "negotiating",
+            "signing", "escalating", "mobilizing", "patrolling", "seizing",
+            "retreating", "collapsing", "surging", "protesting", "declaring",
+            "attacking", "defending", "crossing", "advancing", "fleeing",
+            "trading", "firing", "moving", "diverging", "positioning", "mediating",
+            "scrambling", "shifting", "navigating", "balancing", "holding",
+            # Additional forms from actual script usage
+            "pressed", "pressing", "censure", "censuring", "targeted", "targeting",
+            "protected", "protecting", "fired", "firing", "destabilize", "destabilizing",
+            "sought", "seeking", "stands", "standing", "facilitate", "facilitating",
+            "broker", "brokering", "navigate", "navigating", "limit", "limiting",
+            "poised", "poising", "highlight", "highlighting", "complicate", "complicating",
+            # More forms from current script
+            "shift", "shifts", "shifting", "attack", "attacked", "attacking",
+            "diverge", "diverges", "diverging", "stabilize", "stabilizing",
+            "liberate", "liberated", "liberating", "respond", "responded", "responding",
+            "topple", "toppled", "toppling", "prompt", "prompted", "prompting",
+            "protect", "protected", "protecting", "escort", "escorted", "escorting",
+            "reveal", "revealed", "revealing", "impact", "impacted", "impacting",
+            "play", "playing", "avoid", "avoiding", "tip", "tipping", "keep", "keeping"
         ]
         for verb in strong_verbs:
             if verb in text:
                 return verb.rstrip("ing")
+        
+        # Segment-specific fallbacks for diversity
+        segment_fallbacks = {
+            "hook": "making dramatic statement",
+            "historical_1": "engaging in historical conflict", 
+            "historical_2": "conducting military operations",
+            "modern_pivot": "pivoting diplomatically",
+            "consequence": "experiencing economic impact",
+            "future_outlook": "strategizing future moves",
+            "context": "establishing situation",
+            "escalation": "escalating tensions",
+            "twist": "revealing unexpected development"
+        }
+        
+        if segment_name and segment_name in segment_fallbacks:
+            return segment_fallbacks[segment_name]
+        
         return "in dramatic confrontation"
 
     def _extract_primary_subject(self, text: str) -> str:

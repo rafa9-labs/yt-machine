@@ -1,6 +1,8 @@
 import feedparser
+import re
 import requests
 from datetime import datetime, timedelta
+from html import unescape as html_unescape
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import json
@@ -15,6 +17,21 @@ from scraper_config import (
     MAX_ARTICLE_AGE_HOURS,
     TOP_N_CANDIDATES
 )
+
+def _strip_html(text: str) -> str:
+    """Remove HTML tags, decode entities, and collapse whitespace from RSS text."""
+    if not text:
+        return ''
+    # Decode HTML entities (&amp; -> &, etc.)
+    text = html_unescape(text)
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', ' ', text)
+    # Remove leftover URLs that were in href attributes
+    text = re.sub(r'https?://\S+', '', text)
+    # Collapse whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
 
 class RSScraper:
     def __init__(self, config_path: str = None):
@@ -56,8 +73,8 @@ class RSScraper:
                     continue
                 
                 article = {
-                    "title": entry.get("title", "").strip(),
-                    "summary": entry.get("summary", entry.get("description", "")).strip(),
+                    "title": _strip_html(entry.get("title", "")),
+                    "summary": _strip_html(entry.get("summary", entry.get("description", ""))),
                     "link": entry.get("link", ""),
                     "published": published.isoformat() if published else None,
                     "source": feed.feed.get("title", "Unknown")
@@ -181,12 +198,16 @@ class RSScraper:
         return text.strip()
 <<<<<<< HEAD
 
-    def get_full_article_text(self, article: Dict[str, Any]) -> str:
+    def get_full_article_text(self, article: Dict[str, Any], timeout: int = 15,
+                              max_chars: int = 50000) -> str:
         """
-        Fetch full article body via trafilatura, fall back to RSS title+summary.
+        Fetch full article body via trafilatura (text-only, no JS execution),
+        fall back to RSS title+summary.
         
         Args:
             article: Article dict with 'link', 'title', 'summary' keys
+            timeout: HTTP fetch timeout in seconds
+            max_chars: Maximum characters to return (safety cap)
             
         Returns:
             Full article text or RSS fallback
@@ -195,15 +216,24 @@ class RSScraper:
         if url:
             try:
                 import trafilatura
+                # trafilatura.fetch_url uses requests internally — text-only, no JS
                 downloaded = trafilatura.fetch_url(url)
                 if downloaded:
+                    # Cap raw HTML size before extraction to avoid processing huge pages
+                    if len(downloaded) > max_chars * 3:
+                        downloaded = downloaded[:max_chars * 3]
+                    
                     body = trafilatura.extract(
                         downloaded,
                         include_comments=False,
                         include_tables=False,
+                        include_links=False,
+                        include_images=False,
                         no_fallback=False
                     )
                     if body and len(body) > 100:
+                        # Final safety: strip any residual HTML and cap length
+                        body = _strip_html(body)[:max_chars]
                         return f"{article['title']}\n\n{body}".strip()
             except Exception as e:
                 print(f"  Full scrape failed for {url[:60]}...: {e}")
