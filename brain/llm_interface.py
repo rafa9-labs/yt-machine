@@ -305,9 +305,17 @@ Synthesize into a compelling 60-80 second professional news narration script wit
                 segment_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
             
             for seg in segment_names:
-                text = script.get(seg, '')
-                if text:
-                    segments.append(text)
+                segment_data = script.get(seg, '')
+                if segment_data:
+                    # Handle both string and dict formats
+                    if isinstance(segment_data, dict):
+                        # If it's a dict, try to extract text content
+                        text = segment_data.get('text', segment_data.get('content', str(segment_data)))
+                    else:
+                        text = str(segment_data)
+                    
+                    if text and text.strip():
+                        segments.append(text)
             
             script['full_text'] = ' '.join(segments)
             print(f"  [SCRIPT] Built full_text from {len(segments)} segments ({len(script['full_text'].split())} words)")
