@@ -16,12 +16,30 @@ class TrendingAnalyzer:
     
     def __init__(self):
         self.stop_words = {
+            # Standard English stop words
             'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
             'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'been',
             'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
             'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these',
             'those', 'it', 'its', 'they', 'them', 'their', 'he', 'she', 'his',
-            'her', 'we', 'our', 'you', 'your', 'said', 'says', 'new', 'also'
+            'her', 'we', 'our', 'you', 'your', 'said', 'says', 'new', 'also',
+            'more', 'most', 'some', 'such', 'than', 'other', 'into', 'over',
+            'after', 'before', 'between', 'about', 'which', 'when', 'where',
+            'what', 'while', 'there', 'here', 'just', 'only', 'very', 'even',
+            'back', 'being', 'still', 'then', 'like', 'many', 'much', 'each',
+            'made', 'make', 'come', 'came', 'take', 'took', 'know', 'year',
+            'last', 'first', 'time', 'well', 'way',
+            # HTML/web artifacts — safety net against leaked markup
+            'div', 'span', 'class', 'href', 'https', 'http', 'www', 'com',
+            'html', 'img', 'src', 'alt', 'style', 'width', 'height', 'nbsp',
+            'amp', 'quot', 'apos', 'link', 'meta', 'body', 'head', 'script',
+            'type', 'text', 'content', 'name', 'value', 'data', 'title',
+            'font', 'color', 'size', 'border', 'table', 'form', 'input',
+            'button', 'label', 'iframe', 'embed', 'object', 'param',
+            'target', 'blank', 'self', 'none', 'true', 'false', 'null',
+            'undefined', 'function', 'return', 'display', 'inline',
+            'block', 'margin', 'padding', 'float', 'clear', 'position',
+            'relative', 'absolute', 'overflow', 'hidden', 'visible',
         }
         
         # Category keywords for auto-classification
@@ -149,18 +167,17 @@ class TrendingAnalyzer:
             text_lower = text.lower()
             words = re.findall(r'\b[a-z][\w-]*\b', text_lower)
             
-            # 2-word phrases
+            # 2-word phrases — both words must be meaningful
             for i in range(len(words) - 1):
-                if words[i] not in self.stop_words or words[i+1] not in self.stop_words:
+                if words[i] not in self.stop_words and words[i+1] not in self.stop_words:
                     phrase = f"{words[i]} {words[i+1]}"
                     if len(phrase) > 6:  # Minimum phrase length
                         phrases.append(phrase)
             
-            # 3-word phrases (more selective)
+            # 3-word phrases — at least 2 of 3 words must be meaningful
             for i in range(len(words) - 2):
-                if (words[i] not in self.stop_words or 
-                    words[i+1] not in self.stop_words or 
-                    words[i+2] not in self.stop_words):
+                non_stop_count = sum(1 for w in words[i:i+3] if w not in self.stop_words)
+                if non_stop_count >= 2:
                     phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
                     if len(phrase) > 10:
                         phrases.append(phrase)
