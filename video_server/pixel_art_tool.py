@@ -34,8 +34,63 @@ if _CUSTOM_LORA_PATH.exists():
     print(f"  [IMG] Custom LoRA loaded: {_custom_lora.get('trigger_word', 'N/A')}")
 
 _lora_defaults = IMAGE_STYLE_CONFIG.get('lora_defaults', {})
+
+
+def _resolve_lora_path(custom_lora: dict) -> str:
+    """
+    Resolve the effective LoRA path for fal.ai.
+    fal.ai requires a URL or HuggingFace repo ID — it cannot load local files directly.
+    If the stored path is a local .safetensors file, upload it to fal.ai CDN once
+    and cache the returned URL back into custom_lora.json.
+    """
+    lora_url = custom_lora.get('lora_url', '')
+    hub_url = custom_lora.get('hub_url')
+
+    # Prefer HuggingFace Hub URL if available (permanent, fastest)
+    if hub_url and hub_url.startswith('https://huggingface.co'):
+        return hub_url
+
+    # If it's already an HTTPS URL, use directly
+    if lora_url.startswith('https://') or lora_url.startswith('http://'):
+        return lora_url
+
+    # If it's a HuggingFace repo ID (e.g. "username/sentinel-pixel-lora")
+    if '/' in lora_url and not lora_url.startswith('/') and not ':' in lora_url:
+        return lora_url
+
+    # Local file path — upload to fal.ai CDN and cache the URL
+    local_path = Path(lora_url) if lora_url else None
+    if not local_path:
+        local_path_str = custom_lora.get('lora_local_path', '')
+        local_path = Path(local_path_str) if local_path_str else None
+
+    if local_path and local_path.exists() and local_path.suffix == '.safetensors':
+        try:
+            import fal_client
+            print(f"  [IMG] Uploading local LoRA to fal.ai CDN: {local_path.name}")
+            cdn_url = fal_client.upload_file(str(local_path))
+            print(f"  [IMG] LoRA CDN URL: {cdn_url}")
+            # Cache URL back so we don't re-upload every run
+            custom_lora['lora_url'] = cdn_url
+            _CUSTOM_LORA_PATH.write_text(
+                json.dumps(custom_lora, indent=2), encoding='utf-8'
+            )
+            return cdn_url
+        except Exception as e:
+            print(f"  [IMG] WARNING: Could not upload LoRA to CDN: {e}")
+            print(f"  [IMG] Falling back to default HuggingFace LoRA")
+
+    # Fallback to default
+    return _lora_defaults.get('path', 'prithivMLmods/Retro-Pixel-Flux-LoRA')
+
+
+_resolved_lora_path = (
+    _resolve_lora_path(_custom_lora) if _custom_lora
+    else _lora_defaults.get('path', 'prithivMLmods/Retro-Pixel-Flux-LoRA')
+)
+
 PIXEL_ART_LORA = {
-    "path": _custom_lora['lora_url'] if _custom_lora else _lora_defaults.get('path', 'prithivMLmods/Retro-Pixel-Flux-LoRA'),
+    "path": _resolved_lora_path,
     "scale": _lora_defaults.get('scale', 0.85)
 }
 
@@ -44,7 +99,7 @@ _lora_by_type = IMAGE_STYLE_CONFIG.get('lora_by_visual_type', {})
 STYLE_LORAS = {}
 for _vtype, _vcfg in _lora_by_type.items():
     STYLE_LORAS[_vtype] = {
-        'path': _custom_lora['lora_url'] if _custom_lora else _lora_defaults.get('path', 'prithivMLmods/Retro-Pixel-Flux-LoRA'),
+        'path': _resolved_lora_path,
         'scale': _vcfg.get('scale', 0.85),
         'trigger': _custom_lora['trigger_word'] if _custom_lora else _vcfg.get('trigger', 'Retro Pixel'),
         'additional_prompts': _vcfg.get('additional_prompts', '')
