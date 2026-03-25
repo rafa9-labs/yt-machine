@@ -43,6 +43,7 @@
     "base_url": "http://localhost:11434",
     "timeout": 60,
     "retry_attempts": 2,
-    "note": "llama3.2 is fast and reliable for production. DeepSeek R1 is too slow for real-time generation."
+    "num_ctx": 8192,
+    "note": "llama3.2 is fast and reliable for production. DeepSeek R1 is too slow for real-time generation. num_ctx=8192 prevents truncation of 6-segment scripts."
   }
 }

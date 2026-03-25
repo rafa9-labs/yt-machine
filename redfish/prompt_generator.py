@@ -249,10 +249,29 @@ class VisualPromptGenerator:
                 prompt_parts.append(f"({primary_subject}:1.3)")
             else:
                 prompt_parts.append(f"({primary_subject}:1.2)")
+            # Inject top trending terms at position 2 — directly after primary subject
+            # Flux weights position 2 tokens highly, making these visually dominant
+            top_trending_terms = concepts.get('top_trending_terms', [])
+            for term in top_trending_terms:
+                if term.lower() not in ', '.join(prompt_parts).lower():
+                    prompt_parts.append(f"({term}:1.3)")
             # Add secondary subjects at lower weight
             for subj in subjects[1:3]:
                 prompt_parts.append(subj)
         
+        # Named entities (model numbers, named systems) — high specificity, front-loaded
+        named_entities = concepts.get('named_entities', [])
+        for entity in named_entities[:2]:
+            entity_lower = entity.lower()
+            if entity_lower not in ', '.join(prompt_parts).lower():
+                prompt_parts.append(f"({entity}:1.3)")
+
+        # Specificity modifiers (numbers, quantities) — anchor the visual concretely
+        specificity_modifiers = concepts.get('specificity_modifiers', [])
+        for modifier in specificity_modifiers[:2]:
+            if modifier.lower() not in ', '.join(prompt_parts).lower():
+                prompt_parts.append(modifier)
+
         # Country-specific equipment (critical for geopolitical accuracy)
         for equip in equipment:
             for country in countries:
@@ -306,6 +325,13 @@ class VisualPromptGenerator:
         if scene_comp and scene_comp.get('lighting'):
             prompt_parts.append(scene_comp['lighting'])
         
+        # ── Script anchors: raw keywords preserved verbatim for relevance scoring ──
+        # These ensure stem-matching hits even when visual language is heavily enhanced.
+        script_anchors = concepts.get('script_anchors', [])
+        for anchor in script_anchors[:3]:
+            if anchor.lower() not in ', '.join(prompt_parts).lower():
+                prompt_parts.append(anchor)
+        
         # ── 6. MOOD (atmosphere — lower priority, Flux de-weights late tokens) ──
         mood_descriptors = {
             'tense': '(high tension atmosphere:1.1)',
@@ -320,8 +346,9 @@ class VisualPromptGenerator:
         if emphasis:
             prompt_parts.append(f"({emphasis}:1.1)")
         
-        # Trending boost (only if significant)
-        if trending_boost > 0.5:
+        # Trending boost: top terms already injected at position 2 above;
+        # only add generic emphasis if boost is very high but no terms were injected
+        if trending_boost > 0.7 and not concepts.get('top_trending_terms'):
             prompt_parts.append("(trending visual emphasis:1.2)")
         
         # Visual grounding (spatial relationships)

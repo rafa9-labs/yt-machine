@@ -5,7 +5,7 @@ Enhanced with geopolitical accuracy system for zero-tolerance hallucination prev
 """
 
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from .geopolitical_accuracy import (
     COUNTRY_VISUAL_SPECS, 
     validate_country_equipment_combination,
@@ -17,6 +17,116 @@ from .geopolitical_accuracy import (
     validate_geopolitical_accuracy
 )
 
+
+# Phrasal verb patterns common in news text — checked before plain verb scan
+# Each tuple is (regex_pattern, canonical_action)
+PHRASAL_VERB_PATTERNS: List[Tuple[str, str]] = [
+    (r'came? under (fire|attack|assault|bombardment)', 'strike'),
+    (r'poised? to (strike|attack|invade|launch)', 'strike'),
+    (r'stands? accused', 'declare'),
+    (r'stand(ing)? ready', 'mobilize'),
+    (r'cut(ting)? off', 'blockade'),
+    (r'shut(ting)? down', 'blockade'),
+    (r'pulled? (out|back|troops)', 'retreat'),
+    (r'pulled? the trigger', 'launch'),
+    (r'ramped? up', 'escalate'),
+    (r'stepped? up', 'escalate'),
+    (r'broke? out', 'escalate'),
+    (r'carried? out (strike|attack|raid|assault)', 'strike'),
+    (r'called? for (ceasefire|talks|negotiation)', 'negotiate'),
+    (r'called? on .{0,30} to (withdraw|cease)', 'negotiate'),
+    (r'laid? siege', 'invade'),
+    (r'set(ting)? sail', 'patrol'),
+    (r'opened? fire', 'fire'),
+    (r'taken? aim', 'target'),
+    (r'forced? out', 'retreat'),
+    (r'pushed? back', 'retreat'),
+    (r'push(ing)? (through|forward|ahead)', 'advance'),
+    (r'broke? through', 'advance'),
+    (r'fell? back', 'retreat'),
+    (r'held? (the|their) (line|ground|position)', 'defend'),
+    (r'moved? (troops|forces|units|soldiers)', 'mobilize'),
+    (r'sent? (troops|forces|warships|carriers)', 'deploy'),
+    (r'signed? (a |an |the )?(deal|agreement|accord|treaty|pact)', 'sign'),
+    (r'reached? (a |an |the )?(deal|agreement|accord|ceasefire)', 'negotiate'),
+    (r'brokered? (a |an |the )?(deal|agreement|ceasefire)', 'negotiate'),
+    (r'imposed? sanctions', 'sanction'),
+    (r'tightened? sanctions', 'sanction'),
+    (r'lifted? sanctions', 'negotiate'),
+    (r'oil (price|prices).{0,20}(surge|soar|spike|jump|climb|rise|rose|hit)', 'surge'),
+    (r'price.{0,20}(surge|soar|spike|jump|climb|rise|rose)', 'surge'),
+    (r'market.{0,20}(collapse|crash|plunge|fall|fell)', 'collapse'),
+]
+
+# Irregular past tense → canonical action mapping
+IRREGULAR_PAST_TENSES: Dict[str, str] = {
+    'struck': 'strike',
+    'fled': 'flee',
+    'froze': 'freeze',
+    'cut': 'cut',
+    'fell': 'fall',
+    'rose': 'rise',
+    'hit': 'hit',
+    'held': 'hold',
+    'sent': 'deploy',
+    'led': 'advance',
+    'broke': 'escalate',
+    'took': 'seize',
+    'began': 'escalate',
+    'left': 'retreat',
+    'ran': 'evacuate',
+    'drove': 'advance',
+    'flew': 'patrol',
+    'shot': 'fire',
+    'fired': 'fire',
+    'launched': 'launch',
+    'deployed': 'deploy',
+    'signed': 'sign',
+    'seized': 'seize',
+    'blockaded': 'blockade',
+    'retreated': 'retreat',
+    'surged': 'surge',
+    'collapsed': 'collapse',
+    'sanctioned': 'sanction',
+    'mobilized': 'mobilize',
+    'mobilised': 'mobilize',
+    'intercepted': 'intercept',
+    'evacuated': 'evacuate',
+    'escalated': 'escalate',
+    'invaded': 'invade',
+    'attacked': 'attack',
+    'negotiated': 'negotiate',
+    'protested': 'protest',
+    'declared': 'declare',
+    'patrolled': 'patrol',
+    'advanced': 'advance',
+    'defended': 'defend',
+    'targeted': 'target',
+    'destroyed': 'strike',
+    'toppled': 'collapse',
+    'withdrew': 'retreat',
+    'imposed': 'sanction',
+    'tightened': 'sanction',
+    'sailed': 'patrol',
+    'steamed': 'patrol',
+    'crossed': 'advance',
+    'threatened': 'escalate',
+    'warned': 'declare',
+    'accused': 'declare',
+    'condemned': 'declare',
+    'resumed': 'escalate',
+    'halted': 'blockade',
+    'suspended': 'blockade',
+    'closed': 'blockade',
+    'reopened': 'negotiate',
+    'captured': 'seize',
+    'surrounded': 'invade',
+    'overran': 'invade',
+    'repelled': 'defend',
+    'liberated': 'advance',
+    'gained': 'advance',
+    'lost': 'retreat',
+}
 
 # Action verb categories mapped to visual descriptions
 ACTION_VISUAL_MAPPINGS = {
@@ -221,12 +331,24 @@ class ScriptParser:
 
     def _extract_primary_action(self, text: str, segment_name: str = None) -> str:
         """Find the most visually significant action verb in text."""
-        # First try exact matches from ACTION_VISUAL_MAPPINGS
+        # 0. Phrasal verb patterns — highest specificity, checked first
+        for pattern, canonical in PHRASAL_VERB_PATTERNS:
+            if re.search(pattern, text):
+                return canonical
+        
+        # 1. Irregular past tenses — before plain scan to catch missed forms
+        words = text.split()
+        for word in words:
+            clean = word.strip('.,;:!?"\'')
+            if clean in IRREGULAR_PAST_TENSES:
+                return IRREGULAR_PAST_TENSES[clean]
+        
+        # 2. Exact matches from ACTION_VISUAL_MAPPINGS
         for verb in ACTION_VISUAL_MAPPINGS:
             if verb in text:
                 return verb
         
-        # Expanded verb list for better coverage
+        # 3. Expanded verb list for better coverage
         strong_verbs = [
             "intercepting", "launching", "striking", "deploying", "bombing",
             "blockading", "invading", "evacuating", "sanctioning", "negotiating",
@@ -436,8 +558,8 @@ class ScriptParser:
         # Determine visual type
         visual_type = self._determine_visual_type(text_lower, all_subjects, action)
         
-        # Calculate trending boost
-        trending_boost = self._calculate_trending_boost(
+        # Calculate trending boost and extract top matching terms
+        trending_boost, top_trending_terms = self._calculate_trending_boost(
             segment_text, all_subjects, action, setting, trending_context
         )
         
@@ -472,6 +594,16 @@ class ScriptParser:
         for country in countries:
             required_elements.extend(get_required_country_elements(country))
         
+        # Extract raw script anchors: capitalized proper nouns + known geo/country terms
+        # These are preserved verbatim in the prompt to anchor relevance scoring
+        script_anchors = self._extract_script_anchors(segment_text, all_subjects, setting, countries)
+
+        # Extract named entities for high-specificity prompt generation
+        named_entities = self._extract_named_entities(segment_text)
+
+        # Extract specificity modifiers (numbers, quantities) for concrete visuals
+        specificity_modifiers = self._extract_specificity_modifiers(segment_text, all_subjects)
+
         return {
             "primary_concept": primary_concept,
             "secondary_concepts": secondary_concepts,
@@ -483,6 +615,10 @@ class ScriptParser:
             "mood": mood,
             "numbers": numbers,
             "emphasis": emphasis,
+            "script_anchors": script_anchors,
+            "named_entities": named_entities,
+            "specificity_modifiers": specificity_modifiers,
+            "top_trending_terms": top_trending_terms,
             # NEW: Geopolitical accuracy data
             "countries": countries,
             "equipment": equipment,
@@ -530,7 +666,141 @@ class ScriptParser:
                 subjects.append(subj)
         
         return subjects[:5]  # Limit to top 5
-    
+
+    def _extract_script_anchors(self, text: str, subjects: List[str],
+                                setting: str, countries: List[str]) -> List[str]:
+        """
+        Extract raw keywords from script text to preserve as verbatim anchors in prompts.
+        These bridge the gap between enhanced visual language and raw script words,
+        ensuring stem-matching relevance scoring works correctly.
+        Returns up to 5 unique anchors, prioritised by specificity.
+        """
+        anchors = []
+        seen = set()
+
+        def _add(term: str) -> None:
+            t = term.strip().lower()
+            if t and t not in seen and len(t) > 3:
+                seen.add(t)
+                anchors.append(term.strip())
+
+        # 1. Countries are the highest-priority anchors
+        for c in countries:
+            _add(c)
+
+        # 2. Setting (geographic name)
+        if setting:
+            _add(setting)
+
+        # 3. Known subjects already extracted
+        for s in subjects[:3]:
+            _add(s)
+
+        # 4. Capitalized multi-word proper nouns from script text (e.g. "Iron Dome", "Strait of Hormuz")
+        cap_phrases = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b', text)
+        for phrase in cap_phrases[:4]:
+            _add(phrase.lower())
+
+        # 5. Single capitalized words that look like proper nouns (skip sentence starts)
+        words = text.split()
+        for i, word in enumerate(words):
+            if i == 0:
+                continue
+            clean = word.strip('.,;:!?"\'')
+            if clean and clean[0].isupper() and len(clean) > 3 and clean.lower() not in seen:
+                _add(clean.lower())
+
+        return anchors[:5]
+
+    def _extract_named_entities(self, text: str) -> List[str]:
+        """
+        Extract specific named entities from script text for high-specificity prompts.
+        Targets: equipment model numbers, organization names, named locations, unit names.
+        Returns up to 6 entities ordered by specificity (more specific first).
+        """
+        entities = []
+        seen = set()
+
+        def _add(e: str) -> None:
+            e = e.strip()
+            if e and e.lower() not in seen and len(e) > 2:
+                seen.add(e.lower())
+                entities.append(e)
+
+        # 1. Military equipment model numbers (highest specificity)
+        # e.g. F-14, S-400, MQ-9, AH-64, BM-21, Type 055
+        equipment_patterns = [
+            r'\b(F-\d+[A-Z]{0,2}(?:\s+\w+)?)\b',           # F-35, F-14 Tomcat
+            r'\b(S-\d{3,4}(?:\s+\w+)?)\b',                  # S-400, S-300
+            r'\b(MiG-\d+(?:\s+\w+)?)\b',                    # MiG-29
+            r'\b(Su-\d+(?:\s+\w+)?)\b',                     # Su-35, Su-57
+            r'\b(MQ-\d+(?:\s+\w+)?)\b',                     # MQ-9 Reaper
+            r'\b(AH-\d+(?:\s+\w+)?)\b',                     # AH-64 Apache
+            r'\b(UH-\d+(?:\s+\w+)?)\b',                     # UH-60
+            r'\b(B-\d+\w?(?:\s+\w+)?)\b',                   # B-52
+            r'\b(USS\s+\w+)\b',                              # USS Nimitz
+            r'\b(Type\s+\d+[A-Z]?(?:\s+\w+)?)\b',           # Type 055, Type 052D
+            r'\b(DF-\d+[A-Z]?)\b',                          # DF-21
+            r'\b(HQ-\d+)\b',                                 # HQ-9
+            r'\b(M\d+[A-Z]?\d?(?:\s+\w+)?)\b',              # M1A2 Abrams, M60T
+            r'\b(JF-\d+(?:\s+\w+)?)\b',                     # JF-17 Thunder
+            r'\b(J-\d+(?:\s+\w+)?)\b',                      # J-20, J-16
+        ]
+        for pattern in equipment_patterns:
+            for match in re.finditer(pattern, text):
+                _add(match.group(1))
+
+        # 2. Known named systems and units from the text
+        named_systems = [
+            'Iron Dome', 'Iron dome', "David's Sling", 'Arrow missile',
+            'Patriot missile', 'THAAD', 'Tomahawk', 'Kalibr', 'Iskander',
+            'Shahab', 'Fateh', 'Burkan', 'Shahed', 'Bayraktar', 'Qassam',
+            'Al-Qassam', 'Ansar Allah', 'IRGC', 'IDF', 'USAF', 'USN', 'USMC',
+            'PLA', 'PLAAF', 'PLAN', 'VVS', 'PAF', 'RSAF',
+            'Nimitz', 'Gerald R. Ford', 'Arleigh Burke', 'Ticonderoga',
+            'Kirov', 'Kuznetsov', 'Liaoning', 'Shandong',
+        ]
+        text_lower = text.lower()
+        for system in named_systems:
+            if system.lower() in text_lower:
+                _add(system)
+
+        # 3. Capitalized multi-word proper nouns (e.g. "Strait of Hormuz", "Persian Gulf")
+        cap_phrases = re.findall(r'\b([A-Z][a-z]{2,}(?:\s+(?:of\s+)?[A-Z][a-z]{2,})+)\b', text)
+        for phrase in cap_phrases[:5]:
+            _add(phrase)
+
+        return entities[:6]
+
+    def _extract_specificity_modifiers(self, text: str, subjects: List[str]) -> List[str]:
+        """
+        Extract numbers and units that add specificity to subject descriptions.
+        E.g. "$112/barrel", "21%", "3 carrier groups" → makes visuals concrete.
+        Returns up to 3 modifiers.
+        """
+        modifiers = []
+
+        # Dollar amounts with context
+        dollar_amounts = re.findall(
+            r'\$[\d,]+(?:\.\d+)?(?:\s*(?:billion|million|trillion|per barrel))?', text
+        )
+        modifiers.extend(dollar_amounts[:1])
+
+        # Percentages
+        percentages = re.findall(r'\d+(?:\.\d+)?%(?:\s+\w+)?', text)
+        modifiers.extend(percentages[:1])
+
+        # Numbered quantities with military/geo context
+        qty_patterns = re.findall(
+            r'\b(\d+)\s+(warships?|carrier|carriers|frigates?|destroyers?|submarines?|'
+            r'missiles?|aircraft|jets?|troops?|soldiers?|tanks?|divisions?|brigades?|'
+            r'battalions?|nations?|countries)\b', text, re.IGNORECASE
+        )
+        for count, unit in qty_patterns[:2]:
+            modifiers.append(f"{count} {unit}")
+
+        return modifiers[:3]
+
     def _extract_secondary_concepts(self, text: str) -> List[str]:
         """Extract secondary visual concepts."""
         concepts = []
@@ -615,34 +885,51 @@ class ScriptParser:
         
         return max(scores.items(), key=lambda x: x[1])[0]
     
-    def _calculate_trending_boost(self, text: str, subjects: List[str], 
-                                   action: str, setting: str, 
-                                   trending_context: Dict[str, Any]) -> float:
-        """Calculate boost score based on trending context."""
+    def _calculate_trending_boost(self, text: str, subjects: List[str],
+                                   action: str, setting: str,
+                                   trending_context: Dict[str, Any]):
+        """Calculate boost score and top matching terms based on trending context.
+        
+        Returns:
+            Tuple of (boost_score: float, top_terms: List[str])
+        """
         if not trending_context:
-            return 0.0
-        
+            return 0.0, []
+
         boost_scores = []
+        matched_terms: Dict[str, float] = {}
         text_lower = text.lower()
-        
+
         # Check if any trending terms appear in text
         for trending_term, data in trending_context.items():
+            score = data.get('score', 0.0)
             if trending_term in text_lower:
-                boost_scores.append(data.get('score', 0.0))
-        
+                boost_scores.append(score)
+                matched_terms[trending_term] = max(matched_terms.get(trending_term, 0.0), score)
+
         # Check subjects
         for subject in subjects:
             for trending_term, data in trending_context.items():
+                score = data.get('score', 0.0)
                 if trending_term in subject.lower() or subject.lower() in trending_term:
-                    boost_scores.append(data.get('score', 0.0))
-        
+                    boost_scores.append(score)
+                    matched_terms[trending_term] = max(matched_terms.get(trending_term, 0.0), score)
+
         # Check setting
         if setting:
             for trending_term, data in trending_context.items():
+                score = data.get('score', 0.0)
                 if trending_term in setting.lower() or setting.lower() in trending_term:
-                    boost_scores.append(data.get('score', 0.0))
-        
-        return max(boost_scores) if boost_scores else 0.0
+                    boost_scores.append(score)
+                    matched_terms[trending_term] = max(matched_terms.get(trending_term, 0.0), score)
+
+        # Top 2 terms with score >= 0.3, ordered by score desc
+        top_terms = [
+            term for term, s in sorted(matched_terms.items(), key=lambda x: x[1], reverse=True)
+            if s >= 0.3
+        ][:2]
+
+        return (max(boost_scores) if boost_scores else 0.0), top_terms
     
     def _determine_primary_concept(self, text: str, subjects: List[str], 
                                     action: str, setting: str, 
