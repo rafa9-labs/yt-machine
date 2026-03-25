@@ -207,6 +207,84 @@ ollama serve
 - Check file permissions for write access
 - Verify JSON structure is valid
 
+---
+
+## LoRA Training Pipeline (Phase 3)
+
+Train a custom Flux LoRA on your RTX 3090 to lock in your channel's pixel art style permanently.
+
+### One-Time Setup
+
+**1. Add to `.env`**
+```
+FAL_KEY=your_fal_ai_key
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx   # from https://huggingface.co/settings/tokens
+```
+
+**2. Install training dependencies**
+```powershell
+# PyTorch with CUDA 12.1 (match your driver version)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Training stack
+pip install diffusers peft accelerate bitsandbytes transformers safetensors huggingface_hub
+```
+
+**3. Configure accelerate (run once)**
+```powershell
+accelerate config
+# Select: single GPU, bf16 mixed precision, no distributed training
+```
+
+### Training Workflow
+
+**Step 1 — Generate diverse training images (~$2-3, ~20 min)**
+```powershell
+python tools/auto_generate_training_set.py --count 70
+# Generates 70 images across 8 categories: military air/naval/ground,
+# economic, diplomatic, geographic, human impact, historical, energy
+# Saves to training_data/ with caption .txt files
+# Resumable — safe to interrupt and re-run
+```
+
+**Step 2 — Train the LoRA locally on your 3090 (~1-3 hrs, free)**
+```powershell
+# Train and upload to HuggingFace Hub (recommended — permanent storage)
+python tools/train_lora_local.py training_data/ --steps 1200 --upload-to-hub
+
+# Train locally only (no upload)
+python tools/train_lora_local.py training_data/ --steps 1200
+```
+
+**Step 3 — Done. Every future video automatically uses your LoRA.**
+
+`config/custom_lora.json` is updated automatically after training.
+`pixel_art_tool.py` reads it on startup — no code changes needed.
+
+To revert to the default HuggingFace LoRA: `del config\custom_lora.json`
+
+### Training Parameters (RTX 3090 24GB)
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `--steps` | 1200 | 800 = fast, 1500 = best quality |
+| `--rank` | 16 | Higher = more expressive but more VRAM |
+| Base model | FLUX.1-dev | ~24GB download, cached in HF cache |
+| VRAM usage | ~18-22GB | Safe on 3090 24GB |
+| Mixed precision | bf16 | RTX 3090 native support |
+
+### What Gets Trained
+
+The LoRA learns your **style**, not new factual knowledge:
+- Exact navy/amber/cyan color palette (`#0A1628`, `#FFA500`, `#00D4FF`)
+- Isometric pixel art perspective and framing
+- Pixel density and hard-edge aesthetics
+- Generalises across all visual categories (military, economic, diplomatic, etc.)
+
+Trigger word: `sentinel_pixel` (prepended to every prompt automatically)
+
+---
+
 ## License
 
 MIT
