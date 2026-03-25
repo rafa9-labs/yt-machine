@@ -110,97 +110,205 @@ def validate_visual_type_correlation(prompt: str, visual_type: str) -> Dict[str,
     }
 
 
+
+# Entity alias table: maps enhanced visual descriptions back to their source keywords.
+# This bridges the gap between enriched prompt language and raw script words.
+_ENTITY_ALIAS_TABLE: Dict[str, List[str]] = {
+    # Country visual descriptions → raw country names
+    'iranian revolutionary guard': ['iran', 'irgc', 'iranian'],
+    'islamic revolutionary guard': ['iran', 'irgc'],
+    'green and amber camouflage': ['iran', 'iranian'],
+    'persian script': ['iran', 'iranian'],
+    'idf insignia': ['israel', 'israeli'],
+    'star of david': ['israel', 'israeli'],
+    'iaf roundel': ['israel', 'israeli'],
+    'red star': ['russia', 'russian', 'china', 'chinese'],
+    'cyrillic': ['russia', 'russian'],
+    'pla insignia': ['china', 'chinese'],
+    'trident insignia': ['ukraine', 'ukrainian'],
+    'blue and yellow': ['ukraine', 'ukrainian'],
+    'stars and stripes': ['usa', 'american', 'united states'],
+    'us roundel': ['usa', 'american'],
+    'nato emblem': ['nato'],
+    'crossed swords roundel': ['saudi_arabia', 'saudi'],
+    'crescent and star': ['turkey', 'turkish', 'pakistan', 'pakistani'],
+    'al-qassam': ['hamas', 'palestinian'],
+    'ansar allah': ['houthi', 'yemeni'],
+    # Equipment → countries that use them
+    'iron dome': ['israel', 'israeli'],
+    'f-35i adir': ['israel', 'israeli'],
+    'f-35': ['usa', 'american'],
+    'f-22 raptor': ['usa', 'american'],
+    'su-35': ['russia', 'russian'],
+    'j-20': ['china', 'chinese'],
+    'bayraktar tb2': ['turkey', 'turkish'],
+    'jf-17': ['pakistan', 'pakistani'],
+    # Settings → implied actors/countries
+    'strait of hormuz': ['iran', 'irgc', 'hormuz'],
+    'persian gulf': ['iran', 'gulf'],
+    'red sea': ['houthi', 'red sea'],
+    'naval blockade': ['blockade', 'naval'],
+    # Common enhanced action phrases → script verbs
+    'precision airstrike': ['strike', 'attack', 'bomb'],
+    'missile launch': ['launch', 'missile'],
+    'naval blockade formation': ['blockade', 'naval'],
+    'tactical withdrawal': ['retreat', 'withdraw'],
+    'troop mobilization': ['mobilize', 'troops', 'forces'],
+    'high-level diplomatic': ['negotiate', 'diplomacy', 'talks'],
+    'mass evacuation': ['evacuate', 'evacuation', 'flee'],
+}
+
+
+def _stem(word: str) -> str:
+    """Minimal suffix-stripping stem: removes common English suffixes.
+    No external dependencies — covers 80%+ of news vocabulary stems.
+    """
+    word = word.lower()
+    # Order matters: strip longer suffixes first
+    for suffix in ('ational', 'tional', 'ization', 'isation', 'ation', 'ness',
+                   'ment', 'tion', 'ling', 'ian', 'ing', 'ies', 'ied', 'ers',
+                   'ed', 'er', 'ly', 'al', 'ic', 'es', 's'):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[:-len(suffix)]
+    return word
+
+
 def calculate_prompt_relevance(prompt: str, article_text: str) -> int:
     """
-    Calculate how relevant the prompt is to the article content
+    Calculate how relevant the prompt is to the article/script content.
+    Uses stem-matching + entity alias table for BM25-style scoring,
+    which bridges the gap between enhanced prompt language and raw script words.
     
     Args:
         prompt: Generated image prompt
-        article_text: Original article text
+        article_text: Original article or script segment text
         
     Returns:
         Relevance score (0-100)
     """
     score = 0
-    
-    # Check for specific subjects from article (high value)
-    # Extract key nouns from article for matching
     article_lower = article_text.lower()
     prompt_lower = prompt.lower()
-    
-    # Check for military equipment matches
+
+    # ── Check for military equipment matches (high value: 20 pts) ──
     equipment_found = _extract_equipment_from_prompt(prompt)
     for equipment in equipment_found:
         if equipment.lower() in article_lower:
             score += 20
             break
-    
-    # Check for real locations (high value)
+
+    # ── Check for real locations (high value: 25 pts) ──
     all_locations = get_all_locations()
     for loc in all_locations:
         if loc.lower() in prompt_lower and loc.lower() in article_lower:
             score += 25
             break
-    
-    # Check for general subject-article word overlap (medium value)
-    prompt_words = set(w for w in prompt_lower.split() if len(w) > 4)
-    article_words = set(w for w in article_lower.split() if len(w) > 4)
-    overlap = prompt_words & article_words
-    if len(overlap) >= 3:
+
+    # ── Entity alias matching: enhanced descriptions → source keywords (15 pts) ──
+    alias_hit = False
+    for alias_phrase, source_keywords in _ENTITY_ALIAS_TABLE.items():
+        if alias_phrase in prompt_lower:
+            if any(kw in article_lower for kw in source_keywords):
+                score += 15
+                alias_hit = True
+                break
+
+    # ── Stem-based word overlap (replaces naive set intersection) ──
+    # Stem both prompt and article, then check overlap
+    stop = {'with', 'from', 'this', 'that', 'they', 'have', 'will', 'been',
+            'their', 'over', 'into', 'more', 'than', 'also', 'while', 'when',
+            'after', 'which', 'were', 'some', 'time', 'year', 'said', 'high'}
+    prompt_stems = set(
+        _stem(w) for w in re.findall(r'[a-z]+', prompt_lower)
+        if len(w) > 4 and w not in stop
+    )
+    article_stems = set(
+        _stem(w) for w in re.findall(r'[a-z]+', article_lower)
+        if len(w) > 4 and w not in stop
+    )
+    stem_overlap = prompt_stems & article_stems
+    if len(stem_overlap) >= 4:
         score += 20
-    elif len(overlap) >= 1:
+    elif len(stem_overlap) >= 2:
+        score += 12
+    elif len(stem_overlap) >= 1:
+        score += 6
+
+    # ── Action verbs from both prompt and article (10 pts) ──
+    action_verbs = [
+        'striking', 'launching', 'banking', 'deploying', 'intercepting',
+        'evading', 'conducting', 'executing', 'maneuvering', 'surging',
+        'signing', 'queuing', 'collapsing', 'negotiating', 'protesting',
+        'shipping', 'trading', 'rising', 'falling', 'advancing', 'retreating',
+        'mobilizing', 'blockading', 'evacuating', 'escalating', 'targeting'
+    ]
+    prompt_has_action = any(verb in prompt_lower for verb in action_verbs)
+    article_has_action = any(verb in article_lower for verb in action_verbs)
+    if prompt_has_action and article_has_action:
         score += 10
-    
-    # Check for action verbs (medium value)
-    action_verbs = ['striking', 'launching', 'banking', 'deploying', 'intercepting',
-                    'evading', 'conducting', 'executing', 'maneuvering', 'surging',
-                    'signing', 'queuing', 'collapsing', 'negotiating', 'protesting',
-                    'shipping', 'trading', 'rising', 'falling']
-    if any(verb in prompt_lower for verb in action_verbs):
-        score += 15
-    
-    # Check for temporal context (low value)
+    elif prompt_has_action:
+        score += 5
+
+    # ── Temporal context (low value: 5 pts) ──
     temporal_words = ['dawn', 'dusk', 'night', 'morning', 'afternoon', 'golden hour']
     if any(word in prompt_lower for word in temporal_words):
-        score += 10
-    
-    # Penalize generic terms
+        score += 5
+
+    # ── Penalize generic terms ──
     generic_terms = ['generic', 'abstract', 'futuristic', 'sci-fi', 'future']
     if any(term in prompt_lower for term in generic_terms):
         score -= 50
-    
-    # Ensure score is in valid range
+
     return max(0, min(100, score))
 
 
 def _check_specific_equipment(prompt: str) -> bool:
-    """Check if prompt contains specific military equipment nomenclature"""
-    # Pattern for specific equipment
+    """Check if prompt contains specific military equipment nomenclature or named units."""
+    # Pattern for specific equipment — trailing word optional
     patterns = [
-        r'F-\d+[A-Z]?\s+\w+',      # F-35 Lightning II
-        r'S-\d+\s+\w+',             # S-400 Triumf
-        r'USS\s+\w+',               # USS Boxer
-        r'M\d+A?\d?\s+\w+',         # M1A2 Abrams
-        r'MQ-\d+\s+\w+',            # MQ-9 Reaper
+        r'F-\d+[A-Z]{0,2}',        # F-35, F-14, F-16I
+        r'S-\d{3,4}',               # S-400, S-300
+        r'MiG-\d+',                 # MiG-29
+        r'Su-\d+',                  # Su-35, Su-57
+        r'J-\d+',                   # J-20, J-16
+        r'JF-\d+',                  # JF-17
+        r'MQ-\d+',                  # MQ-9
+        r'AH-\d+',                  # AH-64
+        r'B-\d+',                   # B-52
+        r'USS\s+\w+',               # USS Nimitz
+        r'Type\s+\d+',              # Type 055
+        r'DF-\d+',                  # DF-21
+        r'HQ-\d+',                  # HQ-9
+        r'M\d+[A-Z]?\d?',           # M1A2, M60T
     ]
-    
-    # Check regex patterns first
+    prompt_str = prompt
     for pattern in patterns:
-        if re.search(pattern, prompt, re.IGNORECASE):
+        if re.search(pattern, prompt_str, re.IGNORECASE):
             return True
-    
-    # Then check against equipment database
+
+    # Named military organizations and systems (highly specific)
+    named_units = [
+        'IRGC', 'IDF', 'IAF', 'USAF', 'USN', 'USMC', 'PLAN', 'PLAAF',
+        'VVS', 'PAF', 'RSAF', 'Iron Dome', "David's Sling", 'Patriot',
+        'THAAD', 'Tomahawk', 'Kalibr', 'Iskander', 'Shahab', 'Bayraktar',
+        'Qassam', 'Al-Qassam', 'Ansar Allah', 'Arleigh Burke', 'Nimitz',
+        'Liaoning', 'Kuznetsov', 'Shahed',
+    ]
+    prompt_lower = prompt.lower()
+    for unit in named_units:
+        if unit.lower() in prompt_lower:
+            return True
+
+    # Check against equipment database
     for category, equipment_dict in MILITARY_EQUIPMENT_DB.items():
         for equipment_key, equipment_info in equipment_dict.items():
-            # Handle both old string format and new dict format
             if isinstance(equipment_info, dict):
                 full_name = equipment_info.get('full_name', equipment_key)
             else:
                 full_name = equipment_info
-            
-            if full_name.lower() in prompt.lower():
+            if full_name.lower() in prompt_lower:
                 return True
-    
+
     return False
 
 

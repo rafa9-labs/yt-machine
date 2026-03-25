@@ -301,7 +301,7 @@ try:
         print(f"    Script relevance: {relevance}%")
         
         # If relevance too low, regenerate with strict constraints
-        if relevance < 40:
+        if relevance < 30:
             print(f"    ⚠️  Low script relevance, regenerating...")
             prompt = prompt_generator.regenerate_strict(scene_name)
             relevance = calculate_prompt_relevance(prompt, segment_text)

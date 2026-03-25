@@ -310,3 +310,25 @@ class TrendingAnalyzer:
                 max_score = max(max_score, data['score'])
         
         return min(max_score, 1.0)
+
+    def get_top_terms(self, trending_context: Dict[str, Dict[str, Any]],
+                      n: int = 3, min_score: float = 0.3) -> List[str]:
+        """
+        Return the top N trending terms with score above min_score.
+        Used for direct injection into image prompts at high-weight positions.
+
+        Args:
+            trending_context: Output from analyze()
+            n: Maximum number of terms to return
+            min_score: Minimum score threshold (filters noise)
+
+        Returns:
+            List of term strings ordered by score descending
+        """
+        filtered = [
+            (term, data['score'])
+            for term, data in trending_context.items()
+            if data['score'] >= min_score
+        ]
+        filtered.sort(key=lambda x: x[1], reverse=True)
+        return [term for term, _ in filtered[:n]]

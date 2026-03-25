@@ -16,6 +16,7 @@ class LLMInterface:
         self.default_model = self.config["model_config"]["default_model"]
         self.timeout = self.config["model_config"]["timeout"]
         self.retry_attempts = self.config["model_config"]["retry_attempts"]
+        self.num_ctx = self.config["model_config"].get("num_ctx", 4096)
     
     def _load_config(self) -> Dict[str, Any]:
         with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -130,7 +131,8 @@ class LLMInterface:
             "stream": True,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens
+                "num_predict": max_tokens,
+                "num_ctx": self.num_ctx
             }
         }
         
@@ -156,7 +158,8 @@ class LLMInterface:
             "stream": True,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens
+                "num_predict": max_tokens,
+                "num_ctx": self.num_ctx
             }
         }
         
@@ -234,29 +237,37 @@ class LLMInterface:
     ) -> Optional[Dict[str, Any]]:
         prompt_config = self.config["prompts"]["script_synthesizer"]
         
+        # 6-segment structure names for recovery
+        _SEGMENT_NAMES_6 = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
+        _SEGMENT_NAMES_5 = ['hook', 'context', 'escalation', 'consequence', 'twist']
+
         salience_block = ""
         if salience_data:
+            # Compress salience to top facts if it would bloat the prompt
+            consequence_chain = salience_data.get('consequence_chain') or []
+            emotional_anchors = (salience_data.get('emotional_anchors') or [])[:2]
+            key_visual_subjects = (salience_data.get('key_visual_subjects') or [])[:3]
             salience_block = f"""
 Salience Analysis:
 - Conflict: {salience_data.get('conflict', 'N/A')}
-- Consequence Chain: {' -> '.join(salience_data.get('consequence_chain') or [])}
-- Emotional Anchors: {', '.join(salience_data.get('emotional_anchors') or [])}
+- Consequence Chain: {' -> '.join(consequence_chain[:2])}
+- Emotional Anchors: {', '.join(emotional_anchors)}
 - Surprise Angle: {salience_data.get('surprise_angle', 'N/A')}
 - Human Impact: {salience_data.get('human_impact', 'N/A')}
-- Key Visual Subjects: {', '.join(salience_data.get('key_visual_subjects') or [])}
+- Key Visual Subjects: {', '.join(key_visual_subjects)}
 """
         
         historical_block = ""
         if historical_parallels and 'parallels' in historical_parallels:
             historical_block = "\nHistorical Parallels to Reference:\n"
-            for i, parallel in enumerate(historical_parallels['parallels'][:3], 1):
-                equipment_str = ', '.join((parallel.get('military_equipment') or [])[:3])
+            # Limit to top 2 parallels and compress fields to reduce token load
+            for i, parallel in enumerate(historical_parallels['parallels'][:2], 1):
+                equipment_str = ', '.join((parallel.get('military_equipment') or [])[:2])
                 historical_block += f"""
 {i}. {parallel.get('event_name', 'N/A')} ({parallel.get('year', 'N/A')}):
-   - Players: {', '.join(parallel.get('key_players') or [])}
+   - Players: {', '.join((parallel.get('key_players') or [])[:3])}
    - Equipment: {equipment_str}
    - Outcome: {parallel.get('outcome', 'N/A')}
-   - Relevance: {parallel.get('relevance_to_current', 'N/A')}
 """
             historical_block += f"\nHistorical Pattern: {historical_parallels.get('historical_pattern', 'N/A')}"
             historical_block += f"\nKey Difference in 2026: {historical_parallels.get('key_difference_2026', 'N/A')}\n"
@@ -293,6 +304,43 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             print(f"Raw response: {response[:1000]}")
             print(f"Response length: {len(response)} chars")
             return None
+        
+        # Missing-segment recovery: detect truncation and request missing segments
+        expected_names = _SEGMENT_NAMES_6 if 'historical_1' in script else _SEGMENT_NAMES_5
+        missing_segments = [s for s in expected_names if not script.get(s)]
+        if missing_segments:
+            print(f"  [RECOVERY] Script truncated — missing segments: {missing_segments}")
+            recovery_prompt = (
+                f"The previous script JSON was truncated. It has these segments: "
+                f"{[s for s in expected_names if script.get(s)]}. "
+                f"Output ONLY a JSON object with these missing segments filled in, "
+                f"continuing the same narrative about: {news_summary.get('topic', 'geopolitical event')}. "
+                f"Missing keys: {missing_segments}. Each value should be 1-2 sentences of narration. "
+                f"Start with {{ and end with }}. Nothing else."
+            )
+            recovery_response = self.generate(
+                prompt=recovery_prompt,
+                temperature=0.7,
+                max_tokens=1200
+            )
+            if recovery_response:
+                recovery_data = self._extract_json(recovery_response)
+                if recovery_data and isinstance(recovery_data, dict):
+                    for seg in missing_segments:
+                        if seg in recovery_data:
+                            script[seg] = recovery_data[seg]
+                            print(f"    [RECOVERY] Restored: {seg}")
+                    remaining = [s for s in expected_names if not script.get(s)]
+                    if not remaining:
+                        print(f"  [RECOVERY] All segments restored successfully")
+                    else:
+                        print(f"  [RECOVERY] Still missing: {remaining} — using fallback text")
+                        for seg in remaining:
+                            script[seg] = f"The situation continues to develop with significant implications for regional stability."
+            else:
+                print(f"  [RECOVERY] Recovery call failed — using fallback text for missing segments")
+                for seg in missing_segments:
+                    script[seg] = f"The situation continues to develop with significant implications for regional stability."
         
         # CRITICAL FIX: Build full_text from segments if missing or incomplete
         # This ensures TTS gets the complete narration, not just the title/hook
