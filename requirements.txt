@@ -12,3 +12,15 @@ numpy>=1.26.0
 fal-client>=0.4.0
 spacy>=3.7.0
 trafilatura>=1.6.0
+
+# LoRA local training (install separately — requires CUDA + ~25GB disk for FLUX.1-dev)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.3.0
+torchvision>=0.18.0
+diffusers>=0.30.0
+peft>=0.12.0
+accelerate>=0.30.0
+bitsandbytes>=0.43.0
+transformers>=4.44.0
+safetensors>=0.4.3
+huggingface_hub>=0.24.0
