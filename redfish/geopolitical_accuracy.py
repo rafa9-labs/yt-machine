@@ -137,43 +137,161 @@ COUNTRY_VISUAL_SPECS = {
             'E-3': 'E-3 Sentry AWACS with NATO markings',
             'naval': 'Standing Naval Forces, multinational ship classes'
         }
+    },
+
+    'hamas': {
+        'flag_colors': 'green, white, black with crossed swords',
+        'military_branches': {
+            'qassam': 'Al-Qassam Brigades, green headbands, military fatigues, Palestinian flag'
+        },
+        'aircraft_markings': 'no air assets',
+        'naval_markings': 'frogman units, small fast boats',
+        'uniform_colors': 'green and black, military fatigues, keffiyeh',
+        'equipment_specific': {
+            'rockets': 'Qassam rockets, Kornet ATGM, RPG-7',
+            'tunnels': 'underground tunnel network, urban warfare positions'
+        }
+    },
+
+    'houthi': {
+        'flag_colors': 'red, white, black with green slogan banner',
+        'military_branches': {
+            'ansar_allah': 'Ansar Allah forces, Yemeni tribal fighters, mountain terrain camouflage'
+        },
+        'aircraft_markings': 'no conventional air assets',
+        'naval_markings': 'Red Sea attack boats, naval mines, drone boats',
+        'uniform_colors': 'olive drab, desert camouflage, tribal dress',
+        'equipment_specific': {
+            'drones': 'Shahed-136 kamikaze drones, Qasef-K2 drones',
+            'missiles': 'Burkan ballistic missiles, anti-ship missiles',
+            'naval': 'explosive drone boats, naval mines in Red Sea'
+        }
+    },
+
+    'turkey': {
+        'flag_colors': 'red with white crescent and star',
+        'military_branches': {
+            'army': 'Turkish Land Forces, digital camouflage with Turkish flag patch',
+            'navy': 'Turkish Naval Forces, white uniforms with naval crescent',
+            'air_force': 'Turkish Air Force, blue uniforms with star and crescent roundel'
+        },
+        'aircraft_markings': 'red crescent and star roundel on wings',
+        'naval_markings': 'grey hull with Turkish crescent ensign',
+        'uniform_colors': 'digital camouflage, olive drab, navy blue',
+        'equipment_specific': {
+            'F-16': 'F-16C/D Fighting Falcon with Turkish AF markings',
+            'TB2': 'Bayraktar TB2 drone with Turkish markings',
+            'tanks': 'M60T Sabra tank, Altay tank prototype',
+            'naval': 'MILGEM-class corvettes, Type 209 submarines'
+        }
+    },
+
+    'saudi_arabia': {
+        'flag_colors': 'green with white Arabic inscription and sword',
+        'military_branches': {
+            'army': 'Royal Saudi Land Forces, desert camouflage with Saudi emblem',
+            'navy': 'Royal Saudi Naval Forces, white with Saudi eagle insignia',
+            'air_force': 'Royal Saudi Air Force, blue uniforms with crossed swords roundel'
+        },
+        'aircraft_markings': 'RSAF green and white roundel with crossed swords',
+        'naval_markings': 'grey hull with Saudi naval ensign',
+        'uniform_colors': 'desert tan, olive drab, Saudi camouflage',
+        'equipment_specific': {
+            'F-15': 'F-15SA Strike Eagle with Saudi AF markings',
+            'Typhoon': 'Eurofighter Typhoon with RSAF crossed-swords roundel',
+            'missiles': 'Patriot air defense, HIMARS, Tornado IDS',
+            'naval': 'Al Riyadh-class frigates, Badr-class corvettes'
+        }
+    },
+
+    'pakistan': {
+        'flag_colors': 'dark green with white crescent and star',
+        'military_branches': {
+            'army': 'Pakistan Army, digital camouflage with crescent star badge',
+            'navy': 'Pakistan Navy, white uniforms with naval ensign',
+            'air_force': 'Pakistan Air Force, blue uniforms with crescent roundel'
+        },
+        'aircraft_markings': 'PAF green crescent and star roundel',
+        'naval_markings': 'grey hull with Pakistan naval ensign',
+        'uniform_colors': 'digital camouflage, olive drab, PAF blue',
+        'equipment_specific': {
+            'JF-17': 'JF-17 Thunder with PAF markings',
+            'F-16': 'F-16A/B Fighting Falcon with PAF crescent roundel',
+            'missiles': 'Shaheen ballistic missiles, Babur cruise missile',
+            'naval': 'Type 054A/P frigates, Agosta-class submarines'
+        }
     }
 }
 
 # Country-equipment mapping to prevent incorrect combinations
 COUNTRY_EQUIPMENT_MAPPING = {
-    'iran': ['F-14', 'F-4', 'MiG-29', 'Shahab', 'Jamaran', 'Ghadir', 'IRGC', 'F-14 Tomcat'],
-    'israel': ['F-35I', 'F-16I', 'AH-64', 'Iron Dome', 'Sa\'ar', 'Dolphin', 'IDF', 'IAF'],
-    'russia': ['Su-35', 'Su-57', 'MiG-31', 'S-400', 'Admiral Kuznetsov', 'Kirov', 'VVS'],
-    'china': ['J-20', 'J-16', 'J-10', 'DF-21', 'Type 055', 'Type 052D', 'Liaoning', 'PLAAF', 'PLAN'],
-    'ukraine': ['MiG-29', 'Su-24', 'Su-27', 'S-300', 'Neptune', 'Hetman', 'trident'],
-    'usa': ['F-35', 'F-22', 'F-16', 'Patriot', 'THAAD', 'Nimitz', 'Arleigh Burke', 'USAF', 'USN', 'USMC', 'F-14'],
-    'nato': ['multinational', 'E-3', 'AWACS', 'Standing Naval Forces']
+    'iran': ['F-14', 'F-4', 'MiG-29', 'Shahab', 'Jamaran', 'Ghadir', 'IRGC', 'F-14 Tomcat', 'Shahed', 'Arash'],
+    'israel': ['F-35I', 'F-16I', 'AH-64', 'Iron Dome', 'Sa\'ar', 'Dolphin', 'IDF', 'IAF', 'Arrow', 'David\'s Sling'],
+    'russia': ['Su-35', 'Su-57', 'MiG-31', 'S-400', 'Admiral Kuznetsov', 'Kirov', 'VVS', 'Kalibr', 'Iskander', 'S-300'],
+    'china': ['J-20', 'J-16', 'J-10', 'DF-21', 'Type 055', 'Type 052D', 'Liaoning', 'PLAAF', 'PLAN', 'HQ-9', 'YJ-18'],
+    'ukraine': ['MiG-29', 'Su-24', 'Su-27', 'S-300', 'Neptune', 'Hetman', 'trident', 'HIMARS', 'Leopard', 'Bradley'],
+    'usa': ['F-35', 'F-22', 'F-16', 'Patriot', 'THAAD', 'Nimitz', 'Arleigh Burke', 'USAF', 'USN', 'USMC', 'F-14', 'B-52', 'AC-130'],
+    'nato': ['multinational', 'E-3', 'AWACS', 'Standing Naval Forces'],
+    'hamas': ['Qassam', 'Kornet', 'RPG', 'tunnel', 'Al-Qassam'],
+    'houthi': ['Shahed-136', 'Qasef', 'Burkan', 'drone boat', 'naval mine', 'Ansar Allah'],
+    'turkey': ['F-16', 'TB2', 'Bayraktar', 'M60T', 'Altay', 'MILGEM', 'Type 209'],
+    'saudi_arabia': ['F-15SA', 'Typhoon', 'Tornado', 'Patriot', 'Al Riyadh', 'Badr'],
+    'pakistan': ['JF-17', 'F-16', 'Shaheen', 'Babur', 'Agosta', 'Type 054']
+}
+
+# Theater-to-country context map: geographic regions imply specific actors
+THEATER_CONTEXT_MAP = {
+    'strait of hormuz': ['iran', 'irgc', 'usa'],
+    'hormuz': ['iran', 'irgc'],
+    'persian gulf': ['iran', 'usa', 'saudi_arabia'],
+    'red sea': ['houthi', 'usa', 'israel'],
+    'gulf of aden': ['houthi', 'usa'],
+    'gaza': ['hamas', 'israel'],
+    'west bank': ['israel'],
+    'ukraine': ['ukraine', 'russia', 'nato'],
+    'taiwan strait': ['china', 'taiwan', 'usa'],
+    'south china sea': ['china', 'usa'],
+    'black sea': ['russia', 'ukraine', 'nato'],
+    'syria': ['russia', 'usa', 'iran'],
+    'iraq': ['usa', 'iran'],
+    'lebanon': ['hezbollah', 'israel'],
+    'kashmir': ['pakistan', 'india'],
+    'yemen': ['houthi', 'saudi_arabia', 'usa']
 }
 
 # Hallucination prevention rules
 HALLUCINATION_PREVENTION_RULES = {
     'no_mixing': [
-        ('iran', 'F-35'),      # Iran doesn't use F-35
-        ('iran', 'F-22'),      # Iran doesn't use F-22
-        ('iran', 'Patriot'),   # Iran doesn't use Patriot
-        ('israel', 'Su-57'),   # Israel doesn't use Russian aircraft
-        ('israel', 'J-20'),    # Israel doesn't use Chinese aircraft
-        ('usa', 'S-400'),      # USA doesn't use S-400
-        ('usa', 'Su-57'),      # USA doesn't use Su-57
-        ('ukraine', 'J-20'),   # Ukraine doesn't use Chinese aircraft
-        ('ukraine', 'F-35'),   # Ukraine doesn't use F-35 (yet)
-        ('russia', 'F-35'),    # Russia doesn't use Western aircraft
-        ('china', 'F-35'),     # China doesn't use F-35
+        ('iran', 'F-35'),         # Iran doesn't use F-35
+        ('iran', 'F-22'),         # Iran doesn't use F-22
+        ('iran', 'Patriot'),      # Iran doesn't use Patriot
+        ('israel', 'Su-57'),      # Israel doesn't use Russian aircraft
+        ('israel', 'J-20'),       # Israel doesn't use Chinese aircraft
+        ('usa', 'S-400'),         # USA doesn't use S-400
+        ('usa', 'Su-57'),         # USA doesn't use Su-57
+        ('ukraine', 'J-20'),      # Ukraine doesn't use Chinese aircraft
+        ('ukraine', 'F-35'),      # Ukraine doesn't use F-35 (yet)
+        ('russia', 'F-35'),       # Russia doesn't use Western aircraft
+        ('china', 'F-35'),        # China doesn't use F-35
+        ('saudi_arabia', 'Su-57'), # Saudi doesn't use Russian aircraft
+        ('pakistan', 'F-35'),     # Pakistan doesn't use F-35
+        ('turkey', 'F-35'),       # Turkey removed from F-35 program
     ],
+    # Required elements: at least 1 of these must appear for country to be
+    # considered visually represented. Deduct only if ZERO match (not per-missing).
     'required_elements': {
-        'iran': ['green', 'Persian script', 'IRGC insignia', 'Islamic Republic'],
-        'israel': ['Star of David', 'IAF roundel', 'IDF insignia', 'Israeli'],
-        'russia': ['red star', 'Russian Federation', 'Cyrillic', 'VVS'],
-        'china': ['red star', 'Chinese characters', 'PLA insignia', 'PLAAF'],
-        'ukraine': ['trident', 'blue-yellow', 'Ukrainian insignia', 'Armed Forces of Ukraine'],
-        'usa': ['stars and stripes', 'US roundel', 'USA markings', 'United States'],
-        'nato': ['NATO emblem', 'multinational', 'blue and white', 'Alliance']
+        'iran': ['green', 'Persian script', 'IRGC', 'Islamic Republic', 'Iranian'],
+        'israel': ['Star of David', 'IAF', 'IDF', 'Israeli', 'Magen David'],
+        'russia': ['red star', 'Russian', 'Cyrillic', 'VVS', 'Soviet'],
+        'china': ['red star', 'Chinese', 'PLA', 'PLAAF', 'PLAN'],
+        'ukraine': ['trident', 'Ukrainian', 'blue-yellow', 'Armed Forces of Ukraine'],
+        'usa': ['stars and stripes', 'US', 'USA', 'United States', 'American'],
+        'nato': ['NATO', 'multinational', 'Alliance'],
+        'hamas': ['Al-Qassam', 'Palestinian', 'Gaza', 'green headband'],
+        'houthi': ['Ansar Allah', 'Yemeni', 'Houthi', 'Red Sea'],
+        'turkey': ['Turkish', 'crescent', 'Turkey', 'Ankara'],
+        'saudi_arabia': ['Saudi', 'RSAF', 'Royal Saudi', 'Riyadh'],
+        'pakistan': ['Pakistani', 'PAF', 'Pakistan', 'Islamabad']
     }
 }
 
@@ -234,8 +352,25 @@ def extract_equipment_from_text(text: str) -> List[str]:
     
     return list(set(found_equipment))  # Remove duplicates
 
+def get_theater_countries(text: str) -> List[str]:
+    """Infer implied country actors from geographic theater mentions in text."""
+    found = []
+    text_lower = text.lower()
+    for theater, countries in THEATER_CONTEXT_MAP.items():
+        if theater in text_lower:
+            for c in countries:
+                if c not in found:
+                    found.append(c)
+    return found
+
+
 def validate_geopolitical_accuracy(text: str) -> Dict[str, Any]:
-    """Comprehensive geopolitical accuracy validation"""
+    """Comprehensive geopolitical accuracy validation.
+    
+    Required-elements check: deduct 15 pts only when ZERO required elements
+    for a country are present (not -10 per missing element, which over-penalises
+    short prompts that legitimately contain only one identifier).
+    """
     countries = extract_countries_from_text(text)
     equipment = extract_equipment_from_text(text)
     
@@ -262,13 +397,18 @@ def validate_geopolitical_accuracy(text: str) -> Dict[str, Any]:
             if risks:
                 validation_results['accuracy_score'] -= 50
     
-    # Check required elements for each country
+    # Check required elements: deduct 15 pts only if ZERO of the required
+    # elements appear (partial match is acceptable for short prompts)
+    text_lower = text.lower()
     for country in countries:
         required_elements = get_required_country_elements(country)
-        for element in required_elements:
-            if element.lower() not in text.lower():
-                validation_results['missing_required_elements'].append(f"Missing {element} for {country}")
-                validation_results['accuracy_score'] -= 10
+        if required_elements:
+            matched = [e for e in required_elements if e.lower() in text_lower]
+            if not matched:
+                validation_results['missing_required_elements'].append(
+                    f"No visual identifier for {country} (expected one of: {required_elements})"
+                )
+                validation_results['accuracy_score'] -= 15
     
     # Ensure score doesn't go negative
     validation_results['accuracy_score'] = max(0, validation_results['accuracy_score'])
