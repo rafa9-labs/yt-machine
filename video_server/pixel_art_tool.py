@@ -21,9 +21,48 @@ FAL_KEY = os.getenv("FAL_KEY")
 OUTPUT_DIR = Path(__file__).parent.parent / "output" / "images"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# FAL Model Configuration - LoRA-based pixel art generation
-FAL_MODEL = "fal-ai/flux-lora"  # Primary: LoRA-capable model
-FAL_FALLBACK_MODELS = ["fal-ai/flux/dev", "fal-ai/flux/schnell"]  # Fallback chain
+# ============================================================================
+# PHASE 1: Model Re-integration - Pixel-Art Optimized Model Configuration
+# ============================================================================
+
+# Pixel-art optimized model endpoint (using existing FAL_KEY)
+# This replaces the complex LoRA training workflow with a purpose-built pixel-art model
+PIXEL_ART_MODEL = "fal-ai/flux-pro/v1.1-ultra"  # Pixel-art optimized endpoint
+PIXEL_ART_MODEL_ENDPOINT = "https://fal.run/fal-ai/flux-pro/v1.1-ultra"
+
+# Model-specific configuration for pixel-art optimized generation
+PIXEL_ART_MODEL_CONFIG = {
+    "model": "fal-ai/flux-pro/v1.1-ultra",
+    "api_endpoint": "https://fal.run/fal-ai/flux-pro/v1.1-ultra",
+    "auth_type": "bearer",  # Uses existing FAL_KEY from environment
+    "content_type": "application/json",
+    "optimized_for": ["pixel_art", "isometric", "16bit", "retro_style"],
+    "supports_reference": True,
+    "default_params": {
+        "image_size": "portrait_4_3",
+        "num_inference_steps": 35,
+        "guidance_scale": 3.0,
+        "enable_safety_checker": False,
+        "output_format": "png"
+    }
+}
+
+# Legacy fallback chain (preserved for compatibility)
+FAL_MODEL = "fal-ai/flux-lora"
+FAL_FALLBACK_MODELS = ["fal-ai/flux/dev", "fal-ai/flux/schnell"]
+
+def _get_pixel_art_model_headers() -> Dict[str, str]:
+    """
+    Generate authentication headers for pixel-art optimized model.
+    Uses existing FAL_KEY from environment.
+    """
+    if not FAL_KEY:
+        raise ValueError("FAL_KEY environment variable not set")
+    
+    return {
+        "Authorization": f"Key {FAL_KEY}",
+        "Content-Type": "application/json"
+    }
 
 # LoRA configuration — loaded from config, with custom LoRA override support
 _CUSTOM_LORA_PATH = Path(__file__).parent.parent / "config" / "custom_lora.json"
@@ -93,6 +132,111 @@ PIXEL_ART_LORA = {
     "path": _resolved_lora_path,
     "scale": _lora_defaults.get('scale', 0.85)
 }
+
+# ============================================================================
+# PHASE 3: Accuracy Refinement - Strength, Noise, and Guidance Parameters
+# ============================================================================
+
+# Image-to-Image accuracy refinement configuration
+# These parameters control how closely output matches reference vs prompt
+I2I_REFINEMENT_CONFIG = {
+    # Strength: How much to transform the reference image (0.0 = unchanged, 1.0 = completely new)
+    "strength": {
+        "low": 0.45,      # Subtle changes, keeps reference structure
+        "medium": 0.75,   # Balanced transformation (default)
+        "high": 0.95,     # Major transformation, keeps only composition
+        "default": 0.75
+    },
+    
+    # Guidance Scale: How closely to follow the text prompt (higher = more prompt adherence)
+    "guidance_scale": {
+        "low": 2.0,       # More creative freedom, less prompt adherence
+        "medium": 3.0,    # Balanced (default)
+        "high": 5.0,      # Strict prompt adherence
+        "pixel_art_optimized": 3.5,  # Optimized for pixel-art detail preservation
+        "default": 3.0
+    },
+    
+    # Inference Steps: Quality vs speed tradeoff (more steps = higher quality, slower)
+    "num_inference_steps": {
+        "fast": 20,       # Quick generation, acceptable quality
+        "balanced": 35,   # Good quality/speed balance (default)
+        "quality": 50,    # Maximum quality, slower
+        "pixel_art_max": 45,  # Optimized for pixel-art clarity
+        "default": 35
+    },
+    
+    # Control modes for different generation scenarios
+    "control_modes": {
+        "strict_reference": {
+            "strength": 0.45,
+            "guidance_scale": 2.5,
+            "description": "Keep reference image mostly intact, subtle pixel-art styling"
+        },
+        "balanced": {
+            "strength": 0.75,
+            "guidance_scale": 3.0,
+            "description": "Balanced reference influence and prompt adherence (default)"
+        },
+        "prompt_dominant": {
+            "strength": 0.95,
+            "guidance_scale": 5.0,
+            "description": "Follow prompt closely, use reference for composition only"
+        },
+        "pixel_art_precise": {
+            "strength": 0.70,
+            "guidance_scale": 3.5,
+            "num_inference_steps": 45,
+            "description": "Optimized for pixel-art accuracy with reference guidance"
+        }
+    }
+}
+
+
+def _get_refinement_params(
+    mode: str = "balanced",
+    custom_strength: Optional[float] = None,
+    custom_guidance: Optional[float] = None,
+    custom_steps: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Get accuracy refinement parameters for Image-to-Image generation.
+    
+    Args:
+        mode: Predefined control mode ("strict_reference", "balanced", "prompt_dominant", "pixel_art_precise")
+        custom_strength: Override strength value (0.0-1.0)
+        custom_guidance: Override guidance scale value
+        custom_steps: Override inference steps
+        
+    Returns:
+        Dict with strength, guidance_scale, and num_inference_steps
+    """
+    # Get base params from control mode
+    mode_config = I2I_REFINEMENT_CONFIG["control_modes"].get(mode, I2I_REFINEMENT_CONFIG["control_modes"]["balanced"])
+    
+    params = {
+        "strength": custom_strength if custom_strength is not None else mode_config.get("strength", I2I_REFINEMENT_CONFIG["strength"]["default"]),
+        "guidance_scale": custom_guidance if custom_guidance is not None else mode_config.get("guidance_scale", I2I_REFINEMENT_CONFIG["guidance_scale"]["default"]),
+        "num_inference_steps": custom_steps if custom_steps is not None else mode_config.get("num_inference_steps", I2I_REFINEMENT_CONFIG["num_inference_steps"]["default"]),
+        "mode": mode,
+        "mode_description": mode_config.get("description", "")
+    }
+    
+    # Validate ranges
+    params["strength"] = max(0.0, min(1.0, params["strength"]))
+    params["guidance_scale"] = max(1.0, min(20.0, params["guidance_scale"]))
+    params["num_inference_steps"] = max(1, min(100, params["num_inference_steps"]))
+    
+    return params
+
+
+def _print_refinement_settings(params: Dict[str, Any]) -> None:
+    """Print current refinement settings for debugging."""
+    print(f"  [IMG] I2I Refinement: {params['mode']} - {params['mode_description']}")
+    print(f"  [IMG]   Strength: {params['strength']:.2f} (transform amount)")
+    print(f"  [IMG]   Guidance: {params['guidance_scale']:.1f} (prompt adherence)")
+    print(f"  [IMG]   Steps: {params['num_inference_steps']} (quality level)")
+
 
 # Build STYLE_LORAS from config
 _lora_by_type = IMAGE_STYLE_CONFIG.get('lora_by_visual_type', {})
@@ -237,6 +381,165 @@ def _get_adaptive_enrichment(visual_type: str) -> str:
     }
     
     return enrichments.get(visual_type, enrichments['general'])
+
+
+# ============================================================================
+# PHASE 2: Reference Image Pipeline - Image-to-Image Generation Support
+# ============================================================================
+
+def _upload_reference_image_to_fal(image_path: str) -> str:
+    """
+    Upload a local reference image to FAL.ai CDN and return the URL.
+    Required for Image-to-Image generation with the pixel-art optimized model.
+    
+    Args:
+        image_path: Local path to reference image file
+        
+    Returns:
+        str: CDN URL of uploaded image
+        
+    Raises:
+        ValueError: If image file doesn't exist or upload fails
+    """
+    import fal_client
+    
+    local_path = Path(image_path)
+    if not local_path.exists():
+        raise ValueError(f"Reference image not found: {image_path}")
+    
+    if not local_path.suffix.lower() in ['.png', '.jpg', '.jpeg', '.webp']:
+        raise ValueError(f"Unsupported image format: {local_path.suffix}")
+    
+    try:
+        print(f"  [IMG] Uploading reference image to FAL.ai CDN: {local_path.name}")
+        cdn_url = fal_client.upload_file(str(local_path))
+        print(f"  [IMG] Reference image CDN URL: {cdn_url}")
+        return cdn_url
+    except Exception as e:
+        raise ValueError(f"Failed to upload reference image: {str(e)}")
+
+
+def _validate_reference_image_url(url: str) -> bool:
+    """
+    Validate that a reference image URL is accessible and valid.
+    
+    Args:
+        url: Image URL to validate
+        
+    Returns:
+        bool: True if valid and accessible
+    """
+    import requests
+    
+    if not url or not isinstance(url, str):
+        return False
+    
+    # Must be HTTP(S) URL
+    if not url.startswith(('http://', 'https://')):
+        return False
+    
+    try:
+        # Head request to check accessibility without downloading
+        response = requests.head(url, timeout=10, allow_redirects=True)
+        content_type = response.headers.get('content-type', '')
+        
+        # Must be image content type
+        if not content_type.startswith('image/'):
+            print(f"  [IMG] Warning: Reference URL is not an image: {content_type}")
+            return False
+        
+        return response.status_code == 200
+    except Exception as e:
+        print(f"  [IMG] Warning: Cannot validate reference image: {e}")
+        return False
+
+
+def _prepare_reference_image(
+    reference_image: Optional[str] = None,
+    auto_upload: bool = True
+) -> Optional[str]:
+    """
+    Prepare reference image for Image-to-Image generation.
+    Handles both local file paths and remote URLs.
+    
+    Args:
+        reference_image: Local path or URL to reference image
+        auto_upload: If True, automatically upload local files to FAL CDN
+        
+    Returns:
+        str: Valid image URL ready for API call, or None if invalid
+    """
+    if not reference_image:
+        return None
+    
+    # Check if it's already a URL
+    if reference_image.startswith(('http://', 'https://')):
+        if _validate_reference_image_url(reference_image):
+            return reference_image
+        else:
+            print(f"  [IMG] Warning: Invalid reference image URL, proceeding without reference")
+            return None
+    
+    # It's a local file path
+    if auto_upload:
+        try:
+            return _upload_reference_image_to_fal(reference_image)
+        except Exception as e:
+            print(f"  [IMG] Warning: Could not upload reference: {e}, proceeding without reference")
+            return None
+    else:
+        # Don't upload, just validate path exists
+        if Path(reference_image).exists():
+            # Return as-is; caller must handle upload
+            return reference_image
+        else:
+            print(f"  [IMG] Warning: Reference image not found: {reference_image}")
+            return None
+
+
+def _build_i2i_generation_args(
+    prompt: str,
+    reference_image_url: str,
+    strength: float = 0.75,
+    guidance_scale: float = 3.0,
+    num_inference_steps: int = 35,
+    seed: Optional[int] = None,
+    negative_prompt: str = None
+) -> Dict[str, Any]:
+    """
+    Build API arguments for Image-to-Image generation.
+    
+    Args:
+        prompt: Text prompt for generation
+        reference_image_url: URL of reference image (must be accessible)
+        strength: How much to transform reference (0.0-1.0, higher = more change)
+        guidance_scale: How closely to follow prompt (higher = more adherence)
+        num_inference_steps: Number of denoising steps
+        seed: Optional seed for reproducibility
+        negative_prompt: Optional negative prompt
+        
+    Returns:
+        Dict of arguments for FAL API call
+    """
+    args = {
+        "prompt": prompt,
+        "image_url": reference_image_url,  # Reference image for I2I
+        "strength": strength,
+        "guidance_scale": guidance_scale,
+        "num_inference_steps": num_inference_steps,
+        "image_size": PIXEL_ART_MODEL_CONFIG["default_params"]["image_size"],
+        "enable_safety_checker": PIXEL_ART_MODEL_CONFIG["default_params"]["enable_safety_checker"],
+        "output_format": PIXEL_ART_MODEL_CONFIG["default_params"]["output_format"],
+        "num_images": 1,
+    }
+    
+    if seed is not None:
+        args["seed"] = seed
+    
+    if negative_prompt:
+        args["negative_prompt"] = negative_prompt
+    
+    return args
 
 
 def _select_style_lora(visual_type: str) -> Dict[str, Any]:
@@ -419,18 +722,39 @@ def _generate_placeholder(prompt: str, output_path: Path) -> None:
 
 
 @server.tool()
-def generate_pixel_art(prompt: str, script_text: str = None, seed: int = None) -> dict:
+def generate_pixel_art(
+    prompt: str, 
+    script_text: str = None, 
+    seed: int = None,
+    reference_image: str = None,
+    i2i_mode: str = "balanced",
+    i2i_strength: float = None,
+    i2i_guidance: float = None,
+    i2i_steps: int = None,
+    use_pixel_art_model: bool = True
+) -> dict:
     """
     Generate a 16-bit cyberpunk pixel art image for a given scene prompt.
-    Enhanced with visual type detection, structured prompting, and geopolitical accuracy validation.
+    Enhanced with visual type detection, structured prompting, and Image-to-Image support.
+    
+    PHASE 1-3 INTEGRATION:
+    - Pixel-art optimized model (use_pixel_art_model=True)
+    - Reference image guidance (reference_image parameter)
+    - Accuracy refinement (i2i_mode, i2i_strength, i2i_guidance, i2i_steps)
 
     Args:
         prompt: Scene description (e.g. "Strait of Hormuz blockade at dusk")
         script_text: Original script text for geopolitical context (optional)
         seed: Optional seed for reproducible style. Use base_seed + scene_index for batch consistency.
+        reference_image: Path or URL to reference image for I2I generation (optional)
+        i2i_mode: Refinement mode ("strict_reference", "balanced", "prompt_dominant", "pixel_art_precise")
+        i2i_strength: Override strength (0.0-1.0) - how much to transform reference
+        i2i_guidance: Override guidance scale - how closely to follow prompt
+        i2i_steps: Override inference steps
+        use_pixel_art_model: If True, use pixel-art optimized model endpoint
 
     Returns:
-        dict with success status, image path, and metadata
+        dict with success status, image path, and metadata including i2i_params
     """
     if not prompt or not prompt.strip():
         return {"success": False, "error": "Prompt cannot be empty"}
@@ -495,6 +819,29 @@ def generate_pixel_art(prompt: str, script_text: str = None, seed: int = None) -
     filename = f"pixel_art_{safe_name}_{hash(prompt) % 100000}.png"
     output_path = OUTPUT_DIR / filename
 
+    # ============================================================================
+    # PHASE 2 & 3: Reference Image Preparation and Refinement Parameters
+    # ============================================================================
+    
+    reference_image_url = None
+    i2i_params = None
+    
+    if reference_image:
+        print(f"  [IMG] Preparing reference image for I2I generation...")
+        reference_image_url = _prepare_reference_image(reference_image, auto_upload=True)
+        
+        if reference_image_url:
+            # Get refinement parameters (Phase 3)
+            i2i_params = _get_refinement_params(
+                mode=i2i_mode,
+                custom_strength=i2i_strength,
+                custom_guidance=i2i_guidance,
+                custom_steps=i2i_steps
+            )
+            _print_refinement_settings(i2i_params)
+        else:
+            print(f"  [IMG] Proceeding with text-to-image generation (no reference)")
+
     if FAL_KEY:
         try:
             import fal_client
@@ -502,8 +849,19 @@ def generate_pixel_art(prompt: str, script_text: str = None, seed: int = None) -
 
             os.environ["FAL_KEY"] = FAL_KEY
 
-            # Try LoRA model first, then fallback chain
-            models_to_try = [FAL_MODEL] + FAL_FALLBACK_MODELS
+            # Determine model chain based on configuration
+            if use_pixel_art_model and PIXEL_ART_MODEL_CONFIG["supports_reference"] and reference_image_url:
+                # Use pixel-art optimized model with I2I
+                models_to_try = [PIXEL_ART_MODEL_CONFIG["model"]]
+                print(f"  [IMG] Using pixel-art optimized model with Image-to-Image: {PIXEL_ART_MODEL_CONFIG['model']}")
+            elif use_pixel_art_model:
+                # Use pixel-art optimized model (text-to-image)
+                models_to_try = [PIXEL_ART_MODEL_CONFIG["model"]] + [FAL_MODEL] + FAL_FALLBACK_MODELS
+                print(f"  [IMG] Using pixel-art optimized model (T2I): {PIXEL_ART_MODEL_CONFIG['model']}")
+            else:
+                # Legacy fallback chain
+                models_to_try = [FAL_MODEL] + FAL_FALLBACK_MODELS
+                
             result = None
             model_used = None
             last_error = None
@@ -512,39 +870,47 @@ def generate_pixel_art(prompt: str, script_text: str = None, seed: int = None) -
                 try:
                     print(f"  [IMG] Trying model: {model}")
                     
-                    # Build arguments based on model type
-                    # Common params from config
-                    _gp = GENERATION_PARAMS
-                    base_args = {
-                        "prompt": full_prompt,
-                        "negative_prompt": NEGATIVE_PROMPT,
-                        "image_size": _gp.get('image_size', 'portrait_4_3'),
-                        "num_images": 1,
-                        "num_inference_steps": _gp.get('num_inference_steps', 28),
-                        "guidance_scale": _gp.get('guidance_scale', 3.5),
-                        "enable_safety_checker": _gp.get('enable_safety_checker', False),
-                        "output_format": _gp.get('output_format', 'png'),
-                    }
-                    # Add seed if provided (for batch consistency)
-                    if seed is not None:
-                        base_args["seed"] = seed
-                    
-                    if model == "fal-ai/flux-lora":
-                        # Get visual type-specific LoRA configuration
-                        lora_config = _select_style_lora(visual_type)
-                        
-                        # LoRA-enabled model with visual type-specific weights
-                        arguments = {
-                            **base_args,
-                            "loras": [{
-                                "path": lora_config['path'],
-                                "scale": lora_config['scale']
-                            }],
-                        }
+                    # Build arguments based on model type and I2I status
+                    if reference_image_url and i2i_params:
+                        # Image-to-Image generation (Phase 2 & 3)
+                        arguments = _build_i2i_generation_args(
+                            prompt=full_prompt,
+                            reference_image_url=reference_image_url,
+                            strength=i2i_params["strength"],
+                            guidance_scale=i2i_params["guidance_scale"],
+                            num_inference_steps=i2i_params["num_inference_steps"],
+                            seed=seed,
+                            negative_prompt=NEGATIVE_PROMPT
+                        )
+                        print(f"  [IMG] I2I params: strength={i2i_params['strength']:.2f}, guidance={i2i_params['guidance_scale']:.1f}")
                     else:
-                        # Standard flux models (no LoRA, no negative_prompt)
-                        arguments = {k: v for k, v in base_args.items()
-                                     if k not in ('negative_prompt', 'loras')}
+                        # Standard text-to-image generation
+                        _gp = GENERATION_PARAMS
+                        base_args = {
+                            "prompt": full_prompt,
+                            "negative_prompt": NEGATIVE_PROMPT,
+                            "image_size": _gp.get('image_size', 'portrait_4_3'),
+                            "num_images": 1,
+                            "num_inference_steps": _gp.get('num_inference_steps', 28),
+                            "guidance_scale": _gp.get('guidance_scale', 3.5),
+                            "enable_safety_checker": _gp.get('enable_safety_checker', False),
+                            "output_format": _gp.get('output_format', 'png'),
+                        }
+                        if seed is not None:
+                            base_args["seed"] = seed
+                        
+                        if model == "fal-ai/flux-lora":
+                            lora_config = _select_style_lora(visual_type)
+                            arguments = {
+                                **base_args,
+                                "loras": [{
+                                    "path": lora_config['path'],
+                                    "scale": lora_config['scale']
+                                }],
+                            }
+                        else:
+                            arguments = {k: v for k, v in base_args.items()
+                                         if k not in ('negative_prompt', 'loras')}
                     
                     result = fal_client.run(model, arguments=arguments)
                     model_used = model
@@ -555,7 +921,6 @@ def generate_pixel_art(prompt: str, script_text: str = None, seed: int = None) -
                     last_error = str(model_error)
                     print(f"  [IMG] ✗ {model} failed: {last_error[:100]}")
                     if model == models_to_try[-1]:
-                        # Last model failed, re-raise
                         raise
                     continue
             
@@ -579,14 +944,19 @@ def generate_pixel_art(prompt: str, script_text: str = None, seed: int = None) -
                 "specificity_score": specificity,
                 "visual_type": visual_type,
                 "source": model_used,
-                "lora_used": model_used == "fal-ai/flux-lora",
-                "lora_config": _select_style_lora(visual_type) if model_used == "fal-ai/flux-lora" else None,
+                "lora_used": model_used == "fal-ai/flux-lora" and not reference_image_url,
+                "lora_config": _select_style_lora(visual_type) if model_used == "fal-ai/flux-lora" and not reference_image_url else None,
                 "image_url": image_url,
                 "output_directory": str(OUTPUT_DIR),
+                # NEW: I2I metadata
+                "i2i_used": reference_image_url is not None,
+                "i2i_params": i2i_params,
+                "reference_image_url": reference_image_url,
+                "pixel_art_model_used": use_pixel_art_model,
                 # NEW: Geopolitical accuracy metadata
                 "geopolitical_validation": final_geo_validation,
                 "accuracy_score": final_geo_validation['accuracy_score'],
-                "countries_detected": final_geo_validation['country_analysis'].keys(),
+                "countries_detected": list(final_geo_validation['country_analysis'].keys()),
                 "equipment_validated": not any(analysis['issues'] for analysis in final_geo_validation['equipment_analysis'].values())
             }
 
@@ -607,7 +977,9 @@ def generate_pixel_art(prompt: str, script_text: str = None, seed: int = None) -
                     "note": "FAL.ai balance exhausted - placeholder generated. Top up at fal.ai/dashboard/billing",
                     "size": "1024x1792",
                     "output_directory": str(OUTPUT_DIR),
-                    "geopolitical_validation": final_geo_validation
+                    "geopolitical_validation": final_geo_validation,
+                    "i2i_used": reference_image_url is not None,
+                    "i2i_params": i2i_params
                 }
             
             return {
@@ -630,7 +1002,9 @@ def generate_pixel_art(prompt: str, script_text: str = None, seed: int = None) -
                 "note": "FAL_KEY not set — placeholder image generated",
                 "size": "1024x1792",
                 "output_directory": str(OUTPUT_DIR),
-                "geopolitical_validation": final_geo_validation
+                "geopolitical_validation": final_geo_validation,
+                "i2i_used": False,
+                "i2i_params": None
             }
 
         except Exception as e:
