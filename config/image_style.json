@@ -2,9 +2,9 @@
   "version": "1.0",
   "description": "Single source of truth for image generation style. Both pixel_art_tool.py and prompt_generator.py read from this file.",
 
-  "style_suffix": "Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), isometric perspective, (hard pixel edges:1.2), limited color palette, detailed proportions, flat colors, dramatic lighting",
+  "style_suffix": "Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), (chunky pixels:1.5), (low resolution:1.3), (8-bit color:1.2), isometric perspective, (hard pixel edges:1.2), limited color palette, flat colors, dramatic lighting",
 
-  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, labels, annotations, blurry, low quality, jpeg artifacts, pixelated noise, distorted proportions, photorealistic, 3D render, CGI, anime style, cartoon, sketch, pencil drawing, nsfw, gore, violence close-up, human faces distorted",
+  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, labels, annotations, blurry, low quality, jpeg artifacts, pixelated noise, distorted proportions, photorealistic, 3D render, CGI, anime style, cartoon, sketch, pencil drawing, nsfw, gore, violence close-up, human faces distorted, smooth gradients, photorealistic details, high resolution, fine details, soft shading, anti-aliasing",
 
   "brand_colors": {
     "primary": "#0A1628",
@@ -21,10 +21,13 @@
 
   "generation_params": {
     "guidance_scale": 3.5,
-    "num_inference_steps": 28,
+    "num_inference_steps": 20,
     "image_size": "portrait_4_3",
     "output_format": "png",
-    "enable_safety_checker": false
+    "enable_safety_checker": false,
+    "render_resolution": [256, 256],
+    "target_resolution": [1024, 1792],
+    "upscale_method": "nearest"
   },
 
   "lora_defaults": {
