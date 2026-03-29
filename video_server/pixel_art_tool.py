@@ -27,29 +27,80 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Pixel-art optimized model endpoint (using existing FAL_KEY)
 # This replaces the complex LoRA training workflow with a purpose-built pixel-art model
-PIXEL_ART_MODEL = "fal-ai/flux-pro/v1.1-ultra"  # Pixel-art optimized endpoint
-PIXEL_ART_MODEL_ENDPOINT = "https://fal.run/fal-ai/flux-pro/v1.1-ultra"
+PIXEL_ART_MODEL = "fal-ai/flux-lora"  # LoRA-compatible model for true pixel art
+PIXEL_ART_MODEL_ENDPOINT = "https://fal.run/fal-ai/flux-lora"
 
-# Model-specific configuration for pixel-art optimized generation
+# Model-specific configuration for pixel-art generation with LoRA
 PIXEL_ART_MODEL_CONFIG = {
-    "model": "fal-ai/flux-pro/v1.1-ultra",
-    "api_endpoint": "https://fal.run/fal-ai/flux-pro/v1.1-ultra",
-    "auth_type": "bearer",  # Uses existing FAL_KEY from environment
+    "model": "fal-ai/flux-lora",
+    "api_endpoint": "https://fal.run/fal-ai/flux-lora",
+    "auth_type": "bearer",
     "content_type": "application/json",
     "optimized_for": ["pixel_art", "isometric", "16bit", "retro_style"],
     "supports_reference": True,
     "default_params": {
         "image_size": "portrait_4_3",
-        "num_inference_steps": 35,
-        "guidance_scale": 3.0,
+        "num_inference_steps": 20,
+        "guidance_scale": 3.5,
         "enable_safety_checker": False,
         "output_format": "png"
     }
 }
 
-# Legacy fallback chain (preserved for compatibility)
+# Per-model inference step counts — each model has its own optimal range
+MODEL_STEP_CONFIG = {
+    "fal-ai/flux-lora": 20,
+    "fal-ai/flux/schnell": 6,      # Schnell is architected for 4-8 steps
+    "fal-ai/flux/dev": 20,
+    "fal-ai/flux-pro/v1.1-ultra": 28,
+}
+
+# LoRA scale — 0.75 activates pixel art style without over-applying (NES look)
+LORA_SCALE = 0.75
+
+# Fallback chain — cheaper models only
 FAL_MODEL = "fal-ai/flux-lora"
-FAL_FALLBACK_MODELS = ["fal-ai/flux/dev", "fal-ai/flux/schnell"]
+FAL_FALLBACK_MODELS = ["fal-ai/flux/schnell"]
+
+# Prompt hash cache — avoids regenerating identical/near-identical scenes
+_prompt_cache: Dict[str, str] = {}
+
+
+def _check_prompt_cache(prompt: str) -> Optional[str]:
+    """Check if we already generated an image for this exact prompt. Returns path or None."""
+    import hashlib
+    cache_key = hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:16]
+    return _prompt_cache.get(cache_key)
+
+
+def _store_prompt_cache(prompt: str, image_path: str) -> None:
+    """Store a prompt→image mapping in the cache."""
+    import hashlib
+    cache_key = hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:16]
+    _prompt_cache[cache_key] = image_path
+
+
+def _upscale_pixel_art(input_path: str, render_size: tuple = None,
+                       target_size: tuple = None) -> str:
+    """
+    Upscale a small pixel-art image using nearest-neighbor interpolation.
+    This preserves hard pixel edges — the key to TRUE pixel art vs blurry faux-pixel.
+    """
+    # Resolve defaults at call time (RENDER_RESOLUTION defined later in module)
+    if render_size is None:
+        render_size = tuple(GENERATION_PARAMS.get('render_resolution', [256, 256]))
+    if target_size is None:
+        target_size = tuple(GENERATION_PARAMS.get('target_resolution', [1024, 1792]))
+    img = Image.open(input_path)
+    if img.size != render_size:
+        # Resize to expected render size first (in case model output differs)
+        img = img.resize(render_size, Image.NEAREST)
+    # Nearest-neighbor upscale to target — keeps chunky pixels
+    upscaled = img.resize(target_size, Image.NEAREST)
+    upscaled.save(input_path, format='PNG')
+    print(f"  [IMG] Upscaled {render_size} → {target_size} (nearest-neighbor)")
+    return input_path
+
 
 def _get_pixel_art_model_headers() -> Dict[str, str]:
     """
@@ -254,6 +305,11 @@ BRAND_COLORS = IMAGE_STYLE_CONFIG.get('brand_colors', {})
 STYLE_SUFFIX = IMAGE_STYLE_CONFIG.get('style_suffix', 'Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), isometric perspective, (hard pixel edges:1.2), limited color palette, detailed proportions, flat colors, dramatic lighting')
 COLOR_PALETTE_PROMPT = IMAGE_STYLE_CONFIG.get('color_palette_prompt', '')
 GENERATION_PARAMS = IMAGE_STYLE_CONFIG.get('generation_params', {})
+
+# Render-small-then-upscale for TRUE pixel art (must be after GENERATION_PARAMS)
+RENDER_RESOLUTION = tuple(GENERATION_PARAMS.get('render_resolution', [256, 256]))
+TARGET_RESOLUTION = tuple(GENERATION_PARAMS.get('target_resolution', [1024, 1792]))
+UPSCALE_METHOD = GENERATION_PARAMS.get('upscale_method', 'nearest')
 
 # Phase 5.1: Negative prompt — loaded from config, sent to FAL API
 NEGATIVE_PROMPT = IMAGE_STYLE_CONFIG.get('negative_prompt',
@@ -903,14 +959,16 @@ def generate_pixel_art(
                             lora_config = _select_style_lora(visual_type)
                             arguments = {
                                 **base_args,
+                                "num_inference_steps": MODEL_STEP_CONFIG.get(model, 20),
                                 "loras": [{
                                     "path": lora_config['path'],
-                                    "scale": lora_config['scale']
+                                    "scale": LORA_SCALE
                                 }],
                             }
                         else:
                             arguments = {k: v for k, v in base_args.items()
                                          if k not in ('negative_prompt', 'loras')}
+                            arguments["num_inference_steps"] = MODEL_STEP_CONFIG.get(model, 20)
                     
                     result = fal_client.run(model, arguments=arguments)
                     model_used = model
@@ -934,6 +992,15 @@ def generate_pixel_art(
 
             with open(output_path, "wb") as f:
                 f.write(img_response.content)
+
+            # Upscale with nearest-neighbor for TRUE pixel art
+            try:
+                _upscale_pixel_art(str(output_path))
+            except Exception as upscale_err:
+                print(f"  [IMG] Warning: Upscale failed, using raw output: {upscale_err}")
+
+            # Cache the prompt→image mapping
+            _store_prompt_cache(full_prompt, str(output_path))
 
             return {
                 "success": True,

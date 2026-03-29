@@ -254,10 +254,11 @@ class VisualPromptGenerator:
                 prompt_parts.append(f"({primary_subject}:1.3)")
             else:
                 prompt_parts.append(f"({primary_subject}:1.2)")
-            # Inject top trending terms at position 2 — directly after primary subject
+            # Inject top 1 trending term at position 2 — directly after primary subject
             # Flux weights position 2 tokens highly, making these visually dominant
+            # LIMIT to 1 term per scene to avoid polluting historical/non-aligned scenes
             top_trending_terms = concepts.get('top_trending_terms', [])
-            for term in top_trending_terms:
+            for term in top_trending_terms[:1]:  # Only the TOP trending term
                 if term.lower() not in ', '.join(prompt_parts).lower():
                     prompt_parts.append(f"({term}:1.3)")
             # Add secondary subjects at lower weight
@@ -277,27 +278,43 @@ class VisualPromptGenerator:
             if modifier.lower() not in ', '.join(prompt_parts).lower():
                 prompt_parts.append(modifier)
 
-        # Country-specific equipment (critical for geopolitical accuracy)
-        for equip in equipment:
-            for country in countries:
-                from .military_equipment_db import get_country_specific_variant, get_equipment_markings
-                if validate_country_equipment_combination(country, equip):
-                    variant = get_country_specific_variant(equip, country)
-                    prompt_parts.append(f"({variant}:1.3)")
-                    markings = get_equipment_markings(equip, country)
-                    if markings:
-                        prompt_parts.append(f"({markings}:1.2)")
-        
-        # Required geopolitical visual elements
+        # Historical scenes: use ERA-based injections instead of country-specific
+        # Country injections (e.g. "Persian script", "IRGC") pollute historical scenes
+        is_historical = scene_type in ('historical_1', 'historical_2')
+
+        if is_historical:
+            # Era-based visual terms — give richness without fighting the pixel art style
+            era = template.get('era', '1990s')
+            era_visuals = {
+                '1980s': 'retro technology, CRT displays, analog instruments, cold war aesthetic',
+                '1990s': 'early digital era, vintage military hardware, desert camouflage patterns',
+                '2000s': 'early 2000s technology, transitional military equipment',
+                '2010s': 'modern digital displays, contemporary military hardware',
+            }
+            era_desc = era_visuals.get(era, 'historical era-accurate equipment and settings')
+            prompt_parts.append(f"({era_desc}:1.2)")
+        else:
+            # Country-specific equipment (critical for geopolitical accuracy — modern scenes only)
+            for equip in equipment:
+                for country in countries:
+                    from .military_equipment_db import get_country_specific_variant, get_equipment_markings
+                    if validate_country_equipment_combination(country, equip):
+                        variant = get_country_specific_variant(equip, country)
+                        prompt_parts.append(f"({variant}:1.3)")
+                        markings = get_equipment_markings(equip, country)
+                        if markings:
+                            prompt_parts.append(f"({markings}:1.2)")
+
+            # Country flag colors (modern scenes only)
+            if countries:
+                for country in countries:
+                    country_spec = get_country_visual_spec(country)
+                    if country_spec and 'flag_colors' in country_spec:
+                        prompt_parts.append(f"({country_spec['flag_colors']}:1.2)")
+
+        # Required geopolitical visual elements (all scenes)
         for element in required_elements:
             prompt_parts.append(f"({element}:1.3)")
-        
-        # Country flag colors (lower priority than subject but still important)
-        if countries:
-            for country in countries:
-                country_spec = get_country_visual_spec(country)
-                if country_spec and 'flag_colors' in country_spec:
-                    prompt_parts.append(f"({country_spec['flag_colors']}:1.2)")
         
         # ── 2. ACTION (dynamic verbs — what's happening) ──
         if action and action != 'in dramatic confrontation':
