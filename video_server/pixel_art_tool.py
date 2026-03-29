@@ -962,30 +962,24 @@ def generate_pixel_art(
 
         except Exception as e:
             error_msg = str(e)
-            if "balance" in error_msg.lower() or "locked" in error_msg.lower():
-                print(f"⚠️  FAL.ai account balance exhausted. Using placeholder image.")
-                print(f"   Top up at: https://fal.ai/dashboard/billing")
-                
-                _generate_placeholder(prompt, output_path)
-                return {
-                    "success": True,
-                    "filename": filename,
-                    "path": str(output_path),
-                    "prompt_used": full_prompt,
-                    "visual_type": visual_type,
-                    "source": "placeholder",
-                    "note": "FAL.ai balance exhausted - placeholder generated. Top up at fal.ai/dashboard/billing",
-                    "size": "1024x1792",
-                    "output_directory": str(OUTPUT_DIR),
-                    "geopolitical_validation": final_geo_validation,
-                    "i2i_used": reference_image_url is not None,
-                    "i2i_params": i2i_params
-                }
+            # Always fall back to placeholder on any FAL error
+            print(f"⚠️  FAL.ai generation failed: {error_msg[:120]}")
+            print(f"   Generating placeholder image as fallback.")
             
+            _generate_placeholder(prompt, output_path)
             return {
-                "success": False,
-                "error": f"Fal.ai generation failed: {error_msg}",
-                "fallback_used": False,
+                "success": True,
+                "filename": filename,
+                "path": str(output_path),
+                "prompt_used": full_prompt,
+                "visual_type": visual_type,
+                "source": "placeholder",
+                "note": f"FAL.ai fallback: {error_msg[:80]}",
+                "size": "1024x1792",
+                "output_directory": str(OUTPUT_DIR),
+                "geopolitical_validation": final_geo_validation,
+                "i2i_used": reference_image_url is not None,
+                "i2i_params": i2i_params
             }
 
     else:

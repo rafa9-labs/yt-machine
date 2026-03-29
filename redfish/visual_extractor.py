@@ -65,10 +65,18 @@ class VisualElementExtractor:
         
         # Normalize any military equipment found in primary_subjects
         if validated.get('primary_subjects'):
-            validated['primary_subjects'] = [
-                normalize_equipment(subj) if any(kw in subj.lower() for kw in ['f-', 's-', 'missile', 'tank', 'carrier', 'destroyer', 'drone']) else subj
-                for subj in validated['primary_subjects']
-            ]
+            normalized = []
+            for subj in validated['primary_subjects']:
+                try:
+                    if isinstance(subj, str) and any(kw in subj.lower() for kw in ['f-', 's-', 'missile', 'tank', 'carrier', 'destroyer', 'drone']):
+                        normalized.append(normalize_equipment(subj))
+                    elif isinstance(subj, str):
+                        normalized.append(subj)
+                    else:
+                        normalized.append(str(subj))
+                except (TypeError, AttributeError):
+                    normalized.append(str(subj))
+            validated['primary_subjects'] = normalized
         
         return validated
     
@@ -115,6 +123,28 @@ Include BOTH military AND non-military subjects — economic imagery, civilian i
             if not extracted:
                 # Fallback: parse manually
                 return self._manual_extract(article_text)
+            
+            # Sanitize: ensure all list fields contain only strings, not nested dicts
+            for key in ['primary_subjects', 'settings', 'actions']:
+                raw_list = extracted.get(key, [])
+                if not isinstance(raw_list, list):
+                    raw_list = []
+                sanitized = []
+                for item in raw_list:
+                    if isinstance(item, str):
+                        sanitized.append(item)
+                    elif isinstance(item, dict):
+                        # Flatten dict to a string representation
+                        sanitized.append(str(item.get('name', item.get('text', str(item)))))
+                    else:
+                        sanitized.append(str(item))
+                extracted[key] = sanitized
+            
+            # Ensure mood and temporal_context are strings
+            if not isinstance(extracted.get('mood'), str):
+                extracted['mood'] = 'tense'
+            if not isinstance(extracted.get('temporal_context'), str):
+                extracted['temporal_context'] = ''
             
             return extracted
             
