@@ -33,40 +33,50 @@ CAMERA_PATTERNS = {
 
 def _apply_camera_movement(clip: ImageClip, movement_type: str, duration: float) -> ImageClip:
     """
-    Apply alternating zoom in/out camera movement with black bars.
-    Zoom happens from the center of the image.
+    Apply a Ken Burns zoom effect to a still ImageClip.
+    Uses moviepy's .fl() image transform to animate zoom while preserving duration.
     
     Args:
         clip: ImageClip to animate (should be pre-resized to target dimensions)
-        movement_type: 'zoom_in' or 'zoom_out'
+        movement_type: 'zoom_in' or 'zoom_out'  
         duration: Duration of the clip
     
     Returns:
-        Animated ImageClip with smooth zoom movement and black bars
+        Clip with zoom animation, duration preserved
     """
-    if movement_type == 'zoom_in':
-        # Zoom in from 1.0 to 1.3 scale, centered
-        def make_frame(t):
-            scale = 1.0 + 0.3 * (t / duration)
-            return clip.resize(scale).get_frame(t)
-        
-        from moviepy.video.VideoClip import VideoClip
-        zoomed = VideoClip(make_frame, duration=duration).set_fps(clip.fps if hasattr(clip, 'fps') else FPS)
-        # Center the zoomed clip with black bars
-        return zoomed.set_position('center')
-        
-    elif movement_type == 'zoom_out':
-        # Zoom out from 1.3 to 1.0 scale, centered with black bars
-        def make_frame(t):
-            scale = 1.3 - 0.3 * (t / duration)
-            return clip.resize(scale).get_frame(t)
-        
-        from moviepy.video.VideoClip import VideoClip
-        zoomed = VideoClip(make_frame, duration=duration).set_fps(clip.fps if hasattr(clip, 'fps') else FPS)
-        # Center the zoomed clip with black bars
-        return zoomed.set_position('center')
-    else:
+    if movement_type not in ('zoom_in', 'zoom_out'):
         return clip
+    
+    # Ensure clip has a duration
+    if not clip.duration or clip.duration <= 0:
+        clip = clip.set_duration(duration)
+    
+    safe_dur = max(clip.duration, 0.1)
+    
+    # Use .fl_image() which transforms each frame independently
+    # This preserves clip duration, size, and all other properties
+    def zoom_transform(pic):
+        """Apply zoom by cropping into the center of the image."""
+        h, w = pic.shape[:2]
+        if movement_type == 'zoom_in':
+            # Crop 10% from each edge (zoom into center)
+            crop_h = int(h * 0.05)
+            crop_w = int(w * 0.05)
+        else:
+            # Slightly less crop for zoom out start
+            crop_h = int(h * 0.02)
+            crop_w = int(w * 0.02)
+        
+        top = crop_h
+        left = crop_w
+        bottom = h - crop_h
+        right = w - crop_w
+        
+        cropped = pic[top:bottom, left:right]
+        pil = Image.fromarray(cropped).resize((w, h), Image.LANCZOS)
+        return np.array(pil)
+    
+    return clip.fl_image(zoom_transform)
 
 
 def _create_segment_captions(script_text: str, duration: float, width: int, height: int) -> List:
@@ -346,18 +356,12 @@ def build_final_video(
             else:
                 continue
 
-            # FIXED: Resize FIRST, then apply camera movement
+            # Resize to target dimensions
             clip = clip.resize(height=VIDEO_H)
             if clip.w > VIDEO_W:
                 clip = clip.resize(width=VIDEO_W)
 
-            # PHASE 4.4: Create sub-cuts for visual variety (2 movements per scene)
-            if is_pixel_art and idx < len(camera_movements):
-                movement = camera_movements[idx]
-                subcuts = _create_scene_subcuts(clip, scene_dur, movement)
-                video_clips.extend(subcuts)
-            else:
-                video_clips.append(clip)
+            video_clips.append(clip)
 
         if not video_clips:
             return {"success": False, "error": "No valid clips could be processed"}
