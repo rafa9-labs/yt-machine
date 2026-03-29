@@ -14,6 +14,26 @@ load_dotenv()
 print("🎬 YT-MACHINE COMPLETE VIDEO GENERATION")
 print("="*60)
 
+
+def _extract_segment_text(segment_data) -> str:
+    """
+    Extract plain text from a script segment that may be a string or dict.
+    The LLM returns segments in various formats:
+      - str: "Seven US military bases..."
+      - dict with 'text': {"text": "Seven US military bases..."}
+      - dict with 'narration': {"narration": "Seven US military bases..."}
+      - dict with 'content': {"content": "Seven US military bases..."}
+    """
+    if isinstance(segment_data, str):
+        return segment_data
+    if isinstance(segment_data, dict):
+        return (segment_data.get('narration')
+                or segment_data.get('text')
+                or segment_data.get('content')
+                or str(segment_data))
+    return str(segment_data) if segment_data else ''
+
+
 # Import core components
 from brain.llm_interface import LLMInterface
 from video_server.pixel_art_tool import generate_pixel_art
@@ -206,7 +226,7 @@ try:
             segment_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
         
         for seg in segment_names:
-            text = script.get(seg, '')
+            text = _extract_segment_text(script.get(seg, ''))
             if text:
                 segments.append(text)
         script['full_text'] = ' '.join(segments)
@@ -214,12 +234,12 @@ try:
     full_script = script['full_text']
     
     # Calculate word count if missing
-    if 'word_count' not in script:
-        script['word_count'] = len(full_script.split())
-        script['estimated_duration'] = int(len(full_script.split()) / 2.5)
+    # Always recalculate — LLM often returns inaccurate word counts
+    script['word_count'] = len(full_script.split())
+    script['estimated_duration'] = int(len(full_script.split()) / 2.5)
     
     print(f"✅ Script synthesized (~{script.get('estimated_duration', 0)}s)")
-    print(f"  Hook: {script.get('hook', 'N/A')[:80]}...")
+    print(f"  Hook: {_extract_segment_text(script.get('hook', 'N/A'))[:80]}...")
     print(f"  Words: {script.get('word_count', 0)}")
     
     # Save script files for debugging
@@ -287,12 +307,8 @@ try:
         # Get prompt (already generated from script)
         prompt = scene_prompts[scene_name]
         
-        # Show script segment preview
-        segment_data = script.get(scene_name, '')
-        if isinstance(segment_data, dict):
-            segment_text = segment_data.get('text', segment_data.get('content', str(segment_data)))
-        else:
-            segment_text = str(segment_data) if segment_data else ''
+        # Show script segment preview — use robust extraction
+        segment_text = _extract_segment_text(script.get(scene_name, ''))
         segment_preview = segment_text[:100]
         print(f"    Script: {segment_preview}...")
         
@@ -300,12 +316,17 @@ try:
         relevance = calculate_prompt_relevance(prompt, segment_text)
         print(f"    Script relevance: {relevance}%")
         
-        # If relevance too low, regenerate with strict constraints
-        if relevance < 30:
-            print(f"    ⚠️  Low script relevance, regenerating...")
-            prompt = prompt_generator.regenerate_strict(scene_name)
-            relevance = calculate_prompt_relevance(prompt, segment_text)
-            print(f"    New relevance: {relevance}%")
+        # If relevance too low, try regeneration — but keep original if regeneration is worse
+        if relevance < 20:
+            print(f"    ⚠️  Very low script relevance ({relevance}%), regenerating...")
+            new_prompt = prompt_generator.regenerate_strict(scene_name)
+            new_relevance = calculate_prompt_relevance(new_prompt, segment_text)
+            print(f"    New relevance: {new_relevance}%")
+            if new_relevance > relevance:
+                prompt = new_prompt
+                relevance = new_relevance
+            else:
+                print(f"    Keeping original prompt (regeneration was worse)")
         
         # Show prompt preview
         print(f"    Prompt: {prompt[:120]}...")

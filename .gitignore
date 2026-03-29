@@ -19,14 +19,20 @@ ENV/
 .env
 .env.*
 
-# Output binaries (large files - use Git LFS if needed)
-output/audio/*.mp3
-output/footage/*.mp4
-output/videos/*.mp4
-output/_tmp/
-output/assembly/
-output/images/
-output/projects/
+# Output (generated videos, images, audio, manifests)
+output/
+
+# Training data & ML cache
+training_data/
+.accelerate/
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+
+# Python cache
+*.pyc
+__pycache__/
 
 # IDE
 .vscode/

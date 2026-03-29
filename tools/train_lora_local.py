@@ -47,7 +47,7 @@ DEFAULT_STEPS = 1200
 DEFAULT_RANK = 16          # LoRA rank — higher = more expressive, more VRAM
 DEFAULT_LR = 1e-4
 DEFAULT_BATCH = 1          # 1 image per step — safe for 24GB with Flux
-DEFAULT_GRAD_ACCUM = 4     # Effective batch = 4
+DEFAULT_GRAD_ACCUM = 1     # No accumulation — each step is one forward/backward (faster, visible progress)
 SAVE_EVERY = 400           # Save checkpoint every N steps
 VALIDATE_EVERY = 200       # Generate validation image every N steps
 MAX_GRAD_NORM = 1.0
@@ -56,10 +56,13 @@ MIXED_PRECISION = "bf16"   # RTX 3090 supports bf16 natively
 
 # ── Dataset ────────────────────────────────────────────────────────────────
 
-def _build_dataset(data_dir: Path, tokenizer, tokenizer_2, image_size: int = 768):
+def _build_dataset(data_dir: Path, precomputed_embeds: dict, image_size: int = 256):
     """
-    Build a PyTorch dataset from image/caption pairs in data_dir.
-    Expects: image_001.png + image_001.txt, image_002.png + image_002.txt, ...
+    Build a PyTorch dataset from image/caption pairs + pre-computed text embeddings.
+    Pre-computing embeddings allows us to delete text encoders before loading the transformer,
+    freeing ~10GB VRAM (T5-XXL) so the 23.8GB FLUX transformer fits in 24GB.
+
+    precomputed_embeds: dict mapping img_path.stem → {pooled_embeds, prompt_embeds}
     """
     import torch
     from torch.utils.data import Dataset
@@ -67,26 +70,21 @@ def _build_dataset(data_dir: Path, tokenizer, tokenizer_2, image_size: int = 768
     from PIL import Image
 
     class StyleDataset(Dataset):
-        def __init__(self, data_dir: Path, tokenizer, tokenizer_2, size: int):
+        def __init__(self, data_dir: Path, embeds: dict, size: int):
             self.pairs = []
             for img_path in sorted(data_dir.glob("*.png")):
-                txt_path = img_path.with_suffix(".txt")
-                if txt_path.exists():
-                    caption = txt_path.read_text(encoding="utf-8").strip()
-                    # Prepend trigger word to every caption
-                    full_caption = f"{TRIGGER_WORD}, {caption}"
-                    self.pairs.append((img_path, full_caption))
+                stem = img_path.stem
+                if stem in embeds:
+                    self.pairs.append((img_path, stem))
 
             if not self.pairs:
-                raise ValueError(f"No image/caption pairs found in {data_dir}. "
-                                 f"Expected image_NNN.png + image_NNN.txt pairs.")
+                raise ValueError(f"No image/embedding pairs found in {data_dir}.")
 
-            self.tokenizer = tokenizer
-            self.tokenizer_2 = tokenizer_2
+            self.embeds = embeds
             self.transform = transforms.Compose([
                 transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
                 transforms.CenterCrop(size),
-                transforms.RandomHorizontalFlip(p=0.1),  # Minimal flip — preserve directionality
+                transforms.RandomHorizontalFlip(p=0.1),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
             ])
@@ -95,33 +93,86 @@ def _build_dataset(data_dir: Path, tokenizer, tokenizer_2, image_size: int = 768
             return len(self.pairs)
 
         def __getitem__(self, idx):
-            img_path, caption = self.pairs[idx]
+            img_path, stem = self.pairs[idx]
             image = Image.open(img_path).convert("RGB")
             pixel_values = self.transform(image)
-
-            # Tokenize with both CLIP tokenizers (Flux uses dual encoder)
-            tokens_1 = self.tokenizer(
-                caption,
-                padding="max_length",
-                max_length=self.tokenizer.model_max_length,
-                truncation=True,
-                return_tensors="pt",
-            )
-            tokens_2 = self.tokenizer_2(
-                caption,
-                padding="max_length",
-                max_length=self.tokenizer_2.model_max_length,
-                truncation=True,
-                return_tensors="pt",
-            )
             return {
                 "pixel_values": pixel_values,
-                "input_ids": tokens_1.input_ids.squeeze(0),
-                "input_ids_2": tokens_2.input_ids.squeeze(0),
-                "caption": caption,
+                "pooled_embeds": self.embeds[stem]["pooled"],    # (768,)
+                "prompt_embeds": self.embeds[stem]["sequence"],  # (seq, 4096)
             }
 
-    return StyleDataset(data_dir, tokenizer, tokenizer_2, image_size)
+    return StyleDataset(data_dir, precomputed_embeds, image_size)
+
+
+def _precompute_embeddings(data_dir: Path, hf_token: Optional[str]) -> dict:
+    """
+    Load CLIP + T5 on GPU, encode all captions (fast), then DELETE from GPU.
+    Returns dict: stem → {pooled: cpu tensor(768,), sequence: cpu tensor(seq, 4096)}
+
+    Strategy: GPU encoding takes seconds. Deleting text encoders before loading the
+    23.8GB FLUX transformer is critical — T5-XXL alone is ~9.5GB.
+    """
+    import torch
+    import gc
+    from transformers import CLIPTokenizer, CLIPTextModel, T5TokenizerFast, T5EncoderModel
+
+    T5_MAX_LENGTH = 128  # Sufficient for style captions; reduces attention sequence length
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("  Pre-computing text embeddings on GPU (fast), then freeing VRAM for transformer...")
+
+    clip_tokenizer = CLIPTokenizer.from_pretrained(BASE_MODEL, subfolder="tokenizer", token=hf_token)
+    clip_model = CLIPTextModel.from_pretrained(
+        BASE_MODEL, subfolder="text_encoder", token=hf_token, torch_dtype=torch.float16
+    ).to(device)
+    clip_model.eval()
+
+    t5_tokenizer = T5TokenizerFast.from_pretrained(BASE_MODEL, subfolder="tokenizer_2", token=hf_token)
+    t5_model = T5EncoderModel.from_pretrained(
+        BASE_MODEL, subfolder="text_encoder_2", token=hf_token, torch_dtype=torch.float16
+    ).to(device)
+    t5_model.eval()
+
+    embeddings = {}
+    img_paths = sorted(data_dir.glob("*.png"))
+    print(f"  Encoding {len(img_paths)} captions on GPU...")
+
+    with torch.no_grad():
+        for img_path in img_paths:
+            txt_path = img_path.with_suffix(".txt")
+            if not txt_path.exists():
+                continue
+            caption = txt_path.read_text(encoding="utf-8").strip()
+            full_caption = f"{TRIGGER_WORD}, {caption}"
+
+            # CLIP → pooled scalar embedding (768,) — store on CPU
+            clip_tokens = clip_tokenizer(
+                full_caption, padding="max_length",
+                max_length=clip_tokenizer.model_max_length,
+                truncation=True, return_tensors="pt",
+            ).to(device)
+            clip_out = clip_model(**clip_tokens)
+            pooled = clip_out.pooler_output.squeeze(0).float().cpu()  # (768,) on CPU
+
+            # T5 → sequence embedding (seq, 4096) — store on CPU
+            t5_tokens = t5_tokenizer(
+                full_caption, padding="max_length",
+                max_length=T5_MAX_LENGTH,
+                truncation=True, return_tensors="pt",
+            ).to(device)
+            t5_out = t5_model(**t5_tokens)
+            sequence = t5_out.last_hidden_state.squeeze(0).float().cpu()  # (128, 4096) on CPU
+
+            embeddings[img_path.stem] = {"pooled": pooled, "sequence": sequence}
+
+    # ── CRITICAL: delete text encoders and flush VRAM before loading transformer ──
+    del clip_model, t5_model, clip_tokenizer, t5_tokenizer
+    gc.collect()
+    torch.cuda.empty_cache()
+    vram_free = torch.cuda.mem_get_info()[0] / 1e9
+    print(f"  ✓ Encoded {len(embeddings)} captions — VRAM freed ({vram_free:.1f} GB available)")
+    return embeddings
 
 
 # ── LoRA setup ─────────────────────────────────────────────────────────────
@@ -166,13 +217,11 @@ def train(
 ):
     """Main training function."""
     import torch
+    import gc
     from torch.utils.data import DataLoader
-    from transformers import CLIPTokenizer, T5TokenizerFast
     from diffusers import FluxTransformer2DModel, AutoencoderKL, FlowMatchEulerDiscreteScheduler
-    from diffusers.training_utils import compute_snr
     from accelerate import Accelerator
     from accelerate.utils import ProjectConfiguration
-    from safetensors.torch import save_file
 
     print("=" * 65)
     print("  FLUX LORA LOCAL TRAINING")
@@ -190,6 +239,13 @@ def train(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── PHASE 1: Pre-compute all text embeddings on CPU ───────────────────
+    # T5-XXL is ~9.5GB. By encoding everything upfront on CPU and then
+    # deleting the models, we free that memory before loading the
+    # 23.8GB FLUX transformer on GPU.
+    precomputed = _precompute_embeddings(data_dir, hf_token)
+    gc.collect()
+
     # ── Accelerator ──────────────────────────────────────────────────────
     project_cfg = ProjectConfiguration(project_dir=str(output_dir), logging_dir=str(output_dir / "logs"))
     accelerator = Accelerator(
@@ -203,61 +259,42 @@ def train(
     print(f"  VRAM available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     print()
 
-    # ── Load tokenizers (lightweight — no GPU needed) ────────────────────
-    print("  Loading tokenizers...")
-    tokenizer = CLIPTokenizer.from_pretrained(
-        BASE_MODEL, subfolder="tokenizer", token=hf_token
-    )
-    tokenizer_2 = T5TokenizerFast.from_pretrained(
-        BASE_MODEL, subfolder="tokenizer_2", token=hf_token
-    )
-
     # ── Dataset & DataLoader ─────────────────────────────────────────────
     print("  Building dataset...")
-    dataset = _build_dataset(data_dir, tokenizer, tokenizer_2)
+    dataset = _build_dataset(data_dir, precomputed)
     print(f"  Found {len(dataset)} image/caption pairs")
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=2,
-        pin_memory=True,
+        num_workers=0,  # Windows multiprocessing fix
+        pin_memory=False,
         drop_last=True,
     )
 
-    # ── Load VAE (fp16 — frozen, inference only) ──────────────────────────
+    # ── PHASE 2: Load VAE on GPU (only ~300MB, safe) ──────────────────────
     print("  Loading VAE...")
     vae = AutoencoderKL.from_pretrained(
         BASE_MODEL, subfolder="vae", token=hf_token, torch_dtype=torch.float16
     ).to(device)
     vae.requires_grad_(False)
 
-    # ── Load text encoders (frozen) ───────────────────────────────────────
-    print("  Loading text encoders...")
-    from transformers import CLIPTextModel, T5EncoderModel
-    text_encoder = CLIPTextModel.from_pretrained(
-        BASE_MODEL, subfolder="text_encoder", token=hf_token, torch_dtype=torch.float16
-    ).to(device)
-    text_encoder.requires_grad_(False)
-
-    text_encoder_2 = T5EncoderModel.from_pretrained(
-        BASE_MODEL, subfolder="text_encoder_2", token=hf_token, torch_dtype=torch.float16
-    ).to(device)
-    text_encoder_2.requires_grad_(False)
-
-    # ── Load transformer (trainable) ──────────────────────────────────────
-    print("  Loading Flux transformer...")
+    # ── Load transformer with gradient checkpointing ───────────────────────
+    # Gradient checkpointing trades compute for memory:
+    # recomputes activations during backward instead of storing them.
+    print("  Loading Flux transformer (gradient checkpointing enabled)...")
     transformer = FluxTransformer2DModel.from_pretrained(
         BASE_MODEL, subfolder="transformer", token=hf_token, torch_dtype=torch.bfloat16
     )
     transformer.requires_grad_(False)
+    transformer.enable_gradient_checkpointing()
 
     # ── Apply LoRA ────────────────────────────────────────────────────────
     print(f"  Applying LoRA (rank={rank}, alpha={rank * 2})...")
     transformer = _apply_lora(transformer, rank=rank, alpha=rank * 2)
     transformer = transformer.to(device)
 
-    # ── Scheduler ─────────────────────────────────────────────────────────
+    # ── Scheduler (CPU only — no VRAM needed) ─────────────────────────────
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
         BASE_MODEL, subfolder="scheduler", token=hf_token
     )
@@ -313,48 +350,49 @@ def train(
                 latents = vae.encode(pixel_values).latent_dist.sample()
                 latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
 
-            # Encode text
-            with torch.no_grad():
-                enc_out_1 = text_encoder(
-                    batch["input_ids"].to(device),
-                    output_hidden_states=False,
-                )
-                prompt_embeds = enc_out_1.last_hidden_state.to(dtype=torch.bfloat16)
+            # Use pre-computed embeddings (text encoders already deleted)
+            pooled_embeds = batch["pooled_embeds"].to(device, dtype=torch.bfloat16)  # (B, 768)
+            prompt_embeds = batch["prompt_embeds"].to(device, dtype=torch.bfloat16)  # (B, seq, 4096)
 
-                enc_out_2 = text_encoder_2(
-                    batch["input_ids_2"].to(device),
-                    output_hidden_states=False,
-                )
-                pooled_embeds = enc_out_2.last_hidden_state.mean(dim=1).to(dtype=torch.bfloat16)
+            # Fix 6: Normalize timesteps to [0,1]; transformer multiplies by 1000 internally
+            t = torch.rand((latents.shape[0],), device=device, dtype=torch.bfloat16)
 
-            # Sample random timestep
-            timesteps = torch.randint(
-                0, scheduler.config.num_train_timesteps,
-                (latents.shape[0],), device=device,
-            ).long()
-
-            # Add flow matching noise
+            # Fix — Flow matching noise interpolation: x_t = (1-t)*x_0 + t*noise
             noise = torch.randn_like(latents, dtype=torch.bfloat16)
-            noisy_latents = scheduler.scale_noise(latents.to(dtype=torch.bfloat16), timesteps, noise)
+            latents_bf16 = latents.to(dtype=torch.bfloat16)
+            t_expand = t[:, None, None, None]
+            noisy_latents = (1.0 - t_expand) * latents_bf16 + t_expand * noise
 
-            # Prepare image ids (required by Flux)
+            # Fix 1: Pack latents (B,16,H,W) → (B, H/2*W/2, 64) for Flux x_embedder
+            packed_noisy = _pack_latents(noisy_latents)
+
+            # Fix 4 & 5: txt_ids (2D) and img_ids (2D)
             h, w = latents.shape[2], latents.shape[3]
-            image_ids = _prepare_image_ids(latents.shape[0], h // 2, w // 2, device)
+            img_ids = _prepare_image_ids(h // 2, w // 2, device)             # (H/2*W/2, 3)
+            txt_ids = torch.zeros(prompt_embeds.shape[1], 3, device=device)  # (seq_len, 3)
 
-            # Forward pass
+            # Fix 2: guidance tensor — required for FLUX.1-dev (guidance_embeds=True)
+            guidance = torch.full(
+                (latents.shape[0],), 3.5, device=device, dtype=torch.bfloat16
+            )
+
+            # Forward pass — all 6 fixes applied
             model_pred = transformer(
-                hidden_states=noisy_latents,
+                hidden_states=packed_noisy,
                 encoder_hidden_states=prompt_embeds,
                 pooled_projections=pooled_embeds,
-                timestep=timesteps,
-                img_ids=image_ids,
+                timestep=t,                 # normalized 0-1
+                guidance=guidance,          # Fix 2
+                txt_ids=txt_ids,            # Fix 4
+                img_ids=img_ids,            # Fix 5
                 return_dict=False,
             )[0]
 
-            # Flow matching loss (predict velocity field)
-            target = noise - latents.to(dtype=torch.bfloat16)
+            # Flow matching loss — pack target to match model_pred shape (B, seq, 64)
+            velocity_target = noise - latents_bf16                          # (B,16,H,W)
+            packed_target = _pack_latents(velocity_target)                  # (B, seq, 64)
             loss = torch.nn.functional.mse_loss(
-                model_pred.float(), target.float(), reduction="mean"
+                model_pred.float(), packed_target.float(), reduction="mean"
             )
 
             accelerator.backward(loss)
@@ -372,9 +410,9 @@ def train(
             avg_loss = sum(losses[-50:]) / len(losses[-50:])
             current_lr = optimizer.param_groups[0]["lr"]
 
-            if global_step % 50 == 0 or global_step == 1:
-                print(f"  Step {global_step:4d}/{steps}  "
-                      f"loss={avg_loss:.4f}  lr={current_lr:.2e}")
+            # Print progress every step for first 10 steps, then every 50
+            if global_step < 10 or global_step % 50 == 0:
+                print(f"  Step {global_step:4d}/{steps}  loss={avg_loss:.4f}  lr={current_lr:.2e}")
 
             # Save checkpoint
             if global_step % SAVE_EVERY == 0 or global_step == steps:
@@ -415,15 +453,25 @@ def train(
     print("=" * 65)
 
 
-def _prepare_image_ids(batch_size: int, height: int, width: int, device):
-    """Prepare image position IDs required by Flux's attention mechanism."""
+def _prepare_image_ids(height: int, width: int, device):
+    """Prepare 2D image position IDs for Flux RoPE. Returns (H*W, 3)."""
     import torch
     ids = torch.zeros(height, width, 3, device=device)
     ids[..., 1] = ids[..., 1] + torch.arange(height, device=device)[:, None]
     ids[..., 2] = ids[..., 2] + torch.arange(width, device=device)[None, :]
-    ids = ids.reshape(-1, 3)
-    ids = ids.unsqueeze(0).repeat(batch_size, 1, 1)
+    ids = ids.reshape(-1, 3)  # (H*W, 3) — 2D, no batch dim
     return ids
+
+
+def _pack_latents(latents, patch_size: int = 2):
+    """Patchify VAE latents for Flux transformer input.
+    (B, C, H, W) → (B, H/p * W/p, C*p*p)  where p=2 → (B, seq, 64)
+    """
+    B, C, H, W = latents.shape
+    latents = latents.reshape(B, C, H // patch_size, patch_size, W // patch_size, patch_size)
+    latents = latents.permute(0, 2, 4, 1, 3, 5)
+    latents = latents.reshape(B, (H // patch_size) * (W // patch_size), C * patch_size * patch_size)
+    return latents
 
 
 def _save_lora(accelerator, transformer, output_dir: Path, step: int, final: bool = False):

@@ -95,9 +95,14 @@ class VisualPromptGenerator:
         if self.script:
             for segment_name in self._get_segment_names():
                 segment_data = self.script.get(segment_name, '')
-                # Handle both string and dict formats from LLM
-                if isinstance(segment_data, dict):
-                    segment_text = segment_data.get('text', segment_data.get('content', str(segment_data)))
+                # Handle string, dict with 'narration'/'text'/'content', or other formats
+                if isinstance(segment_data, str):
+                    segment_text = segment_data
+                elif isinstance(segment_data, dict):
+                    segment_text = (segment_data.get('narration')
+                                    or segment_data.get('text')
+                                    or segment_data.get('content')
+                                    or str(segment_data))
                 else:
                     segment_text = str(segment_data) if segment_data else ''
                 if segment_text:
