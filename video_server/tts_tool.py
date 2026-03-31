@@ -332,29 +332,80 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
 
 def _get_word_timestamps_sync(text: str, voice: str, voice_params: dict) -> list:
     """
-    Synchronously extract word-level timestamps from edge-tts.
+    Extract word-level timestamps from edge-tts.
+    Edge-tts 7.x only provides SentenceBoundary events, so we:
+    1. Capture sentence boundaries with timing
+    2. Split each sentence into words
+    3. Distribute word timing proportionally within the sentence
     Returns list of {'word': str, 'start': float, 'end': float}.
     """
     try:
-        async def _fetch():
+        async def _fetch_sentences():
             communicate = edge_tts.Communicate(
                 text, voice,
                 rate=voice_params.get("rate", "+0%"),
                 pitch=voice_params.get("pitch", "+0Hz"),
             )
-            boundaries = []
+            sentences = []
             async for chunk in communicate.stream():
-                if chunk["type"] == "WordBoundary":
-                    boundaries.append({
-                        'word': chunk.get('text', '').strip(),
-                        'start': chunk.get('offset', 0) / 1_000_000,
-                        'end': (chunk.get('offset', 0) + chunk.get('duration', 0)) / 1_000_000,
+                if chunk["type"] == "SentenceBoundary":
+                    sentences.append({
+                        'text': chunk.get('text', '').strip(),
+                        'start': chunk.get('offset', 0) / 10_000_000,
+                        'end': (chunk.get('offset', 0) + chunk.get('duration', 0)) / 10_000_000,
                     })
-            return boundaries
-        result = asyncio.run(_fetch())
-        if result:
-            print(f"  [TTS] Word timestamps: {len(result)} words extracted")
-        return result
+            return sentences
+
+        sentence_boundaries = asyncio.run(_fetch_sentences())
+
+        if not sentence_boundaries:
+            print(f"  [TTS] No sentence boundaries returned, estimating from text")
+            return _estimate_word_timestamps(text)
+
+        # Distribute words proportionally within each sentence
+        word_timestamps = []
+        for sent in sentence_boundaries:
+            words = sent['text'].split()
+            if not words:
+                continue
+            sent_start = sent['start']
+            sent_dur = sent['end'] - sent['start']
+            total_chars = sum(len(w) for w in words)
+            if total_chars == 0:
+                total_chars = 1
+
+            current_time = sent_start
+            for word in words:
+                word_share = len(word) / total_chars
+                word_dur = sent_dur * word_share
+                word_timestamps.append({
+                    'word': word,
+                    'start': round(current_time, 4),
+                    'end': round(current_time + word_dur, 4),
+                })
+                current_time += word_dur
+                # Add small gap for space between words
+                gap = sent_dur * 0.02  # 2% of sentence duration for spacing
+                current_time += gap
+
+        if word_timestamps:
+            print(f"  [TTS] Subtitle timestamps: {len(sentence_boundaries)} sentences → {len(word_timestamps)} words")
+        return word_timestamps
+
     except Exception as e:
-        print(f"  [TTS] Word timestamp extraction skipped: {e}")
-        return []
+        print(f"  [TTS] Timestamp extraction failed: {e}")
+        return _estimate_word_timestamps(text)
+
+
+def _estimate_word_timestamps(text: str, words_per_sec: float = 2.5) -> list:
+    """
+    Fallback: estimate word timestamps from text length.
+    Used when edge-tts boundary data is unavailable.
+    """
+    words = text.split()
+    timestamps = []
+    for i, word in enumerate(words):
+        start = i / words_per_sec
+        end = (i + 1) / words_per_sec
+        timestamps.append({'word': word, 'start': start, 'end': end})
+    return timestamps
