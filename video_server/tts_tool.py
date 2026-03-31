@@ -262,6 +262,9 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
         word_count = len(text.split())
         estimated_duration = word_count / 2.5
 
+        # Save word timestamps for subtitle sync
+        word_timestamps = _get_word_timestamps_sync(clean_text, voice, voice_params)
+
         return {
             "success": True,
             "filename": filename,
@@ -273,7 +276,8 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
             "file_size_bytes": file_size,
             "estimated_duration_seconds": round(estimated_duration, 2),
             "audio_mastered": mastered,
-            "output_directory": str(OUTPUT_DIR)
+            "output_directory": str(OUTPUT_DIR),
+            "word_timestamps": word_timestamps,
         }
     
     except Exception as e:
@@ -324,3 +328,33 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
                 "voice": voice,
                 "voice_tone": voice_tone
             }
+
+
+def _get_word_timestamps_sync(text: str, voice: str, voice_params: dict) -> list:
+    """
+    Synchronously extract word-level timestamps from edge-tts.
+    Returns list of {'word': str, 'start': float, 'end': float}.
+    """
+    try:
+        async def _fetch():
+            communicate = edge_tts.Communicate(
+                text, voice,
+                rate=voice_params.get("rate", "+0%"),
+                pitch=voice_params.get("pitch", "+0Hz"),
+            )
+            boundaries = []
+            async for chunk in communicate.stream():
+                if chunk["type"] == "WordBoundary":
+                    boundaries.append({
+                        'word': chunk.get('text', '').strip(),
+                        'start': chunk.get('offset', 0) / 1_000_000,
+                        'end': (chunk.get('offset', 0) + chunk.get('duration', 0)) / 1_000_000,
+                    })
+            return boundaries
+        result = asyncio.run(_fetch())
+        if result:
+            print(f"  [TTS] Word timestamps: {len(result)} words extracted")
+        return result
+    except Exception as e:
+        print(f"  [TTS] Word timestamp extraction skipped: {e}")
+        return []
