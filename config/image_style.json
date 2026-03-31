@@ -63,6 +63,15 @@
       "additional_prompts": ""
     }
   },
+  "split_layout": {
+    "width": 1080,
+    "height": 1920,
+    "top_height": 960,
+    "bottom_height": 960,
+    "subtitle_band_height": 80,
+    "fps": 30,
+    "avatar_path": "assets/avatar/avatar_loop.mp4"
+  },
 
   "scene_composition": {
     "hook": {
