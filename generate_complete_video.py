@@ -39,7 +39,7 @@ from brain.llm_interface import LLMInterface
 from video_server.pixel_art_tool import generate_pixel_art
 from video_server.pexels_tool import fetch_vertical_footage
 from video_server.tts_tool import generate_voiceover
-from video_server.assembler_tool import build_final_video
+from video_server.split_video_assembler import build_split_video
 
 # Initialize components
 llm = LLMInterface()
@@ -400,47 +400,30 @@ if not voice_file or not generated_images:
     exit(1)
 
 try:
-    print("Assembling final video...")
-    
-    # Create ticker headlines
-    ticker_headlines = [
-        news_analysis.get('topic', 'BREAKING NEWS')[:50],
-        f"Impact Score: {news_analysis.get('impact_score', 0)}/10",
-        "SENTINEL v2.1 | TACTICAL BRIEFING"
-    ]
+    print("Assembling split-screen video...")
     
     video_filename = f"video_{project_id}.mp4"
+    video_output_path = str(project_folder / video_filename)
     
-    # Extract era tags from script visual_scenes if available
-    era_tags = []
-    if script and 'visual_scenes' in script:
-        for scene in script['visual_scenes']:
-            era_tags.append(scene.get('era', '2020s'))
+    # Get word timestamps from TTS result (for subtitle sync)
+    word_timestamps = tts_result.get('word_timestamps', [])
     
-    assembly_result = build_final_video(
+    assembly_result = build_split_video(
         audio_path=voice_file,
-        asset_paths=generated_images,
-        ticker_headlines=ticker_headlines,
-        is_pixel_art=True,
-        output_filename=video_filename,
+        image_paths=generated_images,
+        output_path=video_output_path,
         script_text=full_script,
-        era_tags=era_tags if era_tags else None
+        word_timestamps=word_timestamps,
     )
     
     if assembly_result.get('success'):
-        # Move final video to project folder
-        src_video = Path(assembly_result.get('path'))
-        dst_video = project_folder / video_filename
+        final_video_path = assembly_result.get('path')
         
-        import shutil
-        shutil.copy2(src_video, dst_video)
-        
-        print(f"✅ VIDEO CREATED: {dst_video}")
+        print(f"✅ VIDEO CREATED: {final_video_path}")
         print(f"  Duration: {assembly_result.get('duration_seconds')}s")
         print(f"  Size: {assembly_result.get('file_size_mb')}MB")
+        print(f"  Resolution: {assembly_result.get('resolution')}")
         print(f"  Effects: {', '.join(assembly_result.get('effects_applied', []))}")
-        
-        final_video_path = str(dst_video)
     else:
         print(f"❌ Video assembly failed: {assembly_result.get('error')}")
         final_video_path = None
