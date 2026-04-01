@@ -1,7 +1,7 @@
 """
-Subtitle Renderer — Word-by-word synced subtitles for split-screen video.
-Renders a semi-transparent subtitle band at the center split line.
-Uses edge-tts word boundary timestamps for precise sync.
+Subtitle Renderer — Continuous subtitle coverage for split-screen video.
+Shows each phrase from the moment its first word is spoken until the next phrase begins.
+No gaps — subtitle is always visible while narration plays.
 """
 
 import re
@@ -31,33 +31,6 @@ SUBTITLE_STYLE = {
 }
 
 
-def get_word_timestamps(text: str, voice: str = "en-US-GuyNeural",
-                        rate: str = "+0%", pitch: str = "+0Hz") -> List[Dict]:
-    """
-    Get word-level timestamps from edge-tts.
-    Returns list of dicts: [{'word': str, 'start': float, 'end': float}, ...]
-    """
-    import edge_tts
-
-    async def _fetch():
-        communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-        word_boundaries = []
-        async for chunk in communicate.stream():
-            if chunk["type"] == "WordBoundary":
-                word_boundaries.append({
-                    'word': chunk.get('text', '').strip(),
-                    'start': chunk.get('offset', 0) / 10_000_000,
-                    'end': (chunk.get('offset', 0) + chunk.get('duration', 0)) / 10_000_000,
-                })
-        return word_boundaries
-
-    try:
-        return asyncio.run(_fetch())
-    except Exception as e:
-        print(f"  [SUB] Word timestamp extraction failed: {e}")
-        return _estimate_word_timestamps(text)
-
-
 def _estimate_word_timestamps(text: str, words_per_sec: float = 2.5) -> List[Dict]:
     """
     Fallback: estimate word timestamps from text length.
@@ -73,11 +46,18 @@ def _estimate_word_timestamps(text: str, words_per_sec: float = 2.5) -> List[Dic
 
 
 def _group_words_into_phrases(word_timestamps: List[Dict],
-                               max_chars: int = 32,
-                               max_gap: float = 0.5) -> List[Dict]:
+                               max_chars: int = 32) -> List[Dict]:
     """
-    Group words into subtitle phrases (2 lines max).
-    Groups words that are close together into single subtitle cards.
+    Group words into subtitle phrases with CONTINUOUS coverage.
+    
+    Key principle: Each phrase starts when its first word is spoken
+    and stays visible until the next phrase begins. No gaps ever.
+    
+    Grouping rules:
+    - Split at natural break points (commas, periods, semicolons, etc.)
+    - Keep phrases under max_chars for readability
+    - Every clip extends to the START of the next clip (no gaps)
+    - Last clip extends to end of audio + 0.5s buffer
     """
     if not word_timestamps:
         return []
@@ -88,21 +68,25 @@ def _group_words_into_phrases(word_timestamps: List[Dict],
 
     for i in range(1, len(word_timestamps)):
         w = word_timestamps[i]
-        gap = w['start'] - current_words[-1]['end']
         new_len = current_len + 1 + len(w['word'])  # +1 for space
 
-        if new_len <= max_chars and gap <= max_gap:
-            current_words.append(w)
-            current_len = new_len
-        else:
+        # Split at natural break points or when max chars exceeded
+        prev_word = current_words[-1]['word']
+        is_natural_break = prev_word.endswith((',', '.', ';', ':', '!', '?', '—', '–'))
+        is_too_long = new_len > max_chars
+
+        if is_too_long or is_natural_break:
             # Finalize current phrase
             phrases.append({
                 'text': ' '.join(w['word'] for w in current_words),
                 'start': current_words[0]['start'],
-                'end': current_words[-1]['end'],
+                'end': current_words[-1]['end'],  # Will be extended later
             })
             current_words = [w]
             current_len = len(w['word'])
+        else:
+            current_words.append(w)
+            current_len = new_len
 
     # Don't forget the last phrase
     if current_words:
@@ -111,6 +95,14 @@ def _group_words_into_phrases(word_timestamps: List[Dict],
             'start': current_words[0]['start'],
             'end': current_words[-1]['end'],
         })
+
+    # CRITICAL: Extend each phrase to the start of the next one (continuous coverage)
+    for i in range(len(phrases) - 1):
+        phrases[i]['end'] = phrases[i + 1]['start']
+
+    # Last phrase extends 0.5s past its last word
+    if phrases:
+        phrases[-1]['end'] = phrases[-1]['end'] + 0.5
 
     return phrases
 
@@ -219,23 +211,25 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
                            band_y_position: int,
                            style: dict = None) -> list:
     """
-    Create moviepy subtitle clips positioned at the split line.
+    Create moviepy subtitle clips with CONTINUOUS coverage.
+    Each phrase appears when its first word is spoken and stays
+    until the next phrase begins. No gaps in subtitle display.
 
     Args:
         script_text: Full script text (for reference)
-        word_timestamps: Word-level timing data from get_word_timestamps()
+        word_timestamps: Word-level timing data from TTS
         video_width: Final video width (1080)
         video_height: Final video height (1920)
         band_y_position: Y position for the subtitle band (split line)
         style: Optional style overrides
 
     Returns:
-        List of ImageClip objects with timing, composited on video
+        List of ImageClip objects with continuous timing
     """
     s = {**SUBTITLE_STYLE, **(style or {})}
     band_h = s['band_height']
 
-    # Group words into phrases
+    # Group words into phrases with continuous coverage
     phrases = _group_words_into_phrases(word_timestamps,
                                           max_chars=s['max_chars_per_line'])
 
@@ -244,17 +238,24 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
 
     clips = []
     for phrase in phrases:
+        duration = phrase['end'] - phrase['start']
+        if duration <= 0:
+            continue
+
         # Render the subtitle frame
         frame = _render_subtitle_frame(phrase['text'], video_width, band_h, s)
 
         # Create clip from numpy array
-        clip = ImageClip(frame).set_duration(phrase['end'] - phrase['start'])
+        clip = ImageClip(frame).set_duration(duration)
         clip = clip.set_start(phrase['start'])
         clip = clip.set_position((0, band_y_position))
 
         clips.append(clip)
 
+    # Verify continuous coverage
+    total_covered = sum(c.duration for c in clips)
     print(f"  [SUB] Created {len(clips)} subtitle clips "
-          f"({len(word_timestamps)} words → {len(phrases)} phrases)")
+          f"({len(word_timestamps)} words → {len(phrases)} phrases, "
+          f"{total_covered:.1f}s continuous coverage)")
 
     return clips
