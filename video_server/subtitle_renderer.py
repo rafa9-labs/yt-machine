@@ -18,16 +18,17 @@ except ImportError:
 
 # Default subtitle styling — optimized for 1080px wide video on phone
 SUBTITLE_STYLE = {
-    'font_size': 52,
+    'font_size': 64,                    # Bigger for readability
     'font_name': 'Arial-Bold',
     'text_color': (255, 255, 255),
     'outline_color': (0, 0, 0),
-    'outline_width': 4,
-    'bg_color': (0, 0, 0, 180),       # Semi-transparent black
-    'band_height': 120,
-    'max_chars_per_line': 32,
+    'outline_width': 5,                 # Thicker outline for bold feel
+    'bg_color': (0, 0, 0, 180),        # Semi-transparent black
+    'band_height': 140,                 # Taller band for bigger text
+    'max_chars_per_line': 28,           # Fewer chars per line (bigger font)
     'padding_x': 30,
     'padding_y': 15,
+    'lead_in_seconds': 0.3,            # Show subtitle BEFORE first word
 }
 
 
@@ -236,9 +237,24 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
     if not phrases:
         return []
 
+    lead_in = s.get('lead_in_seconds', 0.3)
+
+    # Pre-calculate clip start/end to avoid overlaps
+    adjusted = []
+    for i, phrase in enumerate(phrases):
+        adj_start = max(0, phrase['start'] - lead_in)
+        adjusted.append(adj_start)
+
     clips = []
-    for phrase in phrases:
-        duration = phrase['end'] - phrase['start']
+    for i, phrase in enumerate(phrases):
+        # Show subtitle BEFORE the first word is spoken (lead-in)
+        clip_start = adjusted[i]
+        # Clip ends when next phrase's lead-in begins (no overlap, no gap)
+        if i + 1 < len(adjusted):
+            clip_end = adjusted[i + 1]
+        else:
+            clip_end = phrase['end']
+        duration = clip_end - clip_start
         if duration <= 0:
             continue
 
@@ -247,7 +263,7 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
 
         # Create clip from numpy array
         clip = ImageClip(frame).set_duration(duration)
-        clip = clip.set_start(phrase['start'])
+        clip = clip.set_start(clip_start)
         clip = clip.set_position((0, band_y_position))
 
         clips.append(clip)
