@@ -1,210 +1,178 @@
 """
-Subtitle Renderer — Continuous subtitle coverage for split-screen video.
-Shows each phrase from the moment its first word is spoken until the next phrase begins.
-No gaps — subtitle is always visible while narration plays.
+Subtitle Renderer - Karaoke-style word-by-word subtitles.
+Shows 2 content words at a time: current word highlighted yellow, previous white.
+Filler words (articles, prepositions, conjunctions) are skipped.
 """
 
 import re
-import asyncio
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 try:
-    from moviepy.editor import ImageClip, CompositeVideoClip
+    from moviepy.editor import ImageClip
 except ImportError:
-    from moviepy import ImageClip, CompositeVideoClip
+    from moviepy import ImageClip
 
-# Default subtitle styling — optimized for 1080px wide video on phone
+# Filler words to skip
+SKIP_WORDS = {
+    'a', 'an', 'the',
+    'from', 'to', 'in', 'on', 'at', 'of', 'for', 'with', 'by', 'up', 'out',
+    'into', 'onto', 'upon', 'over', 'under', 'about', 'after', 'before',
+    'between', 'through', 'during', 'without', 'within', 'along', 'across',
+    'and', 'but', 'or', 'so', 'yet', 'nor', 'as', 'than',
+    'it', 'he', 'she', 'they', 'we', 'i', 'you', 'me', 'him', 'her', 'us',
+    'them', 'my', 'your', 'his', 'its', 'our', 'their', 'this', 'that',
+    'these', 'those', 'who', 'whom', 'which', 'what',
+    'is', 'are', 'was', 'were', 'be', 'been', 'am', 'do', 'does', 'did',
+    'has', 'have', 'had', 'will', 'would', 'could', 'should', 'may', 'might',
+    'shall', 'can', 'must',
+    'not', 'no', 'if', 'then', 'when', 'how', 'why', 'all', 'each', 'every',
+    'both', 'few', 'more', 'most', 'other', 'some', 'such', 'only', 'own',
+    'same', 'also', 'just', 'very', 'even', 'still', 'already', 'now',
+    "don't", "doesn't", "didn't", "wasn't", "weren't", "won't", "wouldn't",
+    "couldn't", "shouldn't", "isn't", "aren't",
+}
+
 SUBTITLE_STYLE = {
-    'font_size': 64,                    # Bigger for readability
+    'font_size': 80,
     'font_name': 'Arial-Bold',
-    'text_color': (255, 255, 255),
+    'highlight_color': (255, 215, 0),   # Yellow for current word
+    'previous_color': (255, 255, 255),  # White for previous word
     'outline_color': (0, 0, 0),
-    'outline_width': 5,                 # Thicker outline for bold feel
-    'bg_color': (0, 0, 0, 180),        # Semi-transparent black
-    'band_height': 140,                 # Taller band for bigger text
-    'max_chars_per_line': 28,           # Fewer chars per line (bigger font)
-    'padding_x': 30,
-    'padding_y': 15,
-    'lead_in_seconds': 0.3,            # Show subtitle BEFORE first word
+    'outline_width': 5,
+    'bg_color': (0, 0, 0, 180),
+    'band_height': 110,
+    'padding_x': 40,
+    'lead_in_seconds': 0.3,
 }
 
 
-def _estimate_word_timestamps(text: str, words_per_sec: float = 2.5) -> List[Dict]:
-    """
-    Fallback: estimate word timestamps from text length.
-    Used when edge-tts boundary data is unavailable.
-    """
-    words = text.split()
-    timestamps = []
-    for i, word in enumerate(words):
-        start = i / words_per_sec
-        end = (i + 1) / words_per_sec
-        timestamps.append({'word': word, 'start': start, 'end': end})
-    return timestamps
+def _is_content_word(word: str) -> bool:
+    """Check if word is a content word (not a filler)."""
+    clean = word.strip('.,;:!?—–').lower()
+    if '-' in clean:
+        return True
+    if clean.endswith("'s"):
+        base = clean[:-2]
+        return base not in SKIP_WORDS and len(base) > 1
+    return clean not in SKIP_WORDS
 
 
-def _group_words_into_phrases(word_timestamps: List[Dict],
-                               max_chars: int = 32) -> List[Dict]:
+def _clean_display(word: str) -> str:
+    """Clean word for display: strip punctuation, uppercase."""
+    return word.strip('.,;:!?—–').upper()
+
+
+def _load_font(style: dict):
+    """Load a bold TrueType font."""
+    sz = style['font_size']
+    for name in [style.get('font_name', 'Arial-Bold'), 'C:/Windows/Fonts/arialbd.ttf',
+                 'arialbd.ttf', 'C:/Windows/Fonts/arial.ttf', 'arial.ttf',
+                 '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf']:
+        try:
+            return ImageFont.truetype(name, sz)
+        except (IOError, OSError):
+            continue
+    print("  [SUB] WARNING: No TrueType font found")
+    return ImageFont.load_default()
+
+
+def _build_karaoke_pairs(word_timestamps: List[Dict]) -> List[Dict]:
     """
-    Group words into subtitle phrases with CONTINUOUS coverage.
-    
-    Key principle: Each phrase starts when its first word is spoken
-    and stays visible until the next phrase begins. No gaps ever.
-    
-    Grouping rules:
-    - Split at natural break points (commas, periods, semicolons, etc.)
-    - Keep phrases under max_chars for readability
-    - Every clip extends to the START of the next clip (no gaps)
-    - Last clip extends to end of audio + 0.5s buffer
+    Build karaoke pairs from word timestamps.
+    Each pair: previous_word (white), current_word (yellow), start, end.
+    Filler words don't trigger a new pair.
     """
     if not word_timestamps:
         return []
 
-    phrases = []
-    current_words = [word_timestamps[0]]
-    current_len = len(word_timestamps[0]['word'])
+    pairs = []
+    prev_content = None
+    last_end = 0.0
 
-    for i in range(1, len(word_timestamps)):
-        w = word_timestamps[i]
-        new_len = current_len + 1 + len(w['word'])  # +1 for space
-
-        # Split at natural break points or when max chars exceeded
-        prev_word = current_words[-1]['word']
-        is_natural_break = prev_word.endswith((',', '.', ';', ':', '!', '?', '—', '–'))
-        is_too_long = new_len > max_chars
-
-        if is_too_long or is_natural_break:
-            # Finalize current phrase
-            phrases.append({
-                'text': ' '.join(w['word'] for w in current_words),
-                'start': current_words[0]['start'],
-                'end': current_words[-1]['end'],  # Will be extended later
-            })
-            current_words = [w]
-            current_len = len(w['word'])
-        else:
-            current_words.append(w)
-            current_len = new_len
-
-    # Don't forget the last phrase
-    if current_words:
-        phrases.append({
-            'text': ' '.join(w['word'] for w in current_words),
-            'start': current_words[0]['start'],
-            'end': current_words[-1]['end'],
-        })
-
-    # CRITICAL: Extend each phrase to the start of the next one (continuous coverage)
-    for i in range(len(phrases) - 1):
-        phrases[i]['end'] = phrases[i + 1]['start']
-
-    # Last phrase extends 0.5s past its last word
-    if phrases:
-        phrases[-1]['end'] = phrases[-1]['end'] + 0.5
-
-    return phrases
-
-
-def _render_subtitle_frame(text: str, width: int, band_height: int,
-                            style: dict = None) -> np.ndarray:
-    """
-    Render a single subtitle frame as RGB numpy array.
-    Uses proper alpha blending for semi-transparent background.
-    """
-    s = {**SUBTITLE_STYLE, **(style or {})}
-
-    # Create RGBA image for the subtitle band (transparent background)
-    img = Image.new('RGBA', (width, band_height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # Draw semi-transparent background band
-    draw.rectangle([0, 0, width, band_height], fill=s['bg_color'])
-
-    # Load font — try multiple options for cross-platform compatibility
-    font = None
-    font_candidates = [
-        (s['font_name'], s['font_size']),
-        ('arial.ttf', s['font_size']),
-        ('Arial.ttf', s['font_size']),
-        ('C:/Windows/Fonts/arialbd.ttf', s['font_size']),
-        ('C:/Windows/Fonts/arial.ttf', s['font_size']),
-        ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', s['font_size']),
-    ]
-    for font_name, font_size in font_candidates:
-        try:
-            font = ImageFont.truetype(font_name, font_size)
-            break
-        except (IOError, OSError):
+    for wt in word_timestamps:
+        if not _is_content_word(wt['word']):
             continue
-    
-    if font is None:
-        print(f"  [SUB] WARNING: No TrueType font found, using default (may look bad)")
-        font = ImageFont.load_default()
 
-    # Word-wrap text if needed
-    lines = _wrap_text(text, font, width - 2 * s['padding_x'], draw)
+        curr = _clean_display(wt['word'])
+        prev = _clean_display(prev_content) if prev_content else None
 
-    # Calculate text position (centered in band)
-    line_heights = []
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
-        line_heights.append(bbox[3] - bbox[1])
+        pair = {
+            'previous_word': prev,
+            'current_word': curr,
+            'start': wt['start'],
+            'end': None,
+        }
 
-    line_spacing = 6
-    total_text_h = sum(line_heights) + line_spacing * (len(lines) - 1)
-    y_offset = (band_height - total_text_h) // 2
+        if pairs:
+            pairs[-1]['end'] = wt['start']
 
-    # Draw text with outline (stroke) for readability
-    for line_idx, line in enumerate(lines):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        text_w = bbox[2] - bbox[0]
-        x = (width - text_w) // 2
+        pairs.append(pair)
+        prev_content = wt['word']
+        last_end = wt['end']
 
-        # Draw outline (stroke) — circle around each character position
-        ow = s['outline_width']
-        if ow > 0:
-            for dx in range(-ow, ow + 1):
-                for dy in range(-ow, ow + 1):
-                    if dx * dx + dy * dy <= ow * ow:
-                        draw.text((x + dx, y_offset + dy), line,
-                                  font=font, fill=s['outline_color'] + (255,))
+    if pairs:
+        pairs[-1]['end'] = last_end + 0.5
 
-        # Draw main text on top
-        draw.text((x, y_offset), line, font=font,
-                  fill=s['text_color'] + (255,))
-
-        y_offset += line_heights[line_idx] + line_spacing
-
-    # Convert RGBA → RGB by alpha compositing onto a black background
-    background = Image.new('RGBA', (width, band_height), (0, 0, 0, 255))
-    composite = Image.alpha_composite(background, img)
-    
-    return np.array(composite.convert('RGB'))
+    return pairs
 
 
-def _wrap_text(text: str, font, max_width: int, draw) -> List[str]:
-    """Word-wrap text to fit within max_width pixels."""
-    words = text.split()
-    lines = []
-    current_line = ""
+def _draw_outlined(draw, x, y, text, font, fill, outline, ow):
+    """Draw text with circular outline."""
+    if ow > 0:
+        for dx in range(-ow, ow + 1):
+            for dy in range(-ow, ow + 1):
+                if dx * dx + dy * dy <= ow * ow:
+                    draw.text((x + dx, y + dy), text, font=font,
+                              fill=outline + (255,))
+    draw.text((x, y), text, font=font, fill=fill + (255,))
 
-    for word in words:
-        test_line = f"{current_line} {word}".strip()
-        bbox = draw.textbbox((0, 0), test_line, font=font)
-        if bbox[2] - bbox[0] <= max_width:
-            current_line = test_line
-        else:
-            if current_line:
-                lines.append(current_line)
-            current_line = word
 
-    if current_line:
-        lines.append(current_line)
+def _render_karaoke_frame(prev_word, curr_word, width, band_h, font, style) -> np.ndarray:
+    """Render frame: 2 words centered, current=yellow, previous=white."""
+    bg = style['bg_color']
+    hi = style['highlight_color']
+    pw = style['previous_color']
+    ol = style['outline_color']
+    ow = style['outline_width']
+    gap = 30
 
-    return lines if lines else [text]
+    img = Image.new('RGBA', (width, band_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, width, band_h], fill=bg)
+
+    # Collect words to draw
+    parts = []
+    if prev_word:
+        parts.append(('prev', prev_word))
+    if curr_word:
+        parts.append(('curr', curr_word))
+
+    if not parts:
+        bg_img = Image.new('RGBA', (width, band_h), (0, 0, 0, 255))
+        return np.array(Image.alpha_composite(bg_img, img).convert('RGB'))
+
+    # Measure widths
+    widths = []
+    for _, w in parts:
+        bb = draw.textbbox((0, 0), w, font=font)
+        widths.append(bb[2] - bb[0])
+
+    total_w = sum(widths) + gap * (len(parts) - 1)
+    bb_h = draw.textbbox((0, 0), parts[0][1], font=font)
+    text_h = bb_h[3] - bb_h[1]
+    y = (band_h - text_h) // 2 - bb_h[1]
+    x = (width - total_w) // 2
+
+    for idx, (kind, word) in enumerate(parts):
+        color = hi if kind == 'curr' else pw
+        _draw_outlined(draw, x, y, word, font, color, ol, ow)
+        x += widths[idx] + gap
+
+    bg_img = Image.new('RGBA', (width, band_h), (0, 0, 0, 255))
+    return np.array(Image.alpha_composite(bg_img, img).convert('RGB'))
 
 
 def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
@@ -212,66 +180,44 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
                            band_y_position: int,
                            style: dict = None) -> list:
     """
-    Create moviepy subtitle clips with CONTINUOUS coverage.
-    Each phrase appears when its first word is spoken and stays
-    until the next phrase begins. No gaps in subtitle display.
-
-    Args:
-        script_text: Full script text (for reference)
-        word_timestamps: Word-level timing data from TTS
-        video_width: Final video width (1080)
-        video_height: Final video height (1920)
-        band_y_position: Y position for the subtitle band (split line)
-        style: Optional style overrides
-
-    Returns:
-        List of ImageClip objects with continuous timing
+    Create karaoke subtitle clips: 2 content words at a time.
+    Current word highlighted yellow, previous word white.
     """
     s = {**SUBTITLE_STYLE, **(style or {})}
     band_h = s['band_height']
+    font = _load_font(s)
 
-    # Group words into phrases with continuous coverage
-    phrases = _group_words_into_phrases(word_timestamps,
-                                          max_chars=s['max_chars_per_line'])
-
-    if not phrases:
+    pairs = _build_karaoke_pairs(word_timestamps)
+    if not pairs:
         return []
 
     lead_in = s.get('lead_in_seconds', 0.3)
 
-    # Pre-calculate clip start/end to avoid overlaps
-    adjusted = []
-    for i, phrase in enumerate(phrases):
-        adj_start = max(0, phrase['start'] - lead_in)
-        adjusted.append(adj_start)
+    # Pre-calculate adjusted starts (lead-in) without overlaps
+    adj_starts = [max(0, p['start'] - lead_in) for p in pairs]
 
     clips = []
-    for i, phrase in enumerate(phrases):
-        # Show subtitle BEFORE the first word is spoken (lead-in)
-        clip_start = adjusted[i]
-        # Clip ends when next phrase's lead-in begins (no overlap, no gap)
-        if i + 1 < len(adjusted):
-            clip_end = adjusted[i + 1]
-        else:
-            clip_end = phrase['end']
+    for i, pair in enumerate(pairs):
+        clip_start = adj_starts[i]
+        clip_end = adj_starts[i + 1] if i + 1 < len(adj_starts) else pair['end']
         duration = clip_end - clip_start
         if duration <= 0:
             continue
 
-        # Render the subtitle frame
-        frame = _render_subtitle_frame(phrase['text'], video_width, band_h, s)
+        frame = _render_karaoke_frame(
+            pair['previous_word'], pair['current_word'],
+            video_width, band_h, font, s
+        )
 
-        # Create clip from numpy array
         clip = ImageClip(frame).set_duration(duration)
         clip = clip.set_start(clip_start)
         clip = clip.set_position((0, band_y_position))
-
         clips.append(clip)
 
-    # Verify continuous coverage
     total_covered = sum(c.duration for c in clips)
-    print(f"  [SUB] Created {len(clips)} subtitle clips "
-          f"({len(word_timestamps)} words → {len(phrases)} phrases, "
-          f"{total_covered:.1f}s continuous coverage)")
+    content_count = sum(1 for w in word_timestamps if _is_content_word(w['word']))
+    print(f"  [SUB] Karaoke: {len(clips)} clips "
+          f"({len(word_timestamps)} words, {content_count} content words, "
+          f"{total_covered:.1f}s coverage)")
 
     return clips

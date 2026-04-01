@@ -33,7 +33,7 @@ VIDEO_W = 1080
 VIDEO_H = 1920
 TOP_H = 960        # Top half height (scene images)
 BOTTOM_H = 960     # Bottom half height (avatar)
-SUBTITLE_H = 140   # Subtitle band height (must match subtitle_renderer)
+SUBTITLE_H = 110   # Subtitle band height (must match subtitle_renderer)
 FPS = 30
 
 # Avatar asset path
