@@ -33,7 +33,7 @@ VIDEO_W = 1080
 VIDEO_H = 1920
 TOP_H = 960        # Top half height (scene images)
 BOTTOM_H = 960     # Bottom half height (avatar)
-SUBTITLE_H = 80    # Subtitle band height
+SUBTITLE_H = 120   # Subtitle band height (must match subtitle_renderer)
 FPS = 30
 
 # Avatar asset path
@@ -114,32 +114,33 @@ def _calculate_scene_durations(total_duration: float, num_scenes: int) -> List[f
 
 def _prepare_avatar_bottom(avatar_path: str, total_duration: float) -> VideoFileClip:
     """
-    Load the avatar video, crop/resize to 1080×960, and loop to match duration.
-
-    Avatar input: 1292×720 (landscape).
-    Target: 1080×960 (portrait half).
-
-    Strategy: Add letterbox bars top+bottom to make it portrait,
-    then scale to 1080×960.
+    Load the avatar video, crop/resize to FILL 1080×960 bottom half, and loop.
+    
+    Strategy: Scale avatar so HEIGHT fills BOTTOM_H, then crop center horizontally.
+    This ensures the avatar fills the entire bottom with no black bars.
     """
     avatar = VideoFileClip(avatar_path)
-    av_w, av_h = avatar.size  # 1292, 720
-    avatar_duration = avatar.duration  # ~6.11s
+    av_w, av_h = avatar.size
+    avatar_duration = avatar.duration
 
-    # Target ratio for bottom half: 1080/960 = 1.125
-    # Avatar ratio: 1292/720 = 1.794
-    # Strategy: pad with black top+bottom to reach 1.125 ratio
-    # New height needed: 1292 / 1.125 = 1148px → pad top (1148-720)/2 = 214px each side
+    # Scale so height = BOTTOM_H (960px)
+    scale_factor = BOTTOM_H / av_h
+    scaled_w = int(av_w * scale_factor)
+    scaled_h = BOTTOM_H
 
-    target_h_for_ratio = int(av_w / (VIDEO_W / BOTTOM_H))  # 1292 / 1.125 = 1149
-    pad_top = (target_h_for_ratio - av_h) // 2
-    pad_bottom = target_h_for_ratio - av_h - pad_top
+    # Resize to scaled dimensions (width will be >= VIDEO_W since avatar is landscape)
+    avatar_scaled = avatar.resize((scaled_w, scaled_h))
 
-    # Use moviepy margin to add padding
-    avatar_padded = avatar.margin(top=pad_top, bottom=pad_bottom, color=(0, 0, 0))
+    # Crop center horizontally to VIDEO_W
+    if scaled_w > VIDEO_W:
+        crop_x = (scaled_w - VIDEO_W) // 2
+        avatar_cropped = avatar_scaled.crop(
+            x1=crop_x, y1=0, x2=crop_x + VIDEO_W, y2=scaled_h
+        )
+    else:
+        avatar_cropped = avatar_scaled
 
-    # Resize to target
-    avatar_resized = avatar_padded.resize((VIDEO_W, BOTTOM_H))
+    avatar_resized = avatar_cropped
 
     # Loop to fill total duration
     loops_needed = math.ceil(total_duration / avatar_duration)
