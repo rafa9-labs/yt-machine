@@ -16,18 +16,18 @@ try:
 except ImportError:
     from moviepy import ImageClip, CompositeVideoClip
 
-# Default subtitle styling
+# Default subtitle styling — optimized for 1080px wide video on phone
 SUBTITLE_STYLE = {
-    'font_size': 32,
+    'font_size': 52,
     'font_name': 'Arial-Bold',
     'text_color': (255, 255, 255),
     'outline_color': (0, 0, 0),
-    'outline_width': 3,
-    'bg_color': (0, 0, 0, 160),
-    'band_height': 80,
-    'max_chars_per_line': 42,
-    'padding_x': 20,
-    'padding_y': 10,
+    'outline_width': 4,
+    'bg_color': (0, 0, 0, 180),       # Semi-transparent black
+    'band_height': 120,
+    'max_chars_per_line': 32,
+    'padding_x': 30,
+    'padding_y': 15,
 }
 
 
@@ -46,8 +46,8 @@ def get_word_timestamps(text: str, voice: str = "en-US-GuyNeural",
             if chunk["type"] == "WordBoundary":
                 word_boundaries.append({
                     'word': chunk.get('text', '').strip(),
-                    'start': chunk.get('offset', 0) / 1_000_000,  # ticks to seconds
-                    'end': (chunk.get('offset', 0) + chunk.get('duration', 0)) / 1_000_000,
+                    'start': chunk.get('offset', 0) / 10_000_000,
+                    'end': (chunk.get('offset', 0) + chunk.get('duration', 0)) / 10_000_000,
                 })
         return word_boundaries
 
@@ -73,7 +73,7 @@ def _estimate_word_timestamps(text: str, words_per_sec: float = 2.5) -> List[Dic
 
 
 def _group_words_into_phrases(word_timestamps: List[Dict],
-                               max_chars: int = 42,
+                               max_chars: int = 32,
                                max_gap: float = 0.5) -> List[Dict]:
     """
     Group words into subtitle phrases (2 lines max).
@@ -119,59 +119,77 @@ def _render_subtitle_frame(text: str, width: int, band_height: int,
                             style: dict = None) -> np.ndarray:
     """
     Render a single subtitle frame as RGB numpy array.
-    Semi-transparent dark band with white outlined text.
+    Uses proper alpha blending for semi-transparent background.
     """
     s = {**SUBTITLE_STYLE, **(style or {})}
 
-    # Create RGBA image for the subtitle band
+    # Create RGBA image for the subtitle band (transparent background)
     img = Image.new('RGBA', (width, band_height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     # Draw semi-transparent background band
     draw.rectangle([0, 0, width, band_height], fill=s['bg_color'])
 
-    # Load font
-    try:
-        font = ImageFont.truetype(s['font_name'], s['font_size'])
-    except (IOError, OSError):
+    # Load font — try multiple options for cross-platform compatibility
+    font = None
+    font_candidates = [
+        (s['font_name'], s['font_size']),
+        ('arial.ttf', s['font_size']),
+        ('Arial.ttf', s['font_size']),
+        ('C:/Windows/Fonts/arialbd.ttf', s['font_size']),
+        ('C:/Windows/Fonts/arial.ttf', s['font_size']),
+        ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', s['font_size']),
+    ]
+    for font_name, font_size in font_candidates:
         try:
-            font = ImageFont.truetype("arial.ttf", s['font_size'])
+            font = ImageFont.truetype(font_name, font_size)
+            break
         except (IOError, OSError):
-            font = ImageFont.load_default()
+            continue
+    
+    if font is None:
+        print(f"  [SUB] WARNING: No TrueType font found, using default (may look bad)")
+        font = ImageFont.load_default()
 
     # Word-wrap text if needed
     lines = _wrap_text(text, font, width - 2 * s['padding_x'], draw)
 
-    # Calculate text position (centered)
+    # Calculate text position (centered in band)
     line_heights = []
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         line_heights.append(bbox[3] - bbox[1])
 
-    total_text_h = sum(line_heights) + 4 * (len(lines) - 1)
+    line_spacing = 6
+    total_text_h = sum(line_heights) + line_spacing * (len(lines) - 1)
     y_offset = (band_height - total_text_h) // 2
 
-    # Draw text with outline
-    for line in lines:
+    # Draw text with outline (stroke) for readability
+    for line_idx, line in enumerate(lines):
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
         x = (width - text_w) // 2
 
-        # Draw outline (stroke)
-        if s['outline_width'] > 0:
-            for dx in range(-s['outline_width'], s['outline_width'] + 1):
-                for dy in range(-s['outline_width'], s['outline_width'] + 1):
-                    if dx * dx + dy * dy <= s['outline_width'] ** 2:
+        # Draw outline (stroke) — circle around each character position
+        ow = s['outline_width']
+        if ow > 0:
+            for dx in range(-ow, ow + 1):
+                for dy in range(-ow, ow + 1):
+                    if dx * dx + dy * dy <= ow * ow:
                         draw.text((x + dx, y_offset + dy), line,
                                   font=font, fill=s['outline_color'] + (255,))
 
-        # Draw main text
+        # Draw main text on top
         draw.text((x, y_offset), line, font=font,
                   fill=s['text_color'] + (255,))
 
-        y_offset += line_heights[0] + 4
+        y_offset += line_heights[line_idx] + line_spacing
 
-    return np.array(img.convert('RGB'))
+    # Convert RGBA → RGB by alpha compositing onto a black background
+    background = Image.new('RGBA', (width, band_height), (0, 0, 0, 255))
+    composite = Image.alpha_composite(background, img)
+    
+    return np.array(composite.convert('RGB'))
 
 
 def _wrap_text(text: str, font, max_width: int, draw) -> List[str]:
@@ -229,8 +247,7 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
         # Render the subtitle frame
         frame = _render_subtitle_frame(phrase['text'], video_width, band_h, s)
 
-        # Convert to PIL → save to temp → ImageClip
-        # (moviepy needs a file path or numpy array)
+        # Create clip from numpy array
         clip = ImageClip(frame).set_duration(phrase['end'] - phrase['start'])
         clip = clip.set_start(phrase['start'])
         clip = clip.set_position((0, band_y_position))
