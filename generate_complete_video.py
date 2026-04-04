@@ -181,11 +181,14 @@ try:
     
     full_script = script.get('full_text', '')
     if not full_script:
-        # Build from stories
-        parts = [script.get('greeting', '')]
+        # Build from stories (including intro_hook and punchlines)
+        parts = [script.get('greeting', ''), script.get('intro_hook', '')]
         for story in script.get('stories', []):
             parts.append(story.get('mini_hook', ''))
             parts.append(story.get('body', ''))
+            p = story.get('punchline', '')
+            if p:
+                parts.append(p)
             t = story.get('transition', '')
             if t:
                 parts.append(t)
@@ -198,8 +201,10 @@ try:
     
     print(f"✅ Script synthesized (~{script.get('estimated_duration', 0)}s)")
     print(f"  Greeting: {script.get('greeting', 'N/A')[:70]}...")
+    print(f"  Intro hook: {script.get('intro_hook', 'N/A')[:70]}...")
     for i, story in enumerate(script.get('stories', []), 1):
         print(f"  Story {i} hook: {story.get('mini_hook', 'N/A')[:60]}...")
+        print(f"  Story {i} punchline: {story.get('punchline', 'N/A')[:60]}...")
     print(f"  Closing: {script.get('closing', 'N/A')[:60]}...")
     print(f"  Words: {script.get('word_count', 0)}")
     
