@@ -63,22 +63,29 @@ def _resize_image_fullscreen(img_path: str) -> ImageClip:
         img = img.crop((left, top, left + visible_w, top + visible_h))
         print(f"  [SPLIT] Native scene image {img_w}×{img_h} → crop {left}px sides, {top}px top/bot")
     else:
-        # Legacy image — cover-crop to fill visible area
-        target_ratio = visible_w / visible_h  # ~0.9375
+        # Legacy image — aspect-ratio-safe resize (no stretching!)
+        # Use thumbnail to fit within visible area, then center-paste
+        target_ratio = visible_w / visible_h
         img_ratio = img_w / img_h
 
         if img_ratio > target_ratio:
-            new_w = int(img_h * target_ratio)
-            left = (img_w - new_w) // 2
-            img = img.crop((left, 0, left + new_w, img_h))
+            # Image is wider — fit to width, may letterbox top/bottom
+            new_w = visible_w
+            new_h = int(visible_w / img_ratio)
         else:
-            new_h = int(img_w / target_ratio)
-            top = (img_h - new_h) // 2
-            img = img.crop((0, top, img_w, top + new_h))
+            # Image is taller — fit to height, may pillarbox left/right
+            new_h = visible_h
+            new_w = int(visible_h * img_ratio)
 
-        # Resize to visible area dimensions
-        img = img.resize((visible_w, visible_h), Image.LANCZOS)
-        print(f"  [SPLIT] Legacy image {img_w}×{img_h} → cover-crop to {visible_w}×{visible_h}")
+        img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+        # Center-paste onto visible-area-sized canvas (bg color fills gaps)
+        canvas_top = Image.new('RGB', (visible_w, visible_h), (10, 5, 25))
+        paste_x = (visible_w - new_w) // 2
+        paste_y = (visible_h - new_h) // 2
+        canvas_top.paste(img_resized, (paste_x, paste_y))
+        img = canvas_top
+        print(f"  [SPLIT] Legacy image {img_w}×{img_h} → fit to {new_w}×{new_h} (no stretch)")
 
     # Create full-frame canvas (1080x1920) and paste image at top
     canvas = Image.new('RGB', (VIDEO_W, VIDEO_H), (10, 5, 25))

@@ -31,15 +31,15 @@ SUBTITLE_STYLE = {
 }
 
 TITLE_STYLE = {
-    'font_size': 52,
-    'font_name': 'Arial-Bold',
-    'color': (255, 255, 255),
-    'outline_color': (0, 0, 0),
-    'outline_width': 4,
+    'font_size': 64,                # Same as subtitles
+    'font_name': 'Arial-Bold',      # Same font
+    'color': (255, 215, 0),         # Static gold/yellow (like subtitle highlight)
+    'outline_color': (0, 0, 0),     # Same black outline
+    'outline_width': 5,             # Same outline width as subtitles
     'max_words': 8,
-    'fade_in_seconds': 0.5,
+    'fade_in_seconds': 0.8,
     'display_seconds': 5.0,
-    'y_position': 80,  # From top
+    'y_position': 80,               # From top
 }
 
 
@@ -229,14 +229,23 @@ def _estimate_from_script(script_text: str, total_duration: float) -> List[Dict]
     ]
 
 
-def _split_into_phrases(words: List[Dict], max_words: int = 5) -> List[Tuple[int, int, float, float]]:
+def _split_into_phrases(words: List[Dict], max_words: int = 5, min_words: int = 4) -> List[Tuple[int, int, float, float]]:
     """
     Split words into phrase chunks (start_idx, end_idx, phrase_start, phrase_end).
     Respects sentence boundaries and natural pauses.
+    Enforces min_words per phrase — merges short phrases to avoid showing 1-2 words alone.
     """
-    phrases = []
-    i = 0
     n_words = len(words)
+    if n_words == 0:
+        return []
+    
+    # If total words <= min_words, just return one phrase
+    if n_words <= min_words:
+        return [(0, n_words, words[0]['start'], words[-1]['end'])]
+    
+    # Phase 1: Initial split respecting sentence boundaries
+    raw_phrases = []
+    i = 0
     
     while i < n_words:
         end_idx = min(i + max_words, n_words)
@@ -251,13 +260,40 @@ def _split_into_phrases(words: List[Dict], max_words: int = 5) -> List[Tuple[int
                 end_idx = j + 1
                 break
         
-        phrase_words = words[i:end_idx]
+        raw_phrases.append((i, end_idx))
+        i = end_idx
+    
+    # Phase 2: Merge short phrases (fewer than min_words) into neighbors
+    merged = []
+    for start_idx, end_idx in raw_phrases:
+        phrase_len = end_idx - start_idx
+        
+        if phrase_len < min_words and merged:
+            # Merge into previous phrase
+            prev_start, prev_end = merged[-1]
+            combined_len = end_idx - prev_start
+            if combined_len <= max_words + 2:  # Allow slight overflow for merging
+                merged[-1] = (prev_start, end_idx)
+                continue
+        
+        merged.append((start_idx, end_idx))
+    
+    # Phase 3: Check if last phrase is too short — merge with previous
+    if len(merged) >= 2:
+        last_start, last_end = merged[-1]
+        if last_end - last_start < min_words:
+            prev_start, prev_end = merged[-2]
+            merged[-2] = (prev_start, last_end)
+            merged.pop()
+    
+    # Build final phrases with timing
+    phrases = []
+    for start_idx, end_idx in merged:
+        phrase_words = words[start_idx:end_idx]
         if phrase_words:
             phrase_start = phrase_words[0]['start']
             phrase_end = phrase_words[-1]['end']
-            phrases.append((i, end_idx, phrase_start, phrase_end))
-        
-        i = end_idx
+            phrases.append((start_idx, end_idx, phrase_start, phrase_end))
     
     return phrases
 
