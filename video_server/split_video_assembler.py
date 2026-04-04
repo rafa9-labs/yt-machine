@@ -296,15 +296,15 @@ def build_split_video(
         # ── COMPOSITE: Stack all layers ──
         layers = [background, bottom_half]
 
-        # ── TITLE OVERLAY: Hook text at top ──
+        # ── TITLE OVERLAY: Persistent headline at top (entire video) ──
         if hook_text:
             title_clip = create_title_clip(
                 hook_text, VIDEO_W, VIDEO_H,
-                duration=min(5.0, total_dur)
+                duration=total_dur  # Persist entire video
             )
             if title_clip:
                 layers.append(title_clip)
-                print(f"  [SPLIT] Title overlay: \"{hook_text[:50]}...\"")
+                print(f"  [SPLIT] Title overlay (persistent): \"{hook_text[:60]}...\"")
 
         # ── SUBTITLES: Near bottom of scene area (above avatar) ──
         subtitle_clips = []

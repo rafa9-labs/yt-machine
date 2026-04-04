@@ -31,15 +31,15 @@ SUBTITLE_STYLE = {
 }
 
 TITLE_STYLE = {
-    'font_size': 64,                # Same as subtitles
-    'font_name': 'Arial-Bold',      # Same font
-    'color': (255, 215, 0),         # Static gold/yellow (like subtitle highlight)
+    'font_size': 48,                # Smaller than subtitles (64) — non-intrusive
+    'font_name': 'Arial-Bold',      # Same font family
+    'color': (255, 215, 0),         # All yellow (matches subtitle highlight)
     'outline_color': (0, 0, 0),     # Same black outline
-    'outline_width': 5,             # Same outline width as subtitles
-    'max_words': 8,
-    'fade_in_seconds': 0.8,
-    'display_seconds': 5.0,
-    'y_position': 80,               # From top
+    'outline_width': 3,             # Thinner outline (subtitles use 5)
+    'max_words': 10,
+    'fade_in_seconds': 0.0,         # No fade — static the whole video
+    'display_seconds': 999.0,       # Persist entire video (overridden by caller)
+    'y_position': 20,               # Very top — minimal intrusion
 }
 
 
@@ -360,8 +360,6 @@ def _clean_display(word: str) -> str:
     if not cleaned or cleaned in ('"', "'", '\u201c', '\u201d', '\u2018', '\u2019'):
         return ''
     return cleaned
-
-
 def _render_phrase_frame(words: List[Dict], phrase_start_idx: int, phrase_end_idx: int,
                       time: float, width: int, band_h: int, font, style) -> np.ndarray:
     """
