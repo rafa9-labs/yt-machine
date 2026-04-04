@@ -2,12 +2,31 @@ import os
 import asyncio
 import time
 import re
+import tempfile
 from pathlib import Path
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 import edge_tts
 import struct
 import wave
+import numpy as np
+
+# Kokoro TTS — primary engine (natural human-like speech)
+try:
+    from kokoro import KPipeline
+    import soundfile as sf
+    KOKORO_AVAILABLE = True
+except ImportError:
+    KOKORO_AVAILABLE = False
+    print("  [TTS] Kokoro TTS not installed, will use Edge TTS fallback")
+
+# faster-whisper for high-precision word timestamps (bypasses whisperX's VAD issues)
+try:
+    from faster_whisper import WhisperModel
+    FASTER_WHISPER_AVAILABLE = True
+except ImportError:
+    FASTER_WHISPER_AVAILABLE = False
+    print("  [TTS] faster-whisper not installed, will use fallback timestamps")
 
 server = FastMCP("tts-tool")
 
@@ -175,22 +194,172 @@ def _get_voice_parameters(voice_tone: str) -> dict:
         Dict with 'rate' and 'pitch' keys for edge_tts.Communicate()
     """
     # Prosody settings for Edge TTS API parameters
+    # Tuned for engaging, news-commentary style delivery
     prosody_settings = {
-        "authoritative": {"rate": "+0%",  "pitch": "+0Hz"},
-        "professional":  {"rate": "-5%",  "pitch": "-2Hz"},
-        "energetic":     {"rate": "+10%", "pitch": "+2Hz"},
-        "calm":          {"rate": "-10%", "pitch": "-4Hz"},
-        "deep":          {"rate": "-5%",  "pitch": "-5Hz"},
-        "female_professional": {"rate": "-3%", "pitch": "+0Hz"},
-        "female_energetic":    {"rate": "+8%", "pitch": "+3Hz"},
-        "male_casual":         {"rate": "+5%", "pitch": "+0Hz"},
+        "authoritative": {"rate": "+10%", "pitch": "+2Hz"},   # Faster, sharper
+        "professional":  {"rate": "+5%",  "pitch": "+0Hz"},   # Confident but clear
+        "energetic":     {"rate": "+15%", "pitch": "+4Hz"},   # High energy, urgent
+        "calm":          {"rate": "+0%",  "pitch": "-2Hz"},   # Slower, thoughtful
+        "deep":          {"rate": "+5%",  "pitch": "-3Hz"},   # Deep but not sluggish
+        "female_professional": {"rate": "+5%", "pitch": "+0Hz"},
+        "female_energetic":    {"rate": "+12%", "pitch": "+4Hz"},
+        "male_casual":         {"rate": "+8%",  "pitch": "+1Hz"},
     }
     return prosody_settings.get(voice_tone, {"rate": "+0%", "pitch": "+0Hz"})
+
+# Kokoro voice packs (American English voices)
+KOKORO_VOICES = {
+    "authoritative": "af_heart",       # Warm, confident female voice
+    "professional": "af_bella",        # Clear, professional female voice
+    "energetic": "af_heart",           # Warm confident voice (works well for news)
+    "calm": "af_bella",               # Clear, calm female voice
+    "deep": "am_adam",                 # Deep, authoritative male voice
+    "female_professional": "af_bella",
+    "female_energetic": "af_heart",
+    "male_casual": "am_adam",
+}
+
+# Default voice if tone not found
+KOKORO_DEFAULT_VOICE = "af_heart"
+
+
+def _generate_kokoro_tts(clean_text: str, voice_tone: str, filepath: Path) -> Optional[dict]:
+    """
+    Generate speech using Kokoro TTS (primary engine).
+    Returns metadata dict on success, None on failure.
+    """
+    if not KOKORO_AVAILABLE:
+        return None
+    
+    try:
+        voice_pack = KOKORO_VOICES.get(voice_tone, KOKORO_DEFAULT_VOICE)
+        print(f"  [KOKORO] Generating speech with voice '{voice_pack}'...")
+        
+        # Initialize Kokoro pipeline (American English)
+        pipeline = KPipeline(lang_code='a')
+        
+        # Generate audio — Kokoro returns grapheme-level segments
+        audio_segments = []
+        sample_rate = 24000  # Kokoro default sample rate
+        
+        for graphemes, phonemes, audio in pipeline(clean_text, voice=voice_pack):
+            if audio is not None:
+                audio_segments.append(audio)
+        
+        if not audio_segments:
+            print(f"  [KOKORO] No audio segments generated")
+            return None
+        
+        # Concatenate all audio segments
+        full_audio = np.concatenate(audio_segments)
+        
+        # Save as WAV first (Kokoro outputs numpy arrays)
+        wav_path = filepath.with_suffix('.wav')
+        sf.write(str(wav_path), full_audio, sample_rate)
+        
+        # Convert WAV to MP3 using moviepy for smaller file size
+        try:
+            from moviepy.audio.io.AudioFileClip import AudioFileClip
+            clip = AudioFileClip(str(wav_path))
+            clip.write_audiofile(str(filepath), verbose=False, logger=None)
+            clip.close()
+            # Remove temporary WAV
+            wav_path.unlink(missing_ok=True)
+        except Exception:
+            # If MP3 conversion fails, just use the WAV
+            filepath = wav_path
+            print(f"  [KOKORO] Using WAV format (MP3 conversion failed)")
+        
+        duration = len(full_audio) / sample_rate
+        file_size = filepath.stat().st_size
+        
+        print(f"  [KOKORO] Generated {duration:.1f}s of natural speech")
+        
+        return {
+            "success": True,
+            "filename": filepath.name,
+            "path": str(filepath),
+            "voice": f"kokoro_{voice_pack}",
+            "voice_tone": voice_tone,
+            "text_length": len(clean_text),
+            "word_count": len(clean_text.split()),
+            "file_size_bytes": file_size,
+            "estimated_duration_seconds": round(duration, 2),
+            "audio_mastered": False,
+            "output_directory": str(OUTPUT_DIR),
+            "engine": "kokoro",
+        }
+    
+    except Exception as e:
+        print(f"  [KOKORO] Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def _generate_edge_tts(clean_text: str, voice_tone: str, filepath: Path) -> Optional[dict]:
+    """
+    Generate speech using Edge TTS (fallback engine).
+    Returns metadata dict on success, None on failure.
+    """
+    voice = VOICE_MAPPING.get(voice_tone, VOICE_MAPPING["authoritative"])
+    voice_params = _get_voice_parameters(voice_tone)
+    
+    try:
+        async def generate_audio():
+            communicate = edge_tts.Communicate(
+                clean_text, 
+                voice,
+                rate=voice_params["rate"],
+                pitch=voice_params["pitch"]
+            )
+            await communicate.save(str(filepath))
+        
+        # Retry logic for Edge TTS
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                asyncio.run(generate_audio())
+                break
+            except Exception as e:
+                if "403" in str(e) and attempt < max_retries - 1:
+                    print(f"  [WARN] Edge TTS 403 error, retrying ({attempt + 1}/{max_retries})...")
+                    time.sleep(1)
+                    continue
+                else:
+                    raise e
+        
+        if not filepath.exists():
+            return None
+        
+        file_size = filepath.stat().st_size
+        word_count = len(clean_text.split())
+        estimated_duration = word_count / 2.5
+        
+        return {
+            "success": True,
+            "filename": filepath.name,
+            "path": str(filepath),
+            "voice": voice,
+            "voice_tone": voice_tone,
+            "text_length": len(clean_text),
+            "word_count": word_count,
+            "file_size_bytes": file_size,
+            "estimated_duration_seconds": round(estimated_duration, 2),
+            "audio_mastered": False,
+            "output_directory": str(OUTPUT_DIR),
+            "engine": "edge_tts",
+        }
+    
+    except Exception as e:
+        print(f"  [TTS] Edge TTS failed: {e}")
+        return None
+
 
 @server.tool()
 def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     """
-    Generate high-fidelity voiceover using Edge TTS.
+    Generate high-fidelity voiceover using Kokoro TTS (primary) or Edge TTS (fallback).
     
     Args:
         text: Script text to convert to speech
@@ -211,189 +380,217 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     if voice_tone == "authoritative":
         voice_tone = select_voice_for_content(text, default_tone="authoritative")
 
-    voice = VOICE_MAPPING.get(voice_tone, VOICE_MAPPING["authoritative"])
-
     # Clean the text (remove formatting, underscores, etc.)
     clean_text = _add_natural_pacing(text)
-    
-    # Get rate/pitch parameters for Edge TTS API
-    voice_params = _get_voice_parameters(voice_tone)
     
     filename = f"voiceover_{voice_tone}_{hash(text) % 10000}.mp3"
     filepath = OUTPUT_DIR / filename
     
-    try:
-        async def generate_audio():
-            # Edge TTS accepts plain text + rate/pitch parameters (NO SSML)
-            communicate = edge_tts.Communicate(
-                clean_text, 
-                voice,
-                rate=voice_params["rate"],
-                pitch=voice_params["pitch"]
-            )
-            await communicate.save(str(filepath))
+    # === PRIMARY: Kokoro TTS (natural human-like speech) ===
+    if KOKORO_AVAILABLE:
+        print(f"  [TTS] Trying Kokoro TTS (primary engine)...")
+        result = _generate_kokoro_tts(clean_text, voice_tone, filepath)
         
-        # Retry logic for Edge TTS
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                asyncio.run(generate_audio())
-                break
-            except Exception as e:
-                if "403" in str(e) and attempt < max_retries - 1:
-                    print(f"  [WARN] Edge TTS 403 error, retrying ({attempt + 1}/{max_retries})...")
-                    time.sleep(1)  # Wait 1 second before retry
-                    continue
-                else:
-                    raise e
-        
-        if not filepath.exists():
-            return {
-                "success": False,
-                "error": f"Audio file was not created at {filepath}"
-            }
-
-        # Phase 5.2: Apply audio mastering
-        mastered = _apply_audio_mastering(filepath)
+        if result and result.get('success'):
+            # Apply audio mastering
+            mastered = _apply_audio_mastering(Path(result['path']))
+            if mastered:
+                print(f"  [TTS] Audio mastering applied")
+                result['audio_mastered'] = True
+                result['file_size_bytes'] = Path(result['path']).stat().st_size
+            
+            # Get word timestamps for subtitle sync
+            result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)
+            return result
+    
+    # === FALLBACK: Edge TTS ===
+    print(f"  [TTS] Kokoro unavailable/failed, trying Edge TTS (fallback)...")
+    result = _generate_edge_tts(clean_text, voice_tone, filepath)
+    
+    if result and result.get('success'):
+        # Apply audio mastering
+        mastered = _apply_audio_mastering(Path(result['path']))
         if mastered:
-            print(f"  [TTS] Audio mastering applied to {filename}")
-
-        file_size = filepath.stat().st_size
+            print(f"  [TTS] Audio mastering applied")
+            result['audio_mastered'] = True
+            result['file_size_bytes'] = Path(result['path']).stat().st_size
+        
+        # Get word timestamps for subtitle sync
+        result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)
+        return result
+    
+    # === LAST RESORT: Silent audio ===
+    print(f"  [TTS] All TTS engines failed, generating silent audio fallback...")
+    try:
+        from moviepy.audio.AudioClip import AudioArrayClip
+        
         word_count = len(text.split())
-        estimated_duration = word_count / 2.5
-
-        # Save word timestamps for subtitle sync
-        word_timestamps = _get_word_timestamps_sync(clean_text, voice, voice_params)
-
+        estimated_duration = max(word_count / 2.5, 10.0)
+        fps = 44100
+        
+        n_samples = int(estimated_duration * fps)
+        silence = np.zeros((n_samples, 1), dtype=np.float32)
+        
+        audio_clip = AudioArrayClip(silence, fps=fps)
+        audio_clip.write_audiofile(str(filepath), verbose=False, logger=None)
+        audio_clip.close()
+        
+        file_size = filepath.stat().st_size
+        
         return {
             "success": True,
-            "filename": filename,
+            "filename": filepath.name,
             "path": str(filepath),
-            "voice": voice,
+            "voice": "fallback_silent",
             "voice_tone": voice_tone,
             "text_length": len(text),
             "word_count": word_count,
             "file_size_bytes": file_size,
             "estimated_duration_seconds": round(estimated_duration, 2),
-            "audio_mastered": mastered,
+            "audio_mastered": False,
             "output_directory": str(OUTPUT_DIR),
-            "word_timestamps": word_timestamps,
+            "fallback_used": True,
         }
-    
-    except Exception as e:
-        print(f"  [TTS] Edge TTS failed: {e}")
-        print(f"  [TTS] Generating duration-matched silent audio fallback...")
-        
-        # Create fallback audio matching the estimated script duration
-        try:
-            import numpy as np
-            from moviepy.audio.AudioClip import AudioArrayClip
             
-            word_count = len(text.split())
-            estimated_duration = max(word_count / 2.5, 10.0)  # At least 10 seconds
-            fps = 44100
-            
-            print(f"  [TTS] Fallback duration: {estimated_duration:.1f}s ({word_count} words)")
-            
-            # Generate silent audio of correct duration
-            n_samples = int(estimated_duration * fps)
-            silence = np.zeros((n_samples, 1), dtype=np.float32)
-            
-            audio_clip = AudioArrayClip(silence, fps=fps)
-            audio_clip.write_audiofile(str(filepath), verbose=False, logger=None)
-            audio_clip.close()
-            
-            file_size = filepath.stat().st_size
-            
-            return {
-                "success": True,
-                "filename": filepath.name,
-                "path": str(filepath),
-                "voice": "fallback_silent",
-                "voice_tone": voice_tone,
-                "text_length": len(text),
-                "word_count": word_count,
-                "file_size_bytes": file_size,
-                "estimated_duration_seconds": round(estimated_duration, 2),
-                "audio_mastered": False,
-                "output_directory": str(OUTPUT_DIR),
-                "fallback_used": True,
-                "fallback_reason": str(e)
-            }
-                
-        except Exception as fallback_error:
-            return {
-                "success": False,
-                "error": f"Edge TTS failed: {str(e)}. Fallback also failed: {str(fallback_error)}",
-                "voice": voice,
-                "voice_tone": voice_tone
-            }
+    except Exception as fallback_error:
+        return {
+            "success": False,
+            "error": f"All TTS engines failed. Silent fallback also failed: {str(fallback_error)}",
+            "voice_tone": voice_tone
+        }
 
 
-def _get_word_timestamps_sync(text: str, voice: str, voice_params: dict) -> list:
+def _get_faster_whisper_timestamps(audio_path: str, text: str) -> list:
     """
-    Extract word-level timestamps from edge-tts.
-    Edge-tts 7.x only provides SentenceBoundary events, so we:
-    1. Capture sentence boundaries with timing
-    2. Split each sentence into words
-    3. Distribute word timing proportionally within the sentence
+    Use faster-whisper direct word timestamps for high-precision alignment.
+    Bypasses whisperX's VAD/pyannote/torchcodec issues.
+    ~10-20s on CPU for 60s audio, ~5s on GPU.
     Returns list of {'word': str, 'start': float, 'end': float}.
     """
+    if not FASTER_WHISPER_AVAILABLE:
+        print(f"  [TTS] faster-whisper not available, using calibrated estimation")
+        return _get_calibrated_timestamps(text, audio_path)
+    
     try:
-        async def _fetch_sentences():
-            communicate = edge_tts.Communicate(
-                text, voice,
-                rate=voice_params.get("rate", "+0%"),
-                pitch=voice_params.get("pitch", "+0Hz"),
-            )
-            sentences = []
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "float16" if device == "cuda" else "float32"
+        
+        # Check if real audio file exists and has content
+        if not os.path.exists(audio_path):
+            print(f"  [TTS] Audio file not found, using estimation")
+            return _get_calibrated_timestamps(text, None)
+        
+        # 1. Load faster-whisper model (base = fast, good accuracy)
+        print(f"  [TTS] faster-whisper: Loading model ({device})...")
+        model = WhisperModel("base", device=device, compute_type=compute_type)
+        
+        # 2. Transcribe with word timestamps enabled
+        print(f"  [TTS] faster-whisper: Running transcription with word timestamps...")
+        segments, info = model.transcribe(
+            audio_path,
+            language="en",
+            word_timestamps=True,
+            beam_size=5,
+            vad_filter=False,  # Skip VAD to avoid pyannote issues
+            condition_on_previous_text=True
+        )
+        
+        # 3. Extract word-level timestamps
+        timestamps = []
+        for segment in segments:
+            for word_data in segment.words:
+                timestamps.append({
+                    'word': word_data.word.strip(),
+                    'start': round(word_data.start, 3),
+                    'end': round(word_data.end, 3),
+                })
+        
+        if timestamps:
+            print(f"  [TTS] faster-whisper: {len(timestamps)} word timestamps (~50ms accuracy)")
+        else:
+            print(f"  [TTS] faster-whisper: No word timestamps returned, using calibration")
+            return _get_calibrated_timestamps(text, audio_path)
+        return timestamps
+    
+    except Exception as e:
+        print(f"  [TTS] faster-whisper failed: {e}, using calibrated estimation")
+        return _get_calibrated_timestamps(text, audio_path)
+
+
+def _get_calibrated_timestamps(text: str, audio_path: str = None) -> list:
+    """
+    Calibrated word timestamps based on audio file duration.
+    Reads actual audio file to get precise duration, then distributes words evenly.
+    Much better than static 2.5 words/sec estimation.
+    """
+    import moviepy.audio.io.AudioFileClip as afc
+    
+    # Get actual audio duration
+    if audio_path and os.path.exists(audio_path):
+        try:
+            clip = afc.AudioFileClip(audio_path)
+            duration = clip.duration
+            clip.close()
+        except:
+            duration = len(text.split()) / 2.5  # Fallback
+    else:
+        duration = len(text.split()) / 2.5
+    
+    words = text.split()
+    n_words = len(words)
+    
+    # Calculate dynamic word rate based on duration
+    words_per_sec = n_words / duration if duration > 0 else 2.5
+    print(f"  [TTS] Calibrated timestamps: {n_words} words, {duration:.1f}s = {words_per_sec:.2f} words/sec")
+    
+    # Distribute words evenly with small gaps for natural spacing
+    timestamps = []
+    gap_duration = duration * 0.02  # 2% of duration for pauses
+    word_duration = (duration - (gap_duration * n_words)) / n_words if n_words > 0 else duration
+    
+    current_time = 0
+    for word in words:
+        timestamps.append({
+            'word': word,
+            'start': round(current_time, 3),
+            'end': round(current_time + word_duration, 3),
+        })
+        current_time += word_duration + gap_duration
+    
+    return timestamps
+
+
+def _get_edge_tts_timestamps(text: str) -> list:
+    """
+    Fallback: try edge-tts WordBoundary events.
+    Falls back to sentence-based estimation if WordBoundary not available.
+    """
+    try:
+        communicate = edge_tts.Communicate(text)
+        words = []
+        
+        async def _fetch_words():
             async for chunk in communicate.stream():
-                if chunk["type"] == "SentenceBoundary":
-                    sentences.append({
-                        'text': chunk.get('text', '').strip(),
+                if chunk["type"] == "WordBoundary":
+                    words.append({
+                        'word': chunk.get('text', '').strip(),
                         'start': chunk.get('offset', 0) / 10_000_000,
                         'end': (chunk.get('offset', 0) + chunk.get('duration', 0)) / 10_000_000,
                     })
-            return sentences
-
-        sentence_boundaries = asyncio.run(_fetch_sentences())
-
-        if not sentence_boundaries:
-            print(f"  [TTS] No sentence boundaries returned, estimating from text")
-            return _estimate_word_timestamps(text)
-
-        # Distribute words proportionally within each sentence
-        word_timestamps = []
-        for sent in sentence_boundaries:
-            words = sent['text'].split()
-            if not words:
-                continue
-            sent_start = sent['start']
-            sent_dur = sent['end'] - sent['start']
-            total_chars = sum(len(w) for w in words)
-            if total_chars == 0:
-                total_chars = 1
-
-            current_time = sent_start
-            for word in words:
-                word_share = len(word) / total_chars
-                word_dur = sent_dur * word_share
-                word_timestamps.append({
-                    'word': word,
-                    'start': round(current_time, 4),
-                    'end': round(current_time + word_dur, 4),
-                })
-                current_time += word_dur
-                # Add small gap for space between words
-                gap = sent_dur * 0.02  # 2% of sentence duration for spacing
-                current_time += gap
-
-        if word_timestamps:
-            print(f"  [TTS] Subtitle timestamps: {len(sentence_boundaries)} sentences → {len(word_timestamps)} words")
-        return word_timestamps
-
+        
+        asyncio.run(_fetch_words())
+        
+        if words:
+            print(f"  [TTS] Edge-tts WordBoundary: {len(words)} words")
+            return words
+        
+        # Final fallback: estimation
+        print(f"  [TTS] WordBoundary not available, estimating...")
+        return _estimate_word_timestamps(text)
+    
     except Exception as e:
-        print(f"  [TTS] Timestamp extraction failed: {e}")
+        print(f"  [TTS] Edge-tts WordBoundary failed: {e}, estimating...")
         return _estimate_word_timestamps(text)
 
 
