@@ -151,15 +151,18 @@ def _apply_audio_mastering(input_path: Path) -> bool:
 
 def _add_natural_pacing(text: str) -> str:
     """
-    Clean script text and prepare it for natural speech.
-    Removes any stray formatting characters, underscores, or markup
-    that would be read literally by TTS.
+    Clean script text and prepare it for natural speech with comedic timing.
+    Removes stray formatting, then INJECTS pauses for:
+    - Punchlines (after !): beat pause for laugh/impact
+    - Rhetorical questions (after ?): thinking pause
+    - Sarcastic tone shifts: comma pauses around key phrases
+    - Quote marks: dramatic beat before/after quoted phrases
     
     Args:
         text: Original script text
     
     Returns:
-        Clean plain text safe for TTS or SSML inner content
+        Clean plain text with natural pause markers for TTS
     """
     # Strip any leftover SSML/XML tags (safety net)
     text = re.sub(r'<[^>]+>', '', text)
@@ -176,9 +179,43 @@ def _add_natural_pacing(text: str) -> str:
     # Strip markdown bold/italic markers
     text = re.sub(r'[*#`]', '', text)
     
+    # ── COMEDIC PAUSE INJECTION ──
+    
+    # 1. Exclamation marks → beat pause (punchline impact)
+    # "one shot before Easter!" → "one shot before Easter! ... "
+    text = re.sub(r'!\s*', '! ...  ', text)
+    
+    # 2. Question marks → rhetorical pause (let it land)
+    # "Think about it." before a question → add anticipation
+    text = re.sub(r'\?\s*', '? ...  ', text)
+    
+    # 3. Quoted phrases → dramatic beat before the reveal
+    # "one shot before Easter" → ... "one shot before Easter" ...
+    text = re.sub(r'"([^"]+)"', r'... "\1" ...', text)
+    
+    # 4. Colons before reveals → dramatic pause
+    # "The answer:" → "The answer ... "
+    text = re.sub(r':\s*', ' ...  ', text)
+    
+    # 5. Double dashes (em-dash substitutes) → beat pause
+    text = re.sub(r'\s*—\s*', ' ... ', text)
+    text = re.sub(r'\s*--\s*', ' ... ', text)
+    
+    # 6. Sentence-ending periods followed by short sentences → extra pause
+    # (This creates the "beat" timing for comedic delivery)
+    text = re.sub(r'\.\s+([A-Z])', r'. ...  \1', text)
+    
+    # ── CLEANUP ──
+    
     # Collapse multiple spaces/newlines into single space
     text = re.sub(r'[\r\n]+', ' ', text)
-    text = re.sub(r' {2,}', ' ', text)
+    text = re.sub(r' {2,}', '  ', text)
+    
+    # Remove any triple+ periods that aren't our deliberate "..."
+    text = re.sub(r'\.{4,}', '...', text)
+    
+    # Remove pause markers at very start
+    text = re.sub(r'^\s*\.{3}\s*', '', text)
     
     return text.strip()
 
@@ -209,7 +246,7 @@ def _get_voice_parameters(voice_tone: str) -> dict:
 
 # Kokoro voice packs (American English voices)
 KOKORO_VOICES = {
-    "authoritative": "af_heart",       # Warm, confident female voice
+    "authoritative": "am_adam",        # Deep, authoritative male anchor voice
     "professional": "af_bella",        # Clear, professional female voice
     "energetic": "af_heart",           # Warm confident voice (works well for news)
     "calm": "af_bella",               # Clear, calm female voice
@@ -219,8 +256,8 @@ KOKORO_VOICES = {
     "male_casual": "am_adam",
 }
 
-# Default voice if tone not found
-KOKORO_DEFAULT_VOICE = "af_heart"
+# Default voice — authoritative male anchor for news-commentary style
+KOKORO_DEFAULT_VOICE = "am_adam"
 
 
 def _generate_kokoro_tts(clean_text: str, voice_tone: str, filepath: Path) -> Optional[dict]:

@@ -39,7 +39,9 @@ PIXEL_ART_MODEL_CONFIG = {
     "optimized_for": ["pixel_art", "isometric", "16bit", "retro_style"],
     "supports_reference": True,
     "default_params": {
-        "image_size": "portrait_4_3",
+        "image_size": "custom",
+        "custom_width": 1088,
+        "custom_height": 1152,
         "num_inference_steps": 20,
         "guidance_scale": 3.5,
         "enable_safety_checker": False,
@@ -945,13 +947,19 @@ def generate_pixel_art(
                         base_args = {
                             "prompt": full_prompt,
                             "negative_prompt": NEGATIVE_PROMPT,
-                            "image_size": _gp.get('image_size', 'portrait_4_3'),
+                            "image_size": _gp.get('image_size', 'custom'),
                             "num_images": 1,
                             "num_inference_steps": _gp.get('num_inference_steps', 28),
                             "guidance_scale": _gp.get('guidance_scale', 3.5),
                             "enable_safety_checker": _gp.get('enable_safety_checker', False),
                             "output_format": _gp.get('output_format', 'png'),
                         }
+                        # Use explicit width/height for native scene dimensions (no cropping)
+                        custom_w = _gp.get('custom_width', 1088)
+                        custom_h = _gp.get('custom_height', 1152)
+                        base_args["width"] = custom_w
+                        base_args["height"] = custom_h
+                        print(f"  [IMG] Custom dimensions: {custom_w}×{custom_h}")
                         if seed is not None:
                             base_args["seed"] = seed
                         
