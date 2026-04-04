@@ -95,14 +95,15 @@ def _resize_image_fullscreen(img_path: str) -> ImageClip:
 def _apply_zoom_out(clip: ImageClip, duration: float) -> ImageClip:
     """
     Animated zoom-out: starts tight (cropped center) and gradually reveals full image.
+    Subtle 5% zoom — enough for life without losing image content.
     """
     def zoom_out_transform(get_frame, t):
         frame = get_frame(t)
         h, w = frame.shape[:2]
 
-        # Start at 10% crop (gentler than before), end at 0% crop
+        # Start at 5% crop (subtle), end at 0% crop (full frame)
         progress = t / duration if duration > 0 else 1.0
-        crop_pct = 0.10 * (1.0 - progress)
+        crop_pct = 0.05 * (1.0 - progress)
 
         crop_h = int(h * crop_pct)
         crop_w = int(w * crop_pct)
@@ -118,31 +119,27 @@ def _apply_zoom_out(clip: ImageClip, duration: float) -> ImageClip:
 
 def _apply_pan_top_to_bottom(clip: ImageClip, duration: float) -> ImageClip:
     """
-    Animated pan from top to bottom over the full image duration.
+    Animated pan from top to bottom — no wrapping.
+    Shifts the image down and fills the exposed top with the background color.
     """
+    bg_color = np.array([10, 5, 25], dtype=np.uint8)  # Dark navy background
+
     def pan_transform(get_frame, t):
         frame = get_frame(t)
         h, w = frame.shape[:2]
 
         progress = t / duration if duration > 0 else 1.0
 
-        # Pan range: scroll ~10% of frame height (gentler for visible area)
-        pan_range = int(h * 0.10)
+        # Pan range: scroll ~5% of frame height (subtle, no wrapping)
+        pan_range = int(h * 0.05)
         offset = int(pan_range * progress)
 
-        if offset > 0 and h - offset > 0:
-            result = frame.copy()
+        if offset > 0:
+            result = np.empty_like(frame)
+            # Shift image down by offset
             result[offset:, :] = frame[:h-offset, :]
-            result[:offset, :] = frame[h-offset:, :]
-            # Smooth blend at boundary
-            blend_h = min(30, offset)
-            if blend_h > 0:
-                for y in range(blend_h):
-                    alpha = y / blend_h
-                    result[offset - blend_h + y, :] = (
-                        frame[h - blend_h + y, :] * (1 - alpha)
-                        + frame[offset - blend_h + y, :] * alpha
-                    ).astype(np.uint8)
+            # Fill exposed top with background color (no wrapping!)
+            result[:offset, :] = bg_color
             return result
         return frame
 
