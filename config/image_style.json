@@ -22,11 +22,13 @@
   "generation_params": {
     "guidance_scale": 3.5,
     "num_inference_steps": 20,
-    "image_size": "square",
+    "image_size": "custom",
+    "custom_width": 1088,
+    "custom_height": 1152,
     "output_format": "png",
     "enable_safety_checker": false,
-    "render_resolution": [256, 256],
-    "target_resolution": [1080, 1152],
+    "render_resolution": [272, 288],
+    "target_resolution": [1088, 1152],
     "upscale_method": "nearest"
   },
 

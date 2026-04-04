@@ -43,8 +43,10 @@ AVATAR_PATH = Path(__file__).parent.parent / "assets" / "avatar" / "avatar_loop.
 def _resize_image_fullscreen(img_path: str) -> ImageClip:
     """
     Load image and fit it into the VISIBLE top area (1080x1152).
-    Cover-crop to fill the visible 60% zone, then place on full canvas.
-    Square images (1024x1024) -> barely any cropping -> almost full image visible.
+    
+    Native scene images are generated at 1088×1152 (flux requires mult of 16).
+    This crops just 4px per side — virtually no content lost.
+    Legacy images (square, portrait, etc.) use full cover-crop fallback.
     """
     img = Image.open(img_path)
     img_w, img_h = img.size
@@ -53,23 +55,30 @@ def _resize_image_fullscreen(img_path: str) -> ImageClip:
     visible_w = VIDEO_W   # 1080
     visible_h = TOP_H     # 1152
 
-    # Cover mode: fill the visible area, crop minimal excess
-    target_ratio = visible_w / visible_h  # ~0.9375
-    img_ratio = img_w / img_h
-
-    if img_ratio > target_ratio:
-        # Image is wider — crop sides to match visible area height
-        new_w = int(img_h * target_ratio)
-        left = (img_w - new_w) // 2
-        img = img.crop((left, 0, left + new_w, img_h))
+    # Check if image is already native scene size (1088×1152) — just crop 4px per side
+    if img_w >= visible_w and img_h >= visible_h and abs(img_w - visible_w) <= 16 and abs(img_h - visible_h) <= 16:
+        # Nearly native — crop the tiny excess (e.g., 1088→1080 = 4px per side)
+        left = (img_w - visible_w) // 2
+        top = (img_h - visible_h) // 2
+        img = img.crop((left, top, left + visible_w, top + visible_h))
+        print(f"  [SPLIT] Native scene image {img_w}×{img_h} → crop {left}px sides, {top}px top/bot")
     else:
-        # Image is taller — crop top/bottom to match visible area width
-        new_h = int(img_w / target_ratio)
-        top = (img_h - new_h) // 2
-        img = img.crop((0, top, img_w, top + new_h))
+        # Legacy image — cover-crop to fill visible area
+        target_ratio = visible_w / visible_h  # ~0.9375
+        img_ratio = img_w / img_h
 
-    # Resize to visible area dimensions
-    img = img.resize((visible_w, visible_h), Image.LANCZOS)
+        if img_ratio > target_ratio:
+            new_w = int(img_h * target_ratio)
+            left = (img_w - new_w) // 2
+            img = img.crop((left, 0, left + new_w, img_h))
+        else:
+            new_h = int(img_w / target_ratio)
+            top = (img_h - new_h) // 2
+            img = img.crop((0, top, img_w, top + new_h))
+
+        # Resize to visible area dimensions
+        img = img.resize((visible_w, visible_h), Image.LANCZOS)
+        print(f"  [SPLIT] Legacy image {img_w}×{img_h} → cover-crop to {visible_w}×{visible_h}")
 
     # Create full-frame canvas (1080x1920) and paste image at top
     canvas = Image.new('RGB', (VIDEO_W, VIDEO_H), (10, 5, 25))
