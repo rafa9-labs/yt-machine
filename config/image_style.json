@@ -22,11 +22,11 @@
   "generation_params": {
     "guidance_scale": 3.5,
     "num_inference_steps": 20,
-    "image_size": "portrait_4_3",
+    "image_size": "square",
     "output_format": "png",
     "enable_safety_checker": false,
     "render_resolution": [256, 256],
-    "target_resolution": [1024, 1792],
+    "target_resolution": [1080, 1152],
     "upscale_method": "nearest"
   },
 
@@ -66,9 +66,9 @@
   "split_layout": {
     "width": 1080,
     "height": 1920,
-    "top_height": 960,
-    "bottom_height": 960,
-    "subtitle_band_height": 80,
+    "top_height": 1152,
+    "bottom_height": 768,
+    "subtitle_band_height": 140,
     "fps": 30,
     "avatar_path": "assets/avatar/avatar_loop.mp4"
   },

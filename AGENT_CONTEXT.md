@@ -157,14 +157,38 @@ generate_complete_video.py          ← Entry point: runs full pipeline
 ├── redfish/script_parser.py        ← Extracts visual concepts from script text
 ├── redfish/trending_analyzer.py    ← Real-time trending term extraction from RSS
 │
-├── video_server/pixel_art_tool.py  ← FAL.ai image generation + I2I reference
-├── video_server/tts_tool.py        ← Microsoft edge-tts voiceover
-├── video_server/assembler_tool.py  ← moviepy video assembly with camera movements
+├── video_server/pixel_art_tool.py          ← FAL.ai image generation + I2I reference
+├── video_server/tts_tool.py                ← Microsoft edge-tts voiceover
+├── video_server/split_video_assembler.py   ← Full-screen image bg + animated zoom/pan + avatar
+├── video_server/subtitle_renderer.py       ← Karaoke subtitles with word alignment + title overlay
+├── video_server/assembler_tool.py          ← Legacy assembler (not used in main pipeline)
 │
-├── config/system_prompts.json      ← LLM personas and script structure
-├── config/image_style.json         ← Visual style single source of truth
-└── output/projects/<id>/           ← Generated video, images, audio, manifest
+├── config/system_prompts.json              ← LLM personas and script structure
+├── config/image_style.json                 ← Visual style single source of truth (1080×1920)
+└── output/projects/<id>/                   ← Generated video, images, audio, manifest
 ```
+
+### Video Layout (1080×1920 vertical)
+```
+┌──────────────────────────┐
+│  HOOK / TITLE TEXT       │  ← Fades in, top overlay, outlined
+│                          │
+│  Full-screen scene image │  ← Animated zoom-out or pan-top-to-bottom
+│  with Ken Burns effects  │
+│                          │
+│  KARAOKE SUBTITLES       │  ← 5-word phrases, yellow highlight, outline only
+│  (no black bar)          │     positioned above center
+│                          │
+│  AVATAR LOOP             │  ← Bottom half (1080×960), pixel art character
+│  (bottom 50%)            │
+└──────────────────────────┘
+```
+
+### Subtitle System
+- **Word alignment**: Whisper timestamps mapped to original script words (not whisper transcription)
+- **Phrase display**: 5 words at a time with yellow karaoke highlight
+- **No background band**: Outlined text only (black outline, no rectangle)
+- **Title overlay**: Hook text displayed at top with fade-in for first 5 seconds
  
 ### Key Dependencies
 - **Ollama** running at localhost:11434 (local LLM — no API cost)

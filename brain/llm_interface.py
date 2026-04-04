@@ -393,6 +393,161 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             script["estimated_duration"] = int(total_words / 2.5)
         return script
     
+    def _get_time_greeting(self) -> str:
+        """Get time-of-day greeting for Masker personality."""
+        from datetime import datetime
+        hour = datetime.now().hour
+        if hour < 12:
+            return "Good Morning! I'm Masker! And I'll be your news person for today! Here are the main news in geopolitics!"
+        elif hour < 18:
+            return "Good Afternoon! I'm Masker! And here are your top three stories in geopolitics today!"
+        else:
+            return "Good Evening! I'm Masker! And here's your geopolitics speed round for tonight!"
+    
+    def synthesize_multi_news_script(
+        self,
+        news_analyses: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Generate a 3-news Masker personality script.
+        Each news_analysis dict should have: topic, key_facts, angle, impact_score.
+        """
+        prompt_config = self.config["prompts"]["multi_news_synthesizer"]
+        
+        greeting = self._get_time_greeting()
+        
+        # Build news summaries block
+        news_block = ""
+        for i, analysis in enumerate(news_analyses, 1):
+            news_block += f"""
+NEWS STORY {i}:
+- Topic: {analysis.get('topic', 'N/A')}
+- Key Facts: {', '.join(analysis.get('key_facts', []))}
+- Angle: {analysis.get('angle', 'N/A')}
+- Impact Score: {analysis.get('impact_score', 5)}/10
+- Second-order consequence: {analysis.get('second_order_consequence', 'N/A')}
+"""
+        
+        prompt = f"""Create a fun, sassy 3-news script for Masker the news host.
+
+GREETING TO USE: "{greeting}"
+
+{news_block}
+
+CRITICAL: Output ONLY the JSON object. NO explanatory text before or after. NO markdown. Start with {{ and end with }}.
+
+IMPORTANT: The greeting field should be EXACTLY: {greeting}
+The full_text must include the greeting, all three stories with transitions, and the closing as one continuous narration paragraph.
+
+Remember: Be witty, sassy, but accurate. Simplify complex geopolitics so anyone can understand it.
+Target: 180-250 words total for 75-90 seconds."""
+        
+        response = self.generate(
+            prompt=prompt,
+            system_prompt=prompt_config["system_prompt"],
+            temperature=prompt_config["temperature"],
+            max_tokens=prompt_config["max_tokens"]
+        )
+        
+        if not response:
+            return None
+        
+        script = self._extract_json(response)
+        if not script or not isinstance(script, dict):
+            print(f"Failed to parse multi-news script JSON")
+            print(f"Raw response: {response[:500]}")
+            return None
+        
+        # Ensure greeting is set correctly
+        script['greeting'] = greeting
+        
+        # Ensure stories exist
+        if 'stories' not in script or not script.get('stories'):
+            print(f"  [MULTI-NEWS] No stories in response — falling back")
+            return None
+        
+        # Build full_text if missing or incomplete
+        if not script.get('full_text') or len(script.get('full_text', '').split()) < 30:
+            parts = [greeting]
+            for story in script['stories']:
+                parts.append(story.get('mini_hook', ''))
+                parts.append(story.get('body', ''))
+                transition = story.get('transition', '')
+                if transition:
+                    parts.append(transition)
+            parts.append(script.get('closing', "That's your update! See you next time!"))
+            script['full_text'] = ' '.join(filter(None, parts))
+        
+        # Calculate accurate word count and duration
+        script['word_count'] = len(script['full_text'].split())
+        script['estimated_duration'] = int(script['word_count'] / 2.5)
+        
+        # Extract all visual scenes into flat list for image generation
+        all_visual_scenes = []
+        for story in script['stories']:
+            for scene in story.get('visual_scenes', []):
+                all_visual_scenes.append(scene)
+        script['all_visual_scenes'] = all_visual_scenes
+        
+        print(f"  [MULTI-NEWS] Script: {len(script['stories'])} stories, {script['word_count']} words, ~{script['estimated_duration']}s")
+        
+        return script
+    
+    def curate_script(self, full_text: str) -> Optional[str]:
+        """
+        Second-pass LLM curation: transforms written script into natural spoken language.
+        Optimizes rhythm, pauses, emphasis, pacing — without changing any facts.
+        """
+        prompt_config = self.config["prompts"]["script_curator"]
+        
+        prompt = f"""Transform this news script from written text into natural, human-sounding spoken language.
+
+RULES:
+- NEVER change facts, numbers, or country names
+- NEVER add or remove information
+- Break long sentences into short punchy ones
+- Use '...' for dramatic pauses
+- Use '—' for abrupt contrasts
+- Move key numbers to end of sentences (punch position)
+- Use contractions ALWAYS (it's, they're, won't)
+- Create rhythm: alternate short punchy + longer explanatory sentences
+- Balance all 3 stories to roughly equal word count (40-55 words each)
+
+ORIGINAL SCRIPT:
+{full_text}
+
+Output ONLY the curated spoken script as plain text. No JSON. No explanations."""
+
+        response = self.generate(
+            prompt=prompt,
+            system_prompt=prompt_config["system_prompt"],
+            temperature=prompt_config["temperature"],
+            max_tokens=prompt_config["max_tokens"]
+        )
+        
+        if not response:
+            print(f"  [CURATOR] Curation failed, using original script")
+            return full_text
+        
+        # Clean any accidental markdown wrapping
+        curated = response.strip()
+        if curated.startswith('```'):
+            curated = curated.split('\n', 1)[-1]
+        if curated.endswith('```'):
+            curated = curated.rsplit('```', 1)[0]
+        curated = curated.strip()
+        
+        word_count_original = len(full_text.split())
+        word_count_curated = len(curated.split())
+        
+        # Sanity check: curated script should be similar length (±30%)
+        if word_count_curated < word_count_original * 0.5:
+            print(f"  [CURATOR] Curated script too short ({word_count_curated} vs {word_count_original}), using original")
+            return full_text
+        
+        print(f"  [CURATOR] Script curated: {word_count_original} → {word_count_curated} words")
+        return curated
+    
     def check_connection(self) -> bool:
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=5)
