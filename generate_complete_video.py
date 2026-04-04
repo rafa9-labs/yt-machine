@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import json
 import time
+from datetime import datetime
 
 # Fix Unicode encoding for Windows console
 if sys.platform == 'win32':
@@ -11,19 +12,12 @@ if sys.platform == 'win32':
 
 load_dotenv()
 
-print("🎬 YT-MACHINE COMPLETE VIDEO GENERATION")
-print("="*60)
+print("🎬 YT-MACHINE COMPLETE VIDEO GENERATION (3-News Format)")
+print("=" * 60)
 
 
 def _extract_segment_text(segment_data) -> str:
-    """
-    Extract plain text from a script segment that may be a string or dict.
-    The LLM returns segments in various formats:
-      - str: "Seven US military bases..."
-      - dict with 'text': {"text": "Seven US military bases..."}
-      - dict with 'narration': {"narration": "Seven US military bases..."}
-      - dict with 'content': {"content": "Seven US military bases..."}
-    """
+    """Extract plain text from a script segment that may be a string or dict."""
     if isinstance(segment_data, str):
         return segment_data
     if isinstance(segment_data, dict):
@@ -50,206 +44,158 @@ project_folder = Path(f"output/projects/video_{project_id}")
 project_folder.mkdir(parents=True, exist_ok=True)
 
 print(f"📁 Project folder: {project_folder}")
+print(f"🕐 Time of day: {datetime.now().strftime('%H:%M')} → greeting will be {'Morning' if datetime.now().hour < 12 else 'Afternoon' if datetime.now().hour < 18 else 'Evening'}")
 
-print("\n📰 STEP 1: FETCHING LATEST NEWS")
+# ============================================================
+# STEP 1: FETCH LATEST NEWS (Top 3)
+# ============================================================
+print("\n📰 STEP 1: FETCHING LATEST NEWS (Top 3)")
 print("-" * 40)
 
+articles = []
 try:
     from redfish.rss_scraper import RSScraper
     scraper = RSScraper()
     
-    # Check if manual selection exists
-    manual_selection_file = Path("output/manual_selection.json")
+    print("Scraping RSS feeds...")
+    all_articles = scraper.scrape_all(max_age_hours=24)
+    print(f"Found {len(all_articles)} articles")
     
-    if manual_selection_file.exists() and '--manual' in sys.argv:
-        print("Using manually selected article...")
-        with open(manual_selection_file, 'r', encoding='utf-8') as f:
-            article = json.load(f)
-        print(f"✅ Selected: {article['title'][:80]}...")
-        # Delete the selection file after use
-        manual_selection_file.unlink()
-    else:
-        print("Scraping RSS feeds...")
-        articles = scraper.scrape_all(max_age_hours=24)
-        print(f"Found {len(articles)} articles")
-        
-        viral_articles = scraper.filter_viral_potential(articles, top_n=5)
-        
-        if not viral_articles:
+    # Get top 3 viral articles (diverse topics)
+    viral_articles = scraper.filter_viral_potential(all_articles, top_n=10)
+    
+    if len(viral_articles) < 3:
+        print(f"⚠️  Only found {len(viral_articles)} articles, need at least 3")
+        # Try to use what we have
+        if len(viral_articles) == 0:
             print("❌ No suitable articles found")
             exit(1)
-        
-        article = viral_articles[0]
-        print(f"✅ Selected: {article['title'][:80]}...")
+    
+    # Pick top 3 diverse articles (avoid same topic)
+    selected = []
+    seen_topic_words = []  # list of frozensets (hashable)
+    for article in viral_articles:
+        title_lower = article.get('title', '').lower()
+        # Simple topic diversity check — skip if too similar to already selected
+        topic_words = frozenset(title_lower.split()[:5])
+        is_duplicate = False
+        for seen in seen_topic_words:
+            overlap = len(topic_words & seen)
+            if overlap >= 3:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            selected.append(article)
+            seen_topic_words.append(topic_words)
+        if len(selected) >= 3:
+            break
+    
+    # Fill remaining slots if not enough diverse articles
+    while len(selected) < 3 and len(viral_articles) > len(selected):
+        for a in viral_articles:
+            if a not in selected:
+                selected.append(a)
+                break
+        if len(selected) >= 3:
+            break
+    
+    articles = selected[:3]
+    
+    for i, a in enumerate(articles, 1):
+        print(f"  ✅ Story {i}: {a['title'][:70]}...")
     
 except Exception as e:
     print(f"❌ News scraping failed: {e}")
     exit(1)
 
-print("\n🔍 STEP 2: NEWS ANALYSIS")
+# ============================================================
+# STEP 2: QUICK ANALYSIS (All 3 articles)
+# ============================================================
+print("\n🔍 STEP 2: QUICK NEWS ANALYSIS (3 articles)")
 print("-" * 40)
 
-try:
-    print("Fetching full article text...")
-    article_text = scraper.get_full_article_text(article)
-    print(f"  Article length: {len(article_text)} chars")
-    news_analysis = llm.process_news(article_text)
-    
-    if not news_analysis:
-        print("❌ News analysis failed")
-        exit(1)
-    
-    print(f"✅ Topic: {news_analysis.get('topic', 'N/A')}")
-    print(f"✅ Impact Score: {news_analysis.get('impact_score', 0)}/10")
-    
-except Exception as e:
-    print(f"❌ News analysis failed: {e}")
+news_analyses = []
+for i, article in enumerate(articles, 1):
+    try:
+        print(f"\n  Analyzing story {i}...")
+        article_text = scraper.get_full_article_text(article)
+        print(f"    Article length: {len(article_text)} chars")
+        analysis = llm.process_news(article_text)
+        
+        if analysis:
+            print(f"    ✅ Topic: {analysis.get('topic', 'N/A')[:60]}")
+            print(f"    ✅ Impact: {analysis.get('impact_score', 0)}/10")
+            news_analyses.append(analysis)
+        else:
+            print(f"    ❌ Analysis failed for story {i}")
+    except Exception as e:
+        print(f"    ❌ Story {i} analysis failed: {e}")
+
+if len(news_analyses) < 2:
+    print(f"❌ Need at least 2 analyzed stories, got {len(news_analyses)}")
     exit(1)
 
-print("\n🔬 STEP 2.5: SALIENCE EXTRACTION")
+print(f"\n✅ Analyzed {len(news_analyses)} stories successfully")
+
+# ============================================================
+# STEP 3: TRENDING CONTEXT (optional boost)
+# ============================================================
+print("\n🔬 STEP 3: TRENDING CONTEXT ANALYSIS")
 print("-" * 40)
 
-salience_data = None
-try:
-    from redfish.salience_extractor import SalienceExtractor
-    
-    salience_ext = SalienceExtractor(llm)
-    salience_data = salience_ext.extract(article_text)
-    
-    if salience_data:
-        print(f"✅ Conflict: {salience_data.get('conflict', 'N/A')[:60]}...")
-        print(f"✅ Consequence chain: {len(salience_data.get('consequence_chain', []))} steps")
-        print(f"✅ Emotional anchors: {len(salience_data.get('emotional_anchors', []))} found")
-        print(f"✅ Visual subjects: {len(salience_data.get('key_visual_subjects', []))} found")
-    else:
-        print("⚠️  Salience extraction returned empty")
-    
-except Exception as e:
-    print(f"⚠️  Salience extraction failed: {e}")
-
-print("\n🔬 STEP 2.7: HISTORICAL PARALLEL ANALYSIS")
-print("-" * 40)
-
-historical_parallels = None
-try:
-    from redfish.historical_analyzer import HistoricalAnalyzer
-    
-    hist_analyzer = HistoricalAnalyzer(llm)
-    historical_parallels = hist_analyzer.find_historical_parallels(article_text, news_analysis, max_parallels=3)
-    
-    if historical_parallels and 'parallels' in historical_parallels:
-        print(f"✅ Found {len(historical_parallels['parallels'])} historical parallels:")
-        for i, parallel in enumerate(historical_parallels['parallels'][:2], 1):
-            print(f"  {i}. {parallel.get('event_name', 'N/A')} ({parallel.get('year', 'N/A')})")
-        print(f"✅ Pattern: {historical_parallels.get('historical_pattern', 'N/A')[:60]}...")
-    else:
-        print("⚠️  Historical analysis returned empty")
-    
-except Exception as e:
-    print(f"⚠️  Historical analysis failed: {e}")
-
-print("\n� STEP 2.6: TRENDING CONTEXT ANALYSIS")
-print("-" * 40)
-
+trending_context = {}
 try:
     from redfish.trending_analyzer import TrendingAnalyzer
-    
     trending_analyzer = TrendingAnalyzer()
-    trending_context = trending_analyzer.analyze(articles, top_n=40)
-    
-    print(f"✅ Trending terms extracted: {len(trending_context)} terms")
-    
-    # Show top 5 trending terms
-    top_trending = sorted(trending_context.items(), key=lambda x: x[1]['score'], reverse=True)[:5]
-    for term, data in top_trending:
-        print(f"  • {term}: {data['category']} (score: {data['score']:.2f})")
-    
+    trending_context = trending_analyzer.analyze(all_articles, top_n=40)
+    print(f"✅ Trending terms: {len(trending_context)}")
 except Exception as e:
     print(f"⚠️  Trending analysis failed: {e}")
-    trending_context = {}
 
-print("\n🔬 STEP 2.7: VISUAL ELEMENT EXTRACTION (FALLBACK)")
+# ============================================================
+# STEP 4: MULTI-NEWS SCRIPT SYNTHESIS (Masker personality)
+# ============================================================
+print("\n🎭 STEP 4: MULTI-NEWS SCRIPT SYNTHESIS (Masker)")
 print("-" * 40)
 
 try:
-    from redfish.visual_extractor import VisualElementExtractor
-    from redfish.prompt_generator import VisualPromptGenerator
-    from redfish.prompt_validator import calculate_prompt_relevance
-    
-    visual_extractor = VisualElementExtractor(llm)
-    visual_elements = visual_extractor.extract_visual_elements(article_text)
-    
-    print(f"✅ Subjects: {len(visual_elements.get('primary_subjects', []))} items (fallback)")
-    print(f"✅ Settings: {len(visual_elements.get('settings', []))} found (fallback)")
-    print(f"✅ Actions: {len(visual_elements.get('actions', []))} verbs (fallback)")
-    
-except Exception as e:
-    print(f"⚠️  Visual extraction failed: {e}")
-    visual_elements = {
-        'primary_subjects': [],
-        'settings': [],
-        'actions': [],
-        'mood': 'tense',
-        'temporal_context': ''
-    }
-
-print("\n🎭 STEP 3: DEBATE GENERATION")
-print("-" * 40)
-
-try:
-    skeptic = llm.debate_skeptic(news_analysis)
-    explainer = llm.debate_explainer(news_analysis, skeptic or {})
-    print("✅ Debate components generated")
-    
-except Exception as e:
-    print(f"❌ Debate generation failed: {e}")
-    exit(1)
-
-print("\n📝 STEP 4: SCRIPT SYNTHESIS (LLM-Generated)")
-print("-" * 40)
-
-try:
-    print("Synthesizing narrative script with historical anchoring...")
-    script = llm.synthesize_script(news_analysis, skeptic, explainer, salience_data, historical_parallels)
+    print("Generating Masker personality script with 3 stories...")
+    script = llm.synthesize_multi_news_script(news_analyses)
     
     if not script:
-        print("❌ Script synthesis failed")
+        print("❌ Multi-news script synthesis failed")
         exit(1)
     
-    # Build full_text from segments if not provided by LLM
-    if 'full_text' not in script or not script['full_text']:
-        segments = []
-        # Support both 6-segment and 5-segment structures
-        if 'historical_1' in script:
-            segment_names = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
-        else:
-            segment_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
-        
-        for seg in segment_names:
-            text = _extract_segment_text(script.get(seg, ''))
-            if text:
-                segments.append(text)
-        script['full_text'] = ' '.join(segments)
+    full_script = script.get('full_text', '')
+    if not full_script:
+        # Build from stories
+        parts = [script.get('greeting', '')]
+        for story in script.get('stories', []):
+            parts.append(story.get('mini_hook', ''))
+            parts.append(story.get('body', ''))
+            t = story.get('transition', '')
+            if t:
+                parts.append(t)
+        parts.append(script.get('closing', ''))
+        full_script = ' '.join(filter(None, parts))
+        script['full_text'] = full_script
     
-    full_script = script['full_text']
-    
-    # Calculate word count if missing
-    # Always recalculate — LLM often returns inaccurate word counts
     script['word_count'] = len(full_script.split())
     script['estimated_duration'] = int(len(full_script.split()) / 2.5)
     
     print(f"✅ Script synthesized (~{script.get('estimated_duration', 0)}s)")
-    print(f"  Hook: {_extract_segment_text(script.get('hook', 'N/A'))[:80]}...")
+    print(f"  Greeting: {script.get('greeting', 'N/A')[:70]}...")
+    for i, story in enumerate(script.get('stories', []), 1):
+        print(f"  Story {i} hook: {story.get('mini_hook', 'N/A')[:60]}...")
+    print(f"  Closing: {script.get('closing', 'N/A')[:60]}...")
     print(f"  Words: {script.get('word_count', 0)}")
     
-    # Save script files for debugging
-    import json
+    # Save script files
     script_file = project_folder / "script.txt"
     script_file.write_text(full_script, encoding='utf-8')
     
     segments_file = project_folder / "script_segments.json"
-    segments_data = {k: v for k, v in script.items() if k in ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook', 'context', 'escalation', 'twist']}
-    segments_file.write_text(json.dumps(segments_data, indent=2, ensure_ascii=False), encoding='utf-8')
+    segments_file.write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding='utf-8')
     
     print(f"  📄 Script saved: {script_file.name}, {segments_file.name}")
     
@@ -259,85 +205,124 @@ except Exception as e:
     traceback.print_exc()
     exit(1)
 
-print("\n🎨 STEP 5: PIXEL ART GENERATION (SCRIPT-FIRST)")
+# ============================================================
+# STEP 4.5: SCRIPT CURATION (LLM Speech Coach)
+# ============================================================
+print("\n🎙️ STEP 4.5: SCRIPT CURATION (Natural Delivery)")
 print("-" * 40)
 
 try:
-    # Phase 5.0: Script-first prompt generation with trending context
-    from redfish.script_parser import ScriptParser
+    original_text = full_script
+    print(f"  Original script: {len(original_text.split())} words")
     
-    print("Initializing script-first prompt generator...")
+    curated_text = llm.curate_script(original_text)
     
-    # NEW: Script-first approach with trending context
-    prompt_generator = VisualPromptGenerator(
-        script=script,
-        trending_context=trending_context,
-        news_analysis=news_analysis,
-        visual_elements=visual_elements
-    )
+    if curated_text and curated_text != original_text:
+        full_script = curated_text
+        script['full_text'] = curated_text
+        script['word_count'] = len(curated_text.split())
+        script['estimated_duration'] = int(len(curated_text.split()) / 2.5)
+        
+        # Save curated script
+        curated_file = project_folder / "script_curated.txt"
+        curated_file.write_text(curated_text, encoding='utf-8')
+        
+        print(f"  ✅ Script curated: {len(curated_text.split())} words")
+        print(f"  📄 Saved: {curated_file.name}")
+    else:
+        print(f"  ⚠️  Curation returned original, using as-is")
     
-    print(f"✅ Visual concepts extracted from script segments")
-    
-    # Generate prompts FROM SCRIPT (not from article)
-    print("\nGenerating image prompts from script content...")
-    scene_prompts = prompt_generator.generate_all_scenes()
-    num_scenes = len(scene_prompts)
-    
-    print(f"\n✅ {num_scenes} script-based prompts generated")
+except Exception as e:
+    print(f"  ⚠️  Curation failed: {e}, using original script")
+
+# ============================================================
+# STEP 5: PIXEL ART GENERATION (2 per story = 6 total)
+# ============================================================
+print("\n🎨 STEP 5: PIXEL ART GENERATION (2 per story)")
+print("-" * 40)
+
+try:
+    from redfish.prompt_generator import VisualPromptGenerator
+    from redfish.prompt_validator import calculate_prompt_relevance
     
     generated_images = []
     image_folder = project_folder / "images"
     image_folder.mkdir(exist_ok=True)
     
-    # Seed strategy: base_seed from project_id for batch consistency
-    # All 6 images in one video share a related seed family = consistent style
-    # Different videos get different base seeds = fresh content
-    base_seed = project_id % (2**32)  # Keep within 32-bit range
-    print(f"  Batch seed: {base_seed} (derived from project_id)")
+    # Base seed for batch consistency
+    base_seed = project_id % (2**32)
+    print(f"  Batch seed: {base_seed}")
     
-    # Determine scene names based on script structure
-    if 'historical_1' in script:
-        scene_names = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
-    else:
-        scene_names = ['hook', 'context', 'escalation', 'consequence', 'twist']
+    # Extract visual scene descriptions from script
+    all_visual_scenes = script.get('all_visual_scenes', [])
     
-    for scene_idx, scene_name in enumerate(scene_names):
-        print(f"\n  Generating {scene_name} scene...")
-        
-        # Get prompt (already generated from script)
-        prompt = scene_prompts[scene_name]
-        
-        # Show script segment preview — use robust extraction
-        segment_text = _extract_segment_text(script.get(scene_name, ''))
-        segment_preview = segment_text[:100]
-        print(f"    Script: {segment_preview}...")
-        
-        # Calculate relevance to script (not article)
-        relevance = calculate_prompt_relevance(prompt, segment_text)
-        print(f"    Script relevance: {relevance}%")
-        
-        # If relevance too low, try regeneration — but keep original if regeneration is worse
-        if relevance < 20:
-            print(f"    ⚠️  Very low script relevance ({relevance}%), regenerating...")
-            new_prompt = prompt_generator.regenerate_strict(scene_name)
-            new_relevance = calculate_prompt_relevance(new_prompt, segment_text)
-            print(f"    New relevance: {new_relevance}%")
-            if new_relevance > relevance:
-                prompt = new_prompt
-                relevance = new_relevance
+    # If no visual scenes, create from story content
+    if not all_visual_scenes or len(all_visual_scenes) < 6:
+        print("  ⚠️  Building visual scenes from story content...")
+        all_visual_scenes = []
+        for i, story in enumerate(script.get('stories', []), 1):
+            # Default scenes if LLM didn't provide them
+            story_scenes = story.get('visual_scenes', [])
+            if story_scenes:
+                all_visual_scenes.extend(story_scenes)
             else:
-                print(f"    Keeping original prompt (regeneration was worse)")
+                # Fallback: generate from story text
+                hook_text = story.get('mini_hook', '')
+                body_text = story.get('body', '')
+                all_visual_scenes.append({
+                    'scene': f'story_{i}_hook',
+                    'description': hook_text[:100]
+                })
+                all_visual_scenes.append({
+                    'scene': f'story_{i}_consequence',
+                    'description': body_text[:100]
+                })
+    
+    # Ensure we have exactly 6 scenes
+    while len(all_visual_scenes) < 6:
+        idx = len(all_visual_scenes) + 1
+        all_visual_scenes.append({
+            'scene': f'fallback_{idx}',
+            'description': f'Geopolitical scene {idx}, pixel art style, dramatic lighting'
+        })
+    
+    # Generate 6 images (2 per story)
+    scene_names_for_images = []
+    for i in range(3):
+        scene_names_for_images.append(f'story_{i+1}_hook')
+        scene_names_for_images.append(f'story_{i+1}_consequence')
+    
+    for scene_idx, scene_name in enumerate(scene_names_for_images):
+        print(f"\n  Generating {scene_name}...")
         
-        # Show prompt preview
-        print(f"    Prompt: {prompt[:120]}...")
+        # Get visual scene description
+        scene_data = all_visual_scenes[scene_idx] if scene_idx < len(all_visual_scenes) else None
+        if scene_data:
+            prompt = scene_data.get('description', '')
+        else:
+            prompt = f'Geopolitical pixel art scene {scene_idx + 1}'
         
-        # Generate image with seed for batch consistency
+        # Build full prompt with pixel art style
+        style_suffix = ('Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), '
+                       'isometric perspective, (hard pixel edges:1.2), limited color palette, '
+                       'detailed proportions, flat colors, dramatic lighting')
+        full_prompt = f"{prompt}, {style_suffix}" if prompt else style_suffix
+        
+        # Get corresponding story text for relevance check
+        story_idx = scene_idx // 2
+        story_text = ''
+        if story_idx < len(script.get('stories', [])):
+            story = script['stories'][story_idx]
+            story_text = f"{story.get('mini_hook', '')} {story.get('body', '')}"
+        
+        print(f"    Prompt: {full_prompt[:100]}...")
+        
+        # Generate image
         scene_seed = base_seed + scene_idx
-        art_result = generate_pixel_art(prompt, script_text=segment_text, seed=scene_seed)
+        art_result = generate_pixel_art(full_prompt, script_text=story_text, seed=scene_seed)
         print(f"    Seed: {scene_seed}")
         
         if art_result.get('success'):
-            # Move image to project folder
             src_path = Path(art_result.get('path'))
             dst_filename = f"{scene_name}_{src_path.name}"
             dst_path = image_folder / dst_filename
@@ -350,7 +335,7 @@ try:
         else:
             print(f"    ❌ Failed")
     
-    print(f"✅ Generated {len(generated_images)} images in {image_folder}")
+    print(f"\n✅ Generated {len(generated_images)} images in {image_folder}")
     
 except Exception as e:
     print(f"❌ Pixel art generation failed: {e}")
@@ -358,25 +343,28 @@ except Exception as e:
     traceback.print_exc()
     generated_images = []
 
+# ============================================================
+# STEP 6: VIDEO FOOTAGE (SKIP)
+# ============================================================
 print("\n🎥 STEP 6: VIDEO FOOTAGE (OPTIONAL)")
 print("-" * 40)
-
-# Skip video footage for now - using only pixel art
 print("⏭️  Skipping - using pixel art only")
 downloaded_files = []
 
+# ============================================================
+# STEP 7: VOICE GENERATION
+# ============================================================
 print("\n🎤 STEP 7: VOICE GENERATION")
 print("-" * 40)
 
 try:
-    print("Generating voiceover...")
+    print("Generating Masker voiceover...")
     
     tts_result = generate_voiceover(full_script, "authoritative")
     
     if tts_result.get('success'):
-        # Move audio to project folder
         src_audio = Path(tts_result.get('path'))
-        dst_audio = project_folder / f"voiceover.mp3"
+        dst_audio = project_folder / "voiceover.mp3"
         
         import shutil
         shutil.copy2(src_audio, dst_audio)
@@ -392,6 +380,9 @@ except Exception as e:
     print(f"❌ Voice generation failed: {e}")
     voice_file = None
 
+# ============================================================
+# STEP 8: VIDEO ASSEMBLY
+# ============================================================
 print("\n🎬 STEP 8: VIDEO ASSEMBLY")
 print("-" * 40)
 
@@ -405,8 +396,11 @@ try:
     video_filename = f"video_{project_id}.mp4"
     video_output_path = str(project_folder / video_filename)
     
-    # Get word timestamps from TTS result (for subtitle sync)
     word_timestamps = tts_result.get('word_timestamps', [])
+    
+    # Build hook text from all 3 story hooks for title overlay
+    hooks = [s.get('mini_hook', '') for s in script.get('stories', [])]
+    hook_text = script.get('greeting', ' | '.join(hooks))
     
     assembly_result = build_split_video(
         audio_path=voice_file,
@@ -414,11 +408,11 @@ try:
         output_path=video_output_path,
         script_text=full_script,
         word_timestamps=word_timestamps,
+        hook_text=hook_text,
     )
     
     if assembly_result.get('success'):
         final_video_path = assembly_result.get('path')
-        
         print(f"✅ VIDEO CREATED: {final_video_path}")
         print(f"  Duration: {assembly_result.get('duration_seconds')}s")
         print(f"  Size: {assembly_result.get('file_size_mb')}MB")
@@ -434,73 +428,60 @@ except Exception as e:
     traceback.print_exc()
     final_video_path = None
 
+# ============================================================
+# STEP 9: PLATFORM METADATA
+# ============================================================
 print("\n📋 STEP 9: PLATFORM METADATA GENERATION")
 print("-" * 40)
 
-# Generate platform-optimized metadata
 platform_metadata = {}
 try:
     from redfish.platform_metadata_generator import PlatformMetadataGenerator
     
     metadata_gen = PlatformMetadataGenerator()
-    platform_metadata = metadata_gen.generate_all_metadata(script, news_analysis, historical_parallels)
+    # Use first analysis for metadata base
+    platform_metadata = metadata_gen.generate_all_metadata(
+        script, news_analyses[0] if news_analyses else {}, None
+    )
     
-    # Save platform metadata to file
     metadata_path = project_folder / 'platform_metadata.json'
     with open(metadata_path, 'w', encoding='utf-8') as f:
         json.dump(platform_metadata, f, indent=2, ensure_ascii=False)
     
-    print(f"✅ Platform metadata generated:")
-    print(f"  TikTok: {platform_metadata['tiktok']['caption'][:60]}...")
-    print(f"  YouTube: {platform_metadata['youtube']['title'][:60]}...")
-    print(f"  Hashtags: {len(platform_metadata['common_hashtags'])} generated")
+    print(f"✅ Platform metadata generated")
+    print(f"  TikTok: {platform_metadata.get('tiktok', {}).get('caption', '')[:60]}...")
+    print(f"  YouTube: {platform_metadata.get('youtube', {}).get('title', '')[:60]}...")
     
 except Exception as e:
     print(f"⚠️  Platform metadata generation failed: {e}")
 
+# ============================================================
+# STEP 10: PROJECT SUMMARY
+# ============================================================
 print("\n📋 STEP 10: PROJECT SUMMARY")
 print("-" * 40)
-
-# Track video generation for diversity enforcement
-try:
-    from redfish.category_rotation import CategoryRotation
-    rotation = CategoryRotation()
-    
-    # Detect category and region from article
-    matched_categories = rotation.detect_article_categories(article)
-    category = matched_categories[0] if matched_categories else "other"
-    region = rotation._detect_region_from_title(article.get('title', ''))
-    
-    # Track the video
-    rotation.track_video_generated(
-        topic=news_analysis.get('topic', 'Unknown'),
-        category=category,
-        region=region,
-        article_title=article.get('title', 'Unknown')
-    )
-    
-    print(f"✅ Video tracked for diversity enforcement:")
-    print(f"  Category: {category}")
-    print(f"  Region: {region}")
-    
-except Exception as e:
-    print(f"⚠️  Video tracking failed: {e}")
 
 # Save project manifest
 manifest = {
     'project_id': project_id,
     'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-    'article': {
-        'title': article.get('title'),
-        'url': article.get('link'),
-        'source': article.get('feed_name')
-    },
-    'analysis': {
-        'topic': news_analysis.get('topic'),
-        'impact_score': news_analysis.get('impact_score'),
-        'shift_vector': news_analysis.get('shift_vector')
-    },
-    'historical_parallels': historical_parallels,
+    'format': 'multi_news_3',
+    'articles': [
+        {
+            'title': a.get('title'),
+            'url': a.get('link'),
+            'source': a.get('feed_name')
+        }
+        for a in articles
+    ],
+    'analyses': [
+        {
+            'topic': a.get('topic'),
+            'impact_score': a.get('impact_score'),
+            'shift_vector': a.get('shift_vector')
+        }
+        for a in news_analyses
+    ],
     'script': script,
     'platform_metadata': platform_metadata,
     'assets': {
@@ -517,13 +498,32 @@ with open(manifest_path, 'w', encoding='utf-8') as f:
 
 print(f"✅ Manifest saved: {manifest_path}")
 
+# Track video for diversity
+try:
+    from redfish.category_rotation import CategoryRotation
+    rotation = CategoryRotation()
+    if articles:
+        matched_categories = rotation.detect_article_categories(articles[0])
+        category = matched_categories[0] if matched_categories else "other"
+        region = rotation._detect_region_from_title(articles[0].get('title', ''))
+        rotation.track_video_generated(
+            topic=news_analyses[0].get('topic', 'Unknown') if news_analyses else 'Unknown',
+            category=category,
+            region=region,
+            article_title=articles[0].get('title', 'Unknown')
+        )
+        print(f"✅ Video tracked: {category} / {region}")
+except Exception as e:
+    print(f"⚠️  Video tracking failed: {e}")
+
 print("\n🎉 COMPLETE!")
-print("="*60)
+print("=" * 60)
 print(f"📁 PROJECT FOLDER: {project_folder}")
 print(f"📊 CONTENTS:")
 print(f"  📹 Video: {video_filename if final_video_path else 'FAILED'}")
+print(f"  📰 Stories: {len(news_analyses)} news items")
 print(f"  🎨 Images: {len(generated_images)} files")
 print(f"  🎤 Audio: voiceover.mp3")
 print(f"  📋 Manifest: manifest.json")
 print(f"\n🎬 FINAL VIDEO: {final_video_path if final_video_path else 'NOT CREATED'}")
-print("="*60)
+print("=" * 60)
