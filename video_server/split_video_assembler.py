@@ -1,10 +1,11 @@
 """
-Split-Screen Video Assembler — Top: scene images, Bottom: avatar animation.
-Composites a 1080×1920 vertical video for TikTok/Reels/Shorts.
-Layout:
-  - TOP HALF (1080×960): Pixel art scene images with pan/zoom
-  - SUBTITLE BAND (~80px): Word-synced subtitles at the center
-  - BOTTOM HALF (1080×960): Looping avatar animation on pixel background
+Split-Screen Video Assembler — Scene images top 60% + avatar bottom 40%.
+Composites a 1080x1920 vertical video for TikTok/Reels/Shorts.
+Layout (Option A — 60/40 split):
+  - SCENE AREA (1080x1152): Full scene images with animated zoom/pan (top 60%)
+  - TITLE OVERLAY: Hook text at the top with fade-in
+  - SUBTITLES: Karaoke-style outlined text near the bottom of the scene area
+  - AVATAR AREA (1080x768): Looping avatar animation (bottom 40%)
 """
 
 import os
@@ -26,66 +27,129 @@ except ImportError:
         CompositeVideoClip, concatenate_videoclips
     )
 
-from .subtitle_renderer import create_subtitle_clips
+from .subtitle_renderer import create_subtitle_clips, create_title_clip
 
-# Layout constants
+# Layout constants — Option A: 60% image / 40% avatar
 VIDEO_W = 1080
 VIDEO_H = 1920
-TOP_H = 960        # Top half height (scene images)
-BOTTOM_H = 960     # Bottom half height (avatar)
-SUBTITLE_H = 110   # Subtitle band height (must match subtitle_renderer)
+TOP_H = 1152       # Scene image area (60% of screen)
+BOTTOM_H = 768     # Avatar area (40% of screen)
 FPS = 30
 
 # Avatar asset path
 AVATAR_PATH = Path(__file__).parent.parent / "assets" / "avatar" / "avatar_loop.mp4"
 
 
-def _resize_image_to_top(img_path: str) -> ImageClip:
-    """Load an image and resize/crop to fill 1080×960 (top half)."""
+def _resize_image_fullscreen(img_path: str) -> ImageClip:
+    """
+    Load image and fit it into the VISIBLE top area (1080x1152).
+    Cover-crop to fill the visible 60% zone, then place on full canvas.
+    Square images (1024x1024) -> barely any cropping -> almost full image visible.
+    """
     img = Image.open(img_path)
     img_w, img_h = img.size
 
-    # Target aspect ratio
-    target_ratio = VIDEO_W / TOP_H  # 1.125
+    # Target: fit image into the visible top area (1080x1152)
+    visible_w = VIDEO_W   # 1080
+    visible_h = TOP_H     # 1152
+
+    # Cover mode: fill the visible area, crop minimal excess
+    target_ratio = visible_w / visible_h  # ~0.9375
     img_ratio = img_w / img_h
 
     if img_ratio > target_ratio:
-        # Image is wider — crop sides
+        # Image is wider — crop sides to match visible area height
         new_w = int(img_h * target_ratio)
         left = (img_w - new_w) // 2
         img = img.crop((left, 0, left + new_w, img_h))
     else:
-        # Image is taller — crop top/bottom
+        # Image is taller — crop top/bottom to match visible area width
         new_h = int(img_w / target_ratio)
         top = (img_h - new_h) // 2
         img = img.crop((0, top, img_w, top + new_h))
 
-    img = img.resize((VIDEO_W, TOP_H), Image.LANCZOS)
+    # Resize to visible area dimensions
+    img = img.resize((visible_w, visible_h), Image.LANCZOS)
+
+    # Create full-frame canvas (1080x1920) and paste image at top
+    canvas = Image.new('RGB', (VIDEO_W, VIDEO_H), (10, 5, 25))
+    canvas.paste(img, (0, 0))
 
     # Save to temp file for moviepy
     tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-    img.save(tmp.name, 'PNG')
+    canvas.save(tmp.name, 'PNG')
     tmp.close()
 
     return ImageClip(tmp.name)
 
 
-def _apply_zoom_effect(clip: ImageClip, zoom_in: bool = True) -> ImageClip:
-    """Apply subtle Ken Burns zoom to a still image clip."""
-    def zoom_transform(pic):
-        h, w = pic.shape[:2]
-        if zoom_in:
-            crop_h = int(h * 0.04)
-            crop_w = int(w * 0.04)
-        else:
-            crop_h = int(h * 0.01)
-            crop_w = int(w * 0.01)
+def _apply_zoom_out(clip: ImageClip, duration: float) -> ImageClip:
+    """
+    Animated zoom-out: starts tight (cropped center) and gradually reveals full image.
+    """
+    def zoom_out_transform(get_frame, t):
+        frame = get_frame(t)
+        h, w = frame.shape[:2]
 
-        cropped = pic[crop_h:h-crop_h, crop_w:w-crop_w]
-        pil = Image.fromarray(cropped).resize((w, h), Image.LANCZOS)
-        return np.array(pil)
+        # Start at 10% crop (gentler than before), end at 0% crop
+        progress = t / duration if duration > 0 else 1.0
+        crop_pct = 0.10 * (1.0 - progress)
 
-    return clip.fl_image(zoom_transform)
+        crop_h = int(h * crop_pct)
+        crop_w = int(w * crop_pct)
+
+        if crop_h > 0 and crop_w > 0:
+            cropped = frame[crop_h:h-crop_h, crop_w:w-crop_w]
+            pil_img = Image.fromarray(cropped).resize((w, h), Image.LANCZOS)
+            return np.array(pil_img)
+        return frame
+
+    return clip.fl(zoom_out_transform)
+
+
+def _apply_pan_top_to_bottom(clip: ImageClip, duration: float) -> ImageClip:
+    """
+    Animated pan from top to bottom over the full image duration.
+    """
+    def pan_transform(get_frame, t):
+        frame = get_frame(t)
+        h, w = frame.shape[:2]
+
+        progress = t / duration if duration > 0 else 1.0
+
+        # Pan range: scroll ~10% of frame height (gentler for visible area)
+        pan_range = int(h * 0.10)
+        offset = int(pan_range * progress)
+
+        if offset > 0 and h - offset > 0:
+            result = frame.copy()
+            result[offset:, :] = frame[:h-offset, :]
+            result[:offset, :] = frame[h-offset:, :]
+            # Smooth blend at boundary
+            blend_h = min(30, offset)
+            if blend_h > 0:
+                for y in range(blend_h):
+                    alpha = y / blend_h
+                    result[offset - blend_h + y, :] = (
+                        frame[h - blend_h + y, :] * (1 - alpha)
+                        + frame[offset - blend_h + y, :] * alpha
+                    ).astype(np.uint8)
+            return result
+        return frame
+
+    return clip.fl(pan_transform)
+
+
+def _apply_scene_effect(clip: ImageClip, scene_idx: int, duration: float) -> ImageClip:
+    """
+    Apply alternating effects to scene clips:
+    - Even indices: zoom out
+    - Odd indices: pan top to bottom
+    """
+    if scene_idx % 2 == 0:
+        return _apply_zoom_out(clip, duration)
+    else:
+        return _apply_pan_top_to_bottom(clip, duration)
 
 
 def _calculate_scene_durations(total_duration: float, num_scenes: int) -> List[float]:
@@ -95,15 +159,14 @@ def _calculate_scene_durations(total_duration: float, num_scenes: int) -> List[f
     if num_scenes == 1:
         return [total_duration]
 
-    base = total_duration / num_scenes
     weights = []
     for i in range(num_scenes):
         if i == 0:
-            weights.append(1.2)     # Hook: longer
+            weights.append(1.2)
         elif i == num_scenes - 1:
-            weights.append(1.15)    # Conclusion: longer
+            weights.append(1.15)
         elif i == num_scenes // 2:
-            weights.append(0.9)     # Middle pivot: shorter
+            weights.append(0.9)
         else:
             weights.append(0.95 + (i % 2) * 0.1)
 
@@ -114,24 +177,18 @@ def _calculate_scene_durations(total_duration: float, num_scenes: int) -> List[f
 
 def _prepare_avatar_bottom(avatar_path: str, total_duration: float) -> VideoFileClip:
     """
-    Load the avatar video, crop/resize to FILL 1080×960 bottom half, and loop.
-    
-    Strategy: Scale avatar so HEIGHT fills BOTTOM_H, then crop center horizontally.
-    This ensures the avatar fills the entire bottom with no black bars.
+    Load the avatar video, crop/resize to FILL 1080x768 bottom area, and loop.
     """
     avatar = VideoFileClip(avatar_path)
     av_w, av_h = avatar.size
     avatar_duration = avatar.duration
 
-    # Scale so height = BOTTOM_H (960px)
     scale_factor = BOTTOM_H / av_h
     scaled_w = int(av_w * scale_factor)
     scaled_h = BOTTOM_H
 
-    # Resize to scaled dimensions (width will be >= VIDEO_W since avatar is landscape)
     avatar_scaled = avatar.resize((scaled_w, scaled_h))
 
-    # Crop center horizontally to VIDEO_W
     if scaled_w > VIDEO_W:
         crop_x = (scaled_w - VIDEO_W) // 2
         avatar_cropped = avatar_scaled.crop(
@@ -142,11 +199,9 @@ def _prepare_avatar_bottom(avatar_path: str, total_duration: float) -> VideoFile
 
     avatar_resized = avatar_cropped
 
-    # Loop to fill total duration
     loops_needed = math.ceil(total_duration / avatar_duration)
 
     if loops_needed > 1:
-        # Create looped clip by concatenating copies
         clips = [avatar_resized]
         for _ in range(loops_needed - 1):
             clips.append(avatar_resized.copy())
@@ -154,7 +209,6 @@ def _prepare_avatar_bottom(avatar_path: str, total_duration: float) -> VideoFile
     else:
         avatar_looped = avatar_resized
 
-    # Trim to exact duration
     avatar_final = avatar_looped.subclip(0, total_duration)
 
     return avatar_final
@@ -167,22 +221,24 @@ def build_split_video(
     output_path: str = None,
     script_text: str = None,
     word_timestamps: list = None,
+    hook_text: str = None,
 ) -> dict:
     """
-    Build a split-screen video: scenes on top, avatar on bottom, subtitles in middle.
+    Build a video: scene background top 60%, avatar bottom 40%, title at top,
+    karaoke subtitles near bottom of scene area.
 
     Args:
         audio_path: Path to voiceover MP3
         image_paths: List of scene image paths (4-6 images)
-        avatar_path: Path to avatar loop video (default: assets/avatar/avatar_loop.mp4)
+        avatar_path: Path to avatar loop video
         output_path: Output MP4 path
-        script_text: Full narration text (for subtitle rendering)
-        word_timestamps: Word timing data from subtitle_renderer.get_word_timestamps()
+        script_text: Full narration text (for subtitle word alignment)
+        word_timestamps: Word timing data from whisper
+        hook_text: Hook text for title overlay at top
 
     Returns:
         dict with success status, output path, and metadata
     """
-    # Validate inputs
     if not audio_path or not Path(audio_path).exists():
         return {"success": False, "error": f"Audio not found: {audio_path}"}
     if not image_paths:
@@ -192,69 +248,68 @@ def build_split_video(
     if missing:
         return {"success": False, "error": f"Missing images: {missing}"}
 
-    # Resolve avatar path
     if not avatar_path:
         avatar_path = str(AVATAR_PATH)
     if not Path(avatar_path).exists():
         return {"success": False, "error": f"Avatar video not found: {avatar_path}"}
 
     try:
-        # Load audio to get total duration
         audio = AudioFileClip(audio_path)
         total_dur = audio.duration
         print(f"  [SPLIT] Audio duration: {total_dur:.1f}s")
 
-        # ── TOP HALF: Scene images with pan/zoom ──
+        # ── SCENE BACKGROUND: Images fitted to visible top area ──
         num_scenes = len(image_paths)
         scene_durations = _calculate_scene_durations(total_dur, num_scenes)
 
         scene_clips = []
         for idx, img_path in enumerate(image_paths):
             dur = scene_durations[idx]
-            clip = _resize_image_to_top(img_path).set_duration(dur)
-
-            # Alternate zoom in/out for visual variety
-            zoom_in = (idx % 2 == 0)
-            clip = _apply_zoom_effect(clip, zoom_in=zoom_in)
-
+            clip = _resize_image_fullscreen(img_path).set_duration(dur)
+            clip = _apply_scene_effect(clip, idx, dur)
             scene_clips.append(clip)
 
-        # Concatenate scenes → top half video
-        top_half = concatenate_videoclips(scene_clips, method="compose")
-        # Ensure correct size
-        if top_half.size != [VIDEO_W, TOP_H]:
-            top_half = top_half.resize((VIDEO_W, TOP_H))
+        background = concatenate_videoclips(scene_clips, method="compose")
+        if background.size != [VIDEO_W, VIDEO_H]:
+            background = background.resize((VIDEO_W, VIDEO_H))
 
-        print(f"  [SPLIT] Top half: {num_scenes} scenes, {VIDEO_W}×{TOP_H}")
+        print(f"  [SPLIT] Background: {num_scenes} scenes (60/40 layout)")
 
-        # ── BOTTOM HALF: Avatar loop ──
+        # ── BOTTOM AREA: Avatar loop (40% of screen) ──
         bottom_half = _prepare_avatar_bottom(avatar_path, total_dur)
-        print(f"  [SPLIT] Bottom half: avatar looped to {total_dur:.1f}s, {VIDEO_W}×{BOTTOM_H}")
-
-        # ── COMPOSITE: Stack top and bottom ──
-        # Position top half at y=0, bottom half at y=TOP_H
         bottom_half = bottom_half.set_position((0, TOP_H))
-        top_half = top_half.set_position((0, 0))
+        print(f"  [SPLIT] Avatar: {BOTTOM_H}px at y={TOP_H}")
 
-        layers = [top_half, bottom_half]
+        # ── COMPOSITE: Stack all layers ──
+        layers = [background, bottom_half]
 
-        # ── SUBTITLES: At the split line ──
+        # ── TITLE OVERLAY: Hook text at top ──
+        if hook_text:
+            title_clip = create_title_clip(
+                hook_text, VIDEO_W, VIDEO_H,
+                duration=min(5.0, total_dur)
+            )
+            if title_clip:
+                layers.append(title_clip)
+                print(f"  [SPLIT] Title overlay: \"{hook_text[:50]}...\"")
+
+        # ── SUBTITLES: Near bottom of scene area (above avatar) ──
         subtitle_clips = []
         if word_timestamps and len(word_timestamps) > 0:
-            band_y = TOP_H - SUBTITLE_H // 2  # Center on split line
+            # Position subtitles just above the avatar zone
+            subtitle_y = TOP_H - 140  # 140px above avatar boundary
             subtitle_clips = create_subtitle_clips(
                 script_text=script_text or "",
                 word_timestamps=word_timestamps,
                 video_width=VIDEO_W,
                 video_height=VIDEO_H,
-                band_y_position=band_y,
+                band_y_position=subtitle_y,
             )
             layers.extend(subtitle_clips)
-            print(f"  [SPLIT] Subtitles: {len(subtitle_clips)} clips at y={band_y}")
+            print(f"  [SPLIT] Subtitles: {len(subtitle_clips)} clips at y={subtitle_y}")
         else:
             print(f"  [SPLIT] No subtitle data — skipping subtitles")
 
-        # Composite all layers
         final = CompositeVideoClip(layers, size=(VIDEO_W, VIDEO_H))
         final = final.set_audio(audio)
 
@@ -274,7 +329,6 @@ def build_split_video(
             logger=None,
         )
 
-        # Verify output
         out_path = Path(output_path)
         if not out_path.exists():
             return {"success": False, "error": "Output file not created"}
@@ -284,7 +338,7 @@ def build_split_video(
         # Cleanup
         final.close()
         audio.close()
-        top_half.close()
+        background.close()
         bottom_half.close()
         for c in scene_clips:
             c.close()
@@ -299,7 +353,7 @@ def build_split_video(
             "fps": FPS,
             "scenes": num_scenes,
             "subtitles": len(subtitle_clips),
-            "effects_applied": ["split_screen", "camera_movements", "avatar_loop", "subtitles"],
+            "effects_applied": ["full_screen_bg", "animated_zoom_pan", "avatar_loop", "title_overlay", "karaoke_subtitles"],
         }
 
     except Exception as e:
