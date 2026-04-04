@@ -135,7 +135,20 @@ if len(news_analyses) < 2:
     print(f"❌ Need at least 2 analyzed stories, got {len(news_analyses)}")
     exit(1)
 
-print(f"\n✅ Analyzed {len(news_analyses)} stories successfully")
+# Sort by impact_score ascending — most important story LAST for maximum retention
+paired = []
+for i, analysis in enumerate(news_analyses):
+    # Find matching article (same index, or skip)
+    art_idx = min(i, len(articles) - 1)
+    paired.append((articles[art_idx], analysis))
+
+paired.sort(key=lambda x: x[1].get('impact_score', 0))  # lowest impact first
+articles = [p[0] for p in paired]
+news_analyses = [p[1] for p in paired]
+
+print(f"\n✅ Analyzed {len(news_analyses)} stories successfully (sorted by impact, most important last)")
+for i, a in enumerate(news_analyses):
+    print(f"  Story {i+1}: impact={a.get('impact_score', '?')}/10 — {a.get('topic', 'N/A')[:50]}")
 
 # ============================================================
 # STEP 3: TRENDING CONTEXT (optional boost)
@@ -398,9 +411,14 @@ try:
     
     word_timestamps = tts_result.get('word_timestamps', [])
     
-    # Build hook text from all 3 story hooks for title overlay
-    hooks = [s.get('mini_hook', '') for s in script.get('stories', [])]
-    hook_text = script.get('greeting', ' | '.join(hooks))
+    # Title from LAST story's topic (most important — for maximum retention)
+    # This title is NOT read by TTS — it's a persistent visual headline
+    last_analysis = news_analyses[-1] if news_analyses else {}
+    hook_text = last_analysis.get('topic', '') or last_analysis.get('angle', '')
+    if not hook_text:
+        hooks = [s.get('mini_hook', '') for s in script.get('stories', [])]
+        hook_text = hooks[-1] if hooks else ''
+    print(f"  Title headline: \"{hook_text[:60]}\" (from most important story)")
     
     assembly_result = build_split_video(
         audio_path=voice_file,
