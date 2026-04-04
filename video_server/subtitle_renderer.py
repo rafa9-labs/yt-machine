@@ -229,7 +229,7 @@ def _estimate_from_script(script_text: str, total_duration: float) -> List[Dict]
     ]
 
 
-def _split_into_phrases(words: List[Dict], max_words: int = 5, min_words: int = 4) -> List[Tuple[int, int, float, float]]:
+def _split_into_phrases(words: List[Dict], max_words: int = 5, min_words: int = 3) -> List[Tuple[int, int, float, float]]:
     """
     Split words into phrase chunks (start_idx, end_idx, phrase_start, phrase_end).
     Respects sentence boundaries and natural pauses.
@@ -334,9 +334,32 @@ def _draw_outlined(draw, x, y, text, font, fill, outline, ow):
     draw.text((x, y), text, font=font, fill=fill_4)
 
 
+def _clean_script_for_subtitles(script_text: str) -> str:
+    """
+    Clean script text before subtitle alignment.
+    Removes TTS pause markers (...), stray quotes, and normalizes whitespace.
+    Prevents phantom words and lonely single-character display issues.
+    """
+    # Remove ellipsis pause markers injected by TTS
+    text = re.sub(r'\.{2,}', ' ', script_text)
+    # Remove stray double quotes (TTS injects ... "phrase" ... for dramatic timing)
+    text = text.replace('"', '')
+    # Remove stray smart quotes
+    text = text.replace('"', '').replace('"', '').replace(''', "'").replace(''', "'")
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
 def _clean_display(word: str) -> str:
-    """Clean word for display: strip trailing punctuation, uppercase."""
-    return word.strip('.,;:!?—–').upper()
+    """Clean word for display: strip punctuation, quotes, and uppercase."""
+    # Strip all common punctuation and quote characters
+    strip_chars = '.,;:!?-\u2014\u2013\u201c\u201d\u2018\u2019"\''
+    cleaned = word.strip(strip_chars).upper()
+    # Filter out bare quotes or empty results
+    if not cleaned or cleaned in ('"', "'", '\u201c', '\u201d', '\u2018', '\u2019'):
+        return ''
+    return cleaned
 
 
 def _render_phrase_frame(words: List[Dict], phrase_start_idx: int, phrase_end_idx: int,
@@ -482,12 +505,18 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
     if not word_timestamps:
         return []
 
+    # Clean script text — remove TTS pause markers, stray quotes, etc.
+    clean_script = _clean_script_for_subtitles(script_text) if script_text else script_text
+
     # Align whisper timestamps to original script words
-    if script_text and script_text.strip():
-        aligned_words = align_whisper_to_script(word_timestamps, script_text)
+    if clean_script and clean_script.strip():
+        aligned_words = align_whisper_to_script(word_timestamps, clean_script)
         print(f"  [SUB] Word alignment: {len(word_timestamps)} whisper → {len(aligned_words)} script words")
     else:
         aligned_words = word_timestamps
+
+    # Filter out any words that render as empty after cleaning
+    aligned_words = [w for w in aligned_words if _clean_display(w['word'])]
 
     phrases = _split_into_phrases(aligned_words, max_words=5)
     if not phrases:
