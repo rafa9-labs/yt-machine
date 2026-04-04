@@ -394,15 +394,15 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         return script
     
     def _get_time_greeting(self) -> str:
-        """Get time-of-day greeting for Masker personality."""
+        """Get time-of-day greeting for Masker personality — short & punchy."""
         from datetime import datetime
         hour = datetime.now().hour
         if hour < 12:
-            return "Good Morning! I'm Masker! And I'll be your news person for today! Here are the main news in geopolitics!"
+            return "Good Morning! I'm Masker!"
         elif hour < 18:
-            return "Good Afternoon! I'm Masker! And here are your top three stories in geopolitics today!"
+            return "Good Afternoon! I'm Masker!"
         else:
-            return "Good Evening! I'm Masker! And here's your geopolitics speed round for tonight!"
+            return "Good Evening! I'm Masker!"
     
     def synthesize_multi_news_script(
         self,
@@ -461,6 +461,10 @@ Target: 180-250 words total for 75-90 seconds."""
         # Ensure greeting is set correctly
         script['greeting'] = greeting
         
+        # Ensure intro_hook exists
+        if not script.get('intro_hook'):
+            script['intro_hook'] = "Three stories today — and trust me, you'll want to hear the last one."
+        
         # Ensure stories exist
         if 'stories' not in script or not script.get('stories'):
             print(f"  [MULTI-NEWS] No stories in response — falling back")
@@ -468,14 +472,18 @@ Target: 180-250 words total for 75-90 seconds."""
         
         # Build full_text if missing or incomplete
         if not script.get('full_text') or len(script.get('full_text', '').split()) < 30:
-            parts = [greeting]
+            parts = [greeting, script.get('intro_hook', '')]
             for story in script['stories']:
                 parts.append(story.get('mini_hook', ''))
                 parts.append(story.get('body', ''))
+                punchline = story.get('punchline', '')
+                if punchline:
+                    parts.append(punchline)
                 transition = story.get('transition', '')
                 if transition:
                     parts.append(transition)
-            parts.append(script.get('closing', "That's your update! See you next time!"))
+            parts.append(script.get('closing', 
+                "And with that we conclude the news for today. Subscribe, like, do what you gotta do — I was Masker and see you tomorrow!"))
             script['full_text'] = ' '.join(filter(None, parts))
         
         # Calculate accurate word count and duration
