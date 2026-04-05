@@ -229,39 +229,65 @@ def _estimate_from_script(script_text: str, total_duration: float) -> List[Dict]
     ]
 
 
-def _split_into_phrases(words: List[Dict], max_words: int = 5, min_words: int = 3) -> List[Tuple[int, int, float, float]]:
+def _measure_phrase_width(words: List[Dict], start_idx: int, end_idx: int, font, gap: int = 20) -> int:
+    """Measure the total pixel width of a phrase rendered with the given font."""
+    tmp_img = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
+    tmp_draw = ImageDraw.Draw(tmp_img)
+    total = 0
+    for i in range(start_idx, end_idx):
+        word = _clean_display(words[i]['word'])
+        if word:
+            bb = tmp_draw.textbbox((0, 0), word, font=font)
+            total += (bb[2] - bb[0]) + gap
+    return max(0, total - gap)  # Remove trailing gap
+
+
+def _split_into_phrases(words: List[Dict], max_words: int = 7, min_words: int = 2,
+                        max_pixel_width: int = 900) -> List[Tuple[int, int, float, float]]:
     """
-    Split words into phrase chunks (start_idx, end_idx, phrase_start, phrase_end).
-    Respects sentence boundaries and natural pauses.
-    Enforces min_words per phrase — merges short phrases to avoid showing 1-2 words alone.
+    Split words into phrase chunks using PIXEL WIDTH instead of word count.
+    Ensures no phrase overflows the screen horizontally.
+    Also respects sentence boundaries and natural pauses.
     """
     n_words = len(words)
     if n_words == 0:
         return []
     
-    # If total words <= min_words, just return one phrase
     if n_words <= min_words:
         return [(0, n_words, words[0]['start'], words[-1]['end'])]
     
-    # Phase 1: Initial split respecting sentence boundaries
+    # Load font for width measurement
+    font = _load_font(SUBTITLE_STYLE)
+    
+    # Phase 1: Initial split by pixel width + sentence boundaries
     raw_phrases = []
     i = 0
     
     while i < n_words:
-        end_idx = min(i + max_words, n_words)
+        best_end = i + 1  # At minimum, take one word
         
-        # Respect sentence boundaries
+        # Greedily add words until we exceed max_pixel_width or max_words
         for j in range(i, min(i + max_words, n_words)):
-            word = words[j]['word'].strip()
-            if any(word.endswith(punct) for punct in ['.', '?', '!']):
-                end_idx = j + 1
+            phrase_width = _measure_phrase_width(words, i, j + 1, font)
+            
+            if phrase_width > max_pixel_width:
+                # If even a single word is too wide, take it anyway (can't split a word)
+                if j == i:
+                    best_end = j + 1
                 break
-            if word.endswith(',') and j > i and j - i >= 3:
-                end_idx = j + 1
+            best_end = j + 1
+            
+            # Respect sentence boundaries — break AFTER punctuation
+            word = words[j]['word'].strip()
+            if any(word.endswith(punct) for punct in ['.', '?', '!']) and j > i:
+                best_end = j + 1
+                break
+            if word.endswith(',') and j > i and j - i >= 2:
+                best_end = j + 1
                 break
         
-        raw_phrases.append((i, end_idx))
-        i = end_idx
+        raw_phrases.append((i, best_end))
+        i = best_end
     
     # Phase 2: Merge short phrases (fewer than min_words) into neighbors
     merged = []
@@ -269,10 +295,10 @@ def _split_into_phrases(words: List[Dict], max_words: int = 5, min_words: int = 
         phrase_len = end_idx - start_idx
         
         if phrase_len < min_words and merged:
-            # Merge into previous phrase
             prev_start, prev_end = merged[-1]
-            combined_len = end_idx - prev_start
-            if combined_len <= max_words + 2:  # Allow slight overflow for merging
+            # Check if merging would still fit in pixel width
+            combined_width = _measure_phrase_width(words, prev_start, end_idx, font)
+            if combined_width <= max_pixel_width + 100:  # Allow slight overflow for merges
                 merged[-1] = (prev_start, end_idx)
                 continue
         

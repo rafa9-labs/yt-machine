@@ -243,7 +243,6 @@ class LLMInterface:
 
         salience_block = ""
         if salience_data:
-            # Compress salience to top facts if it would bloat the prompt
             consequence_chain = salience_data.get('consequence_chain') or []
             emotional_anchors = (salience_data.get('emotional_anchors') or [])[:2]
             key_visual_subjects = (salience_data.get('key_visual_subjects') or [])[:3]
@@ -260,7 +259,6 @@ Salience Analysis:
         historical_block = ""
         if historical_parallels and 'parallels' in historical_parallels:
             historical_block = "\nHistorical Parallels to Reference:\n"
-            # Limit to top 2 parallels and compress fields to reduce token load
             for i, parallel in enumerate(historical_parallels['parallels'][:2], 1):
                 equipment_str = ', '.join((parallel.get('military_equipment') or [])[:2])
                 historical_block += f"""
@@ -343,10 +341,8 @@ Synthesize into a compelling 60-80 second professional news narration script wit
                     script[seg] = f"The situation continues to develop with significant implications for regional stability."
         
         # CRITICAL FIX: Build full_text from segments if missing or incomplete
-        # This ensures TTS gets the complete narration, not just the title/hook
         if 'full_text' not in script or not script['full_text'] or len(script['full_text'].split()) < 50:
             segments = []
-            # Support both 6-segment and 5-segment structures
             if 'historical_1' in script:
                 segment_names = ['hook', 'historical_1', 'historical_2', 'modern_pivot', 'consequence', 'future_outlook']
             else:
@@ -355,9 +351,7 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             for seg in segment_names:
                 segment_data = script.get(seg, '')
                 if segment_data:
-                    # Handle both string and dict formats
                     if isinstance(segment_data, dict):
-                        # If it's a dict, try to extract text content
                         text = segment_data.get('text', segment_data.get('content', str(segment_data)))
                     else:
                         text = str(segment_data)
@@ -377,14 +371,11 @@ Synthesize into a compelling 60-80 second professional news narration script wit
                     return sum(len(str(item).split()) for item in value)
                 return 0
             
-            # Support both 5-segment and 6-segment structures
             if "historical_1" in script:
-                # 6-segment structure
                 total_words = count_words("hook") + count_words("historical_1") + \
                              count_words("historical_2") + count_words("modern_pivot") + \
                              count_words("consequence") + count_words("future_outlook")
             else:
-                # 5-segment structure (fallback)
                 total_words = count_words("hook") + count_words("context") + \
                              count_words("escalation") + count_words("consequence") + \
                              count_words("twist")
@@ -403,6 +394,29 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             return "Good Afternoon! I'm Masker!"
         else:
             return "Good Evening! I'm Masker!"
+    
+    def _validate_closing(self, full_text: str) -> str:
+        """
+        Ensure the script ends with a proper closing/CTA.
+        Checks for subscribe/like mention and Masker sign-off.
+        If missing, forcefully appends a closing.
+        """
+        if not full_text:
+            return full_text
+        
+        text_lower = full_text.lower()
+        has_subscribe = any(word in text_lower for word in ['subscribe', 'sub', 'like', 'follow'])
+        has_masker = 'masker' in text_lower
+        has_tomorrow = 'tomorrow' in text_lower or 'see you' in text_lower
+        
+        if has_subscribe and has_masker:
+            return full_text  # Closing is present
+        
+        # Closing is missing or incomplete — append it
+        closing = "And with that we conclude the news for today. Subscribe, like, do what you gotta do — I was Masker and see you tomorrow!"
+        result = full_text.rstrip() + ' .... ' + closing
+        print(f"  [CLOSING] Appended missing CTA closing (subscribe={has_subscribe}, masker={has_masker}, tomorrow={has_tomorrow})")
+        return result
     
     def synthesize_multi_news_script(
         self,
@@ -479,12 +493,18 @@ Target: 180-250 words total for 75-90 seconds."""
                 punchline = story.get('punchline', '')
                 if punchline:
                     parts.append(punchline)
+                    # STORY SEPARATOR: inject .... (long pause) after each punchline
+                    # This creates a clear beat between stories for the listener
+                    parts.append('....')
                 transition = story.get('transition', '')
                 if transition:
                     parts.append(transition)
             parts.append(script.get('closing', 
                 "And with that we conclude the news for today. Subscribe, like, do what you gotta do — I was Masker and see you tomorrow!"))
             script['full_text'] = ' '.join(filter(None, parts))
+        
+        # VALIDATE CLOSING: Ensure full_text ends with subscribe/CTA
+        script['full_text'] = self._validate_closing(script['full_text'])
         
         # Calculate accurate word count and duration
         script['word_count'] = len(script['full_text'].split())
@@ -520,6 +540,8 @@ RULES:
 - Use contractions ALWAYS (it's, they're, won't)
 - Create rhythm: alternate short punchy + longer explanatory sentences
 - Balance all 3 stories to roughly equal word count (40-55 words each)
+- Add a longer pause (....) after each story's punchline before the next story
+- NEVER remove or shorten the closing/CTA at the end — it MUST include subscribe/like and "I'm Masker" and "see you tomorrow"
 
 ORIGINAL SCRIPT:
 {full_text}
@@ -553,7 +575,10 @@ Output ONLY the curated spoken script as plain text. No JSON. No explanations.""
             print(f"  [CURATOR] Curated script too short ({word_count_curated} vs {word_count_original}), using original")
             return full_text
         
-        print(f"  [CURATOR] Script curated: {word_count_original} → {word_count_curated} words")
+        # VALIDATE CLOSING: Ensure curator didn't remove the CTA
+        curated = self._validate_closing(curated)
+        
+        print(f"  [CURATOR] Script curated: {word_count_original} → {len(curated.split())} words")
         return curated
     
     def check_connection(self) -> bool:
@@ -583,12 +608,6 @@ Output ONLY the curated spoken script as plain text. No JSON. No explanations.""
     def extract_visual_elements(self, article_text: str) -> Optional[Dict[str, Any]]:
         """
         Extract visual elements for image generation
-        
-        Args:
-            article_text: Full article text
-            
-        Returns:
-            Dictionary with extracted visual elements
         """
         extraction_prompt = f"""Extract visual elements from this news article for pixel art image generation.
 Extract ALL relevant visual subjects — military, economic, diplomatic, civilian, geographic.
