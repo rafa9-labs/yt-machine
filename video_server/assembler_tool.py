@@ -405,6 +405,9 @@ def build_final_video(
             codec="libx264",
             audio_codec="aac",
             fps=FPS,
+            ffmpeg_params=['-movflags', '+faststart'],
+            preset='medium',
+            threads=4,
             verbose=False,
             logger=None,
         )
@@ -418,6 +421,15 @@ def build_final_video(
         audio_clip.close()
         for c in video_clips:
             c.close()
+
+        # Cleanup MoviePy temp files
+        try:
+            import glob as glob_mod
+            temp_pattern = str(output_path).replace('.mp4', 'TEMP_MPY_wvf_snd.mp4')
+            for tmp_file in glob_mod.glob(temp_pattern):
+                os.remove(tmp_file)
+        except Exception:
+            pass
 
         effects = []
         if is_pixel_art:

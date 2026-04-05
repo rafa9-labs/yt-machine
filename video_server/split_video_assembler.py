@@ -338,6 +338,9 @@ def build_split_video(
             codec="libx264",
             audio_codec="aac",
             fps=FPS,
+            ffmpeg_params=['-movflags', '+faststart'],
+            preset='medium',
+            threads=4,
             verbose=False,
             logger=None,
         )
@@ -347,14 +350,25 @@ def build_split_video(
             return {"success": False, "error": "Output file not created"}
 
         file_size = out_path.stat().st_size
+        print(f"  [SPLIT] Export complete: {file_size / (1024*1024):.1f}MB")
 
-        # Cleanup
+        # Cleanup moviepy objects
         final.close()
         audio.close()
         background.close()
         bottom_half.close()
         for c in scene_clips:
             c.close()
+
+        # Cleanup MoviePy temp files (audio mux leftovers)
+        try:
+            import glob
+            temp_pattern = str(out_path).replace('.mp4', 'TEMP_MPY_wvf_snd.mp4')
+            for tmp_file in glob.glob(temp_pattern):
+                os.remove(tmp_file)
+                print(f"  [SPLIT] Cleaned temp file: {tmp_file}")
+        except Exception:
+            pass
 
         return {
             "success": True,

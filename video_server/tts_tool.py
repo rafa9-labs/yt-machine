@@ -205,6 +205,13 @@ def _add_natural_pacing(text: str) -> str:
     # (This creates the "beat" timing for comedic delivery)
     text = re.sub(r'\.\s+([A-Z])', r'. ...  \1', text)
     
+    # ── STORY SEPARATOR PAUSES ──
+    
+    # 7. Four dots (....) = longer pause between stories (~1.5s)
+    # This is injected by the script builder after each punchline
+    # Convert to a longer silence marker that TTS respects
+    text = re.sub(r'\.{4}\s*', '. ... ... ...  ', text)
+    
     # ── CLEANUP ──
     
     # Collapse multiple spaces/newlines into single space
@@ -212,7 +219,8 @@ def _add_natural_pacing(text: str) -> str:
     text = re.sub(r' {2,}', '  ', text)
     
     # Remove any triple+ periods that aren't our deliberate "..."
-    text = re.sub(r'\.{4,}', '...', text)
+    # But be careful not to collapse our injected pauses
+    text = re.sub(r'\.{5,}', '...', text)
     
     # Remove pause markers at very start
     text = re.sub(r'^\s*\.{3}\s*', '', text)
