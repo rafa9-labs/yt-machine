@@ -1,125 +1,165 @@
 {
   "videos": [
     {
-      "project_id": 1774124237,
-      "topic": "Gulf Countries Warn Iran Over Ongoing Attacks",
+      "project_id": 1775057019,
+      "topic": "US Health Deals 'Exploiting' African Countries",
+      "category": "technology_disruption",
+      "region": "regional",
+      "article_title": "Minerals for aid: Are new US health deals \u2018exploiting\u2019 African countries?",
+      "created_at": "2026-04-01 16:23:39"
+    },
+    {
+      "project_id": 1775057046,
+      "topic": "US Exploits African Health Deals",
+      "category": "technology_disruption",
+      "region": "regional",
+      "article_title": "Minerals for aid: Are new US health deals \u2018exploiting\u2019 African countries?",
+      "created_at": "2026-04-01 16:24:06"
+    },
+    {
+      "project_id": 1775058789,
+      "topic": "Starmer Insists UK Not Involved in War with Iran",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "The Gulf countries may retaliate if Iran attacks continue, Turkey says",
-      "created_at": "2026-03-21 20:17:17"
+      "article_title": "Starmer insists 'this is not our war' as Iran weighs up attacking UK bases",
+      "created_at": "2026-04-01 16:53:09"
     },
     {
-      "project_id": 1774196315,
-      "topic": "Iran Launches Missile Strikes on Israeli Military Bases",
+      "project_id": 1775059151,
+      "topic": "US Health Deals 'Exploiting' African Countries",
+      "category": "technology_disruption",
+      "region": "regional",
+      "article_title": "Minerals for aid: Are new US health deals \u2018exploiting\u2019 African countries?",
+      "created_at": "2026-04-01 16:59:11"
+    },
+    {
+      "project_id": 1775062478,
+      "topic": "US Push for Health Data and Minerals in Africa Sparks Outrage",
+      "category": "technology_disruption",
+      "region": "regional",
+      "article_title": "Minerals for aid: Are new US health deals \u2018exploiting\u2019 African countries?",
+      "created_at": "2026-04-01 17:54:38"
+    },
+    {
+      "project_id": 1775068319,
+      "topic": "Battery Power as Emerging Global Resource",
+      "category": "climate_geopolitics",
+      "region": "great_power",
+      "article_title": "Cobalt, Congo, and China: Battery Power as Political Power",
+      "created_at": "2026-04-01 19:31:59"
+    },
+    {
+      "project_id": 1775070196,
+      "topic": "Battery Power as Political Power",
+      "category": "climate_geopolitics",
+      "region": "great_power",
+      "article_title": "Cobalt, Congo, and China: Battery Power as Political Power",
+      "created_at": "2026-04-01 20:03:16"
+    },
+    {
+      "project_id": 1775070618,
+      "topic": "UK Tensions Escalate as Iran Eyes Attack on Bases",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "Iran claims missile attacks on key Israeli military bases",
-      "created_at": "2026-03-22 16:18:35"
+      "article_title": "Starmer insists 'this is not our war' as Iran weighs up attacking UK bases",
+      "created_at": "2026-04-01 20:10:18"
     },
     {
-      "project_id": 1774197351,
-      "topic": "Ukraine and Russia Resume Talks Amid Ongoing Conflict",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
-      "created_at": "2026-03-22 16:35:51"
-    },
-    {
-      "project_id": 1774198160,
-      "topic": "Iran Strikes Back at Israel",
+      "project_id": 1775072474,
+      "topic": "Trump Ponders Nato Withdrawal Amid US-Israeli War on Iran",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "Iran claims missile attacks on key Israeli military bases",
-      "created_at": "2026-03-22 16:49:20"
+      "article_title": "Trump mulls Nato withdrawal, stopping weapons to Ukraine over Europe's response to Iran war",
+      "created_at": "2026-04-01 20:41:14"
     },
     {
-      "project_id": 1774198491,
-      "topic": "US and Ukraine Meet Amid Ukraine-Russia Strikes",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
-      "created_at": "2026-03-22 16:54:51"
-    },
-    {
-      "project_id": 1774198927,
-      "topic": "Ukraine & Russia Trade Strikes Amid US-Backed Talks",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
-      "created_at": "2026-03-22 17:02:07"
-    },
-    {
-      "project_id": 1774202098,
-      "topic": "Iran Launches Missile Attacks on Key Israeli Military Bases",
+      "project_id": 1775072614,
+      "topic": "Trump to Lash Nato Over Iran War Response",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "Iran claims missile attacks on key Israeli military bases",
-      "created_at": "2026-03-22 17:54:58"
+      "article_title": "Trump mulls Nato withdrawal, stopping weapons to Ukraine over Europe's response to Iran war",
+      "created_at": "2026-04-01 20:43:34"
     },
     {
-      "project_id": 1774204386,
-      "topic": "US and Ukraine Resume Talks Amid Escalating Tensions",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
-      "created_at": "2026-03-22 18:33:06"
-    },
-    {
-      "project_id": 1774204746,
-      "topic": "Russia-Ukraine Talks Stall Amid Ongoing Violence",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
-      "created_at": "2026-03-22 18:39:06"
-    },
-    {
-      "project_id": 1774205001,
-      "topic": "Iran Launches Missile Strikes at Israeli Military Bases",
+      "project_id": 1775072754,
+      "topic": "Trump mulls Nato withdrawal as US-Iran tensions escalate",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "Iran claims missile attacks on key Israeli military bases",
-      "created_at": "2026-03-22 18:43:21"
+      "article_title": "Trump mulls Nato withdrawal, stopping weapons to Ukraine over Europe's response to Iran war",
+      "created_at": "2026-04-01 20:45:54"
     },
     {
-      "project_id": 1774208248,
-      "topic": "US-Ukraine Talks Amid Escalating Russia Strikes",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
-      "created_at": "2026-03-22 19:37:28"
-    },
-    {
-      "project_id": 1774210935,
-      "topic": "US and Ukraine Backpedal Amid War",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
-      "created_at": "2026-03-22 20:22:15"
-    },
-    {
-      "project_id": 1774215070,
-      "topic": "Israeli Invasion Looms Over Lebanon",
+      "project_id": 1775073129,
+      "topic": "Trump Mulls Nato Withdrawal Amid Iran War",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "Lebanon\u2019s Aoun warns Israeli attack on bridge \u2018prelude to ground invasion\u2019",
-      "created_at": "2026-03-22 21:31:10"
+      "article_title": "Trump mulls Nato withdrawal, stopping weapons to Ukraine over Europe's response to Iran war",
+      "created_at": "2026-04-01 20:52:09"
     },
     {
-      "project_id": 1774215334,
-      "topic": "Mideast Frenzy Distracts Europe as Ukraine Talks Stall",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine, Russia trade strikes as US-backed talks resume",
-      "created_at": "2026-03-22 21:35:34"
-    },
-    {
-      "project_id": 1774241644,
-      "topic": "Gulf States Escalate Air Defenses Amid Iranian Missile Threats",
+      "project_id": 1775076964,
+      "topic": "Trump considers NATO withdrawal over Europe's response to Iran war",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "UAE, Saudi, Kuwait respond to missile, drone threats",
-      "created_at": "2026-03-23 04:54:04"
+      "article_title": "Trump mulls Nato withdrawal, stopping weapons to Ukraine over Europe's response to Iran war",
+      "created_at": "2026-04-01 21:56:04"
+    },
+    {
+      "project_id": 1775157919,
+      "topic": "Amazon centre targeted in Iranian retaliation",
+      "category": "middle_east_conflict",
+      "region": "other",
+      "article_title": "IRGC says it has launched attacks on Amazon centre in Bahrain",
+      "created_at": "2026-04-02 20:25:19"
+    },
+    {
+      "project_id": 1775238578,
+      "topic": "Russia escalates attacks on Ukraine as war reaches 1,500th day",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine: Kharkiv under repeated attack on 1,500th day of war",
+      "created_at": "2026-04-03 18:49:38"
+    },
+    {
+      "project_id": 1775241335,
+      "topic": "Russia Escalates Attacks on Ukraine Amid Easter Celebrations",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine: Kharkiv under repeated attack on 1,500th day of war",
+      "created_at": "2026-04-03 19:35:35"
+    },
+    {
+      "project_id": 1775318788,
+      "topic": "Israel-Hezbollah Escalation Deepens",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Israel targets southern Lebanon, as Hezbollah launches attacks on Israeli troops",
+      "created_at": "2026-04-04 17:06:28"
+    },
+    {
+      "project_id": 1775321296,
+      "topic": "Russia escalates Ukraine attacks on Easter",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine: 14 people killed in 'massive' Russian attack on 1,500th day of war",
+      "created_at": "2026-04-04 17:48:16"
+    },
+    {
+      "project_id": 1775323564,
+      "topic": "Russia escalates Ukraine attacks on Easter",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine: 14 people killed in 'massive' Russian attack on 1,500th day of war",
+      "created_at": "2026-04-04 18:26:04"
+    },
+    {
+      "project_id": 1775330641,
+      "topic": "Hezbollah escalates against Israel",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Israel targets southern Lebanon, as Hezbollah launches attacks on Israeli troops",
+      "created_at": "2026-04-04 20:24:01"
     }
   ],
-  "last_updated": "2026-03-23 04:54:04"
+  "last_updated": "2026-04-04 20:24:01"
 }
