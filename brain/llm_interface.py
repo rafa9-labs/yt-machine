@@ -1,8 +1,13 @@
 import json
+import os
 import requests
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import time
+
+# Load .env file for API keys
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 class LLMInterface:
     def __init__(self, config_path: str = None):
@@ -171,12 +176,23 @@ class LLMInterface:
         
         prompt = f"Analyze this news article and extract viral-worthy information:\n\n{article_text}"
         
-        response = self.generate(
-            prompt=prompt,
+        # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
+        response = self._call_glm(
             system_prompt=prompt_config["system_prompt"],
+            user_prompt=prompt,
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            purpose="news analysis"
         )
+        
+        if not response:
+            print("  [NEWS] GLM-5 unavailable, trying local Ollama...")
+            response = self.generate(
+                prompt=prompt,
+                system_prompt=prompt_config["system_prompt"],
+                temperature=prompt_config["temperature"],
+                max_tokens=prompt_config["max_tokens"]
+            )
         
         if not response:
             return None
@@ -456,12 +472,23 @@ The full_text must include the greeting, all three stories with transitions, and
 Remember: Be witty, sassy, but accurate. Simplify complex geopolitics so anyone can understand it.
 Target: 180-250 words total for 75-90 seconds."""
         
-        response = self.generate(
-            prompt=prompt,
+        # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
+        response = self._call_glm(
             system_prompt=prompt_config["system_prompt"],
+            user_prompt=prompt,
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            purpose="multi-news script generation"
         )
+        
+        if not response:
+            print("  [MULTI-NEWS] GLM-5 unavailable, trying local Ollama...")
+            response = self.generate(
+                prompt=prompt,
+                system_prompt=prompt_config["system_prompt"],
+                temperature=prompt_config["temperature"],
+                max_tokens=prompt_config["max_tokens"]
+            )
         
         if not response:
             return None
@@ -484,24 +511,106 @@ Target: 180-250 words total for 75-90 seconds."""
             print(f"  [MULTI-NEWS] No stories in response — falling back")
             return None
         
-        # Build full_text if missing or incomplete
-        if not script.get('full_text') or len(script.get('full_text', '').split()) < 30:
-            parts = [greeting, script.get('intro_hook', '')]
-            for story in script['stories']:
-                parts.append(story.get('mini_hook', ''))
-                parts.append(story.get('body', ''))
-                punchline = story.get('punchline', '')
-                if punchline:
-                    parts.append(punchline)
-                    # STORY SEPARATOR: inject .... (long pause) after each punchline
-                    # This creates a clear beat between stories for the listener
-                    parts.append('....')
-                transition = story.get('transition', '')
-                if transition:
-                    parts.append(transition)
-            parts.append(script.get('closing', 
-                "And with that we conclude the news for today. Subscribe, like, do what you gotta do — I was Masker and see you tomorrow!"))
-            script['full_text'] = ' '.join(filter(None, parts))
+        # ── Build segment timeline from part_1/part_2 format ──
+        # Each segment maps to an image: [segment_text, image_index]
+        segment_timeline = []
+        
+        # Intro segment → image 0 (first story, part 1)
+        intro_text = f"{greeting} {script.get('intro_hook', '')}".strip()
+        segment_timeline.append({
+            'text': intro_text,
+            'image_idx': 0,
+            'label': 'intro'
+        })
+        
+        # PAUSE after intro — let the hook land before diving into stories
+        segment_timeline.append({
+            'text': '...',
+            'image_idx': 0,
+            'label': 'intro_pause',
+            'is_separator': True
+        })
+        
+        for i, story in enumerate(script['stories']):
+            img_base = i * 2  # Story 0 → images 0,1; Story 1 → images 2,3; Story 2 → images 4,5
+            
+            # Part 1 narration → image (img_base)
+            part_1 = story.get('part_1_narration', '')
+            if part_1:
+                segment_timeline.append({
+                    'text': part_1,
+                    'image_idx': img_base,
+                    'label': f'story_{i+1}_part1'
+                })
+            
+            # Part 2 narration → image (img_base + 1)
+            part_2 = story.get('part_2_narration', '')
+            if part_2:
+                segment_timeline.append({
+                    'text': part_2,
+                    'image_idx': img_base + 1,
+                    'label': f'story_{i+1}_part2'
+                })
+            
+            # Transition → keep same image as part 2
+            transition = story.get('transition', '')
+            if transition:
+                segment_timeline.append({
+                    'text': transition,
+                    'image_idx': img_base + 1,
+                    'label': f'story_{i+1}_transition'
+                })
+            
+            # Story separator (....) except after last story
+            if i < len(script['stories']) - 1:
+                segment_timeline.append({
+                    'text': '....',
+                    'image_idx': img_base + 1,
+                    'label': f'story_{i+1}_separator',
+                    'is_separator': True
+                })
+        
+        # PAUSE after last story — let the final punchline land before closing
+        last_story_idx = len(script['stories']) - 1
+        segment_timeline.append({
+            'text': '...',
+            'image_idx': last_story_idx * 2 + 1,
+            'label': 'pre_closing_pause',
+            'is_separator': True
+        })
+        
+        # Closing → keep last image
+        closing = script.get('closing', 
+            "And with that we conclude the news for today. Subscribe, like, do what you gotta do — I was Masker and see you tomorrow!")
+        segment_timeline.append({
+            'text': closing,
+            'image_idx': (len(script['stories']) - 1) * 2 + 1,
+            'label': 'closing'
+        })
+        
+        # Build full_text from timeline (excluding separators from TTS text)
+        parts = [seg['text'] for seg in segment_timeline if not seg.get('is_separator')]
+        # But add separators BACK between stories for pause
+        full_parts = []
+        for seg in segment_timeline:
+            full_parts.append(seg['text'])
+        full_text = ' '.join(filter(None, full_parts))
+        
+        script['full_text'] = full_text
+        script['segment_timeline'] = segment_timeline
+        
+        # Extract visual prompts from stories (part_1_visual, part_2_visual)
+        visual_prompts = []
+        for i, story in enumerate(script['stories']):
+            visual_prompts.append({
+                'scene': f'story_{i+1}_part1',
+                'description': story.get('part_1_visual', story.get('mini_hook', ''))
+            })
+            visual_prompts.append({
+                'scene': f'story_{i+1}_part2',
+                'description': story.get('part_2_visual', story.get('body', ''))
+            })
+        script['all_visual_scenes'] = visual_prompts
         
         # VALIDATE CLOSING: Ensure full_text ends with subscribe/CTA
         script['full_text'] = self._validate_closing(script['full_text'])
@@ -510,21 +619,87 @@ Target: 180-250 words total for 75-90 seconds."""
         script['word_count'] = len(script['full_text'].split())
         script['estimated_duration'] = int(script['word_count'] / 2.5)
         
-        # Extract all visual scenes into flat list for image generation
-        all_visual_scenes = []
-        for story in script['stories']:
-            for scene in story.get('visual_scenes', []):
-                all_visual_scenes.append(scene)
-        script['all_visual_scenes'] = all_visual_scenes
-        
         print(f"  [MULTI-NEWS] Script: {len(script['stories'])} stories, {script['word_count']} words, ~{script['estimated_duration']}s")
+        print(f"  [MULTI-NEWS] Timeline: {len(segment_timeline)} segments → 6 images")
+        for seg in segment_timeline:
+            print(f"    [{seg['label']}] → img#{seg['image_idx']}: \"{seg['text'][:50]}...\"")
         
         return script
+    
+    def _extract_key_entities(self, text: str) -> set:
+        """Extract key proper nouns, country names, and numbers from text."""
+        import re
+        
+        # Capitalized multi-word entities (country names, proper nouns, org names)
+        entities = set(re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', text))
+        
+        # Common English words to filter out
+        stopwords = {
+            'The', 'This', 'That', 'And', 'But', 'For', 'Not', 'In', 'On', 'At',
+            'With', 'It', 'Is', 'Was', 'Are', 'Were', 'Has', 'Have', 'Had', 'Been',
+            'Will', 'Would', 'Could', 'Should', 'May', 'Might', 'They', 'Their',
+            'There', 'These', 'Those', 'Each', 'Every', 'Which', 'What', 'When',
+            'Where', 'Who', 'How', 'Why', 'More', 'Most', 'Some', 'Such', 'Than',
+            'Then', 'Now', 'Just', 'Also', 'Very', 'Even', 'Still', 'Only', 'About',
+            'After', 'Before', 'Between', 'Through', 'During', 'Without', 'Against',
+            'Another', 'While', 'Last', 'First', 'Next', 'Both', 'All', 'Many',
+            'Much', 'Own', 'Other', 'New', 'Old', 'Good', 'Great', 'Big', 'Small',
+            'So', 'If', 'Or', 'An', 'No', 'Do', 'Did', 'Get', 'Got', 'Make',
+            'Made', 'Like', 'Well', 'Back', 'Over', 'Into', 'Right', 'Because',
+            'Since', 'Being', 'Having', 'Doing', 'Going', 'Coming', 'Taking',
+            'Tonight', 'Today', 'Yesterday', 'Tomorrow', 'Subscribe', 'Masker',
+            'Afternoon', 'Morning', 'Evening', 'I', 'You', 'We', 'He', 'She',
+        }
+        entities -= stopwords
+        
+        # Important numbers
+        numbers = set(re.findall(r'\b\d+[\d,]*\b', text))
+        
+        return entities | numbers
+    
+    def _check_content_fidelity(self, original: str, curated: str) -> bool:
+        """
+        Check that curated text covers the SAME topics as the original.
+        Returns True if content fidelity is acceptable, False if curator
+        hallucinated a completely different script or added unrelated content.
+        """
+        orig_entities = self._extract_key_entities(original)
+        cur_entities = self._extract_key_entities(curated)
+        
+        if not orig_entities:
+            return True  # Can't validate, assume OK
+        
+        overlap = orig_entities & cur_entities
+        
+        # Check 1: Original entities must be preserved in curated text
+        preservation_ratio = len(overlap) / len(orig_entities)
+        
+        if preservation_ratio < 0.25:
+            print(f"  [CURATOR] ⚠️ CONTENT MISMATCH — only {preservation_ratio:.0%} entity preservation")
+            print(f"  [CURATOR] Original entities: {sorted(orig_entities)[:10]}")
+            print(f"  [CURATOR] Curated entities: {sorted(cur_entities)[:10]}")
+            print(f"  [CURATOR] Overlap: {sorted(overlap)}")
+            return False
+        
+        # Check 2: Curated text must not introduce many NEW entities
+        # (indicates the curator added unrelated/hallucinated content)
+        novel_entities = cur_entities - orig_entities
+        if len(cur_entities) > 0:
+            novelty_ratio = len(novel_entities) / len(cur_entities)
+            
+            if novelty_ratio > 0.40 and len(novel_entities) > 3:
+                print(f"  [CURATOR] ⚠️ NOVEL CONTENT DETECTED — {len(novel_entities)} new entities ({novelty_ratio:.0%} of curated)")
+                print(f"  [CURATOR] Novel entities: {sorted(novel_entities)[:15]}")
+                print(f"  [CURATOR] Expected entities: {sorted(orig_entities)[:10]}")
+                return False
+        
+        return True
     
     def curate_script(self, full_text: str) -> Optional[str]:
         """
         Second-pass LLM curation: transforms written script into natural spoken language.
         Optimizes rhythm, pauses, emphasis, pacing — without changing any facts.
+        Includes content fidelity check to reject hallucinated replacements.
         """
         prompt_config = self.config["prompts"]["script_curator"]
         
@@ -534,11 +709,14 @@ RULES:
 - NEVER change facts, numbers, or country names
 - NEVER add or remove information
 - Break long sentences into short punchy ones
-- Use '...' for dramatic pauses
+- Use PERIODS for dramatic pauses before punchlines — end the setup, start the punchline fresh
+  Example: 'Classic leverage play. Disguised as safety.' NOT 'Classic leverage play... disguised as safety.'
 - Use '—' for abrupt contrasts
 - Move key numbers to end of sentences (punch position)
 - Use contractions ALWAYS (it's, they're, won't)
 - Create rhythm: alternate short punchy + longer explanatory sentences
+- Before every punchline/reveal, end previous sentence with a PERIOD, start punchline as new sentence
+- After rhetorical questions, use a period before the answer
 - Balance all 3 stories to roughly equal word count (40-55 words each)
 - Add a longer pause (....) after each story's punchline before the next story
 - NEVER remove or shorten the closing/CTA at the end — it MUST include subscribe/like and "I'm Masker" and "see you tomorrow"
@@ -548,15 +726,17 @@ ORIGINAL SCRIPT:
 
 Output ONLY the curated spoken script as plain text. No JSON. No explanations."""
 
-        response = self.generate(
-            prompt=prompt,
+        # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
+        response = self._call_glm(
             system_prompt=prompt_config["system_prompt"],
+            user_prompt=prompt,
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            purpose="script curation"
         )
         
         if not response:
-            print(f"  [CURATOR] Curation failed, using original script")
+            print("  [CURATOR] GLM-5 unavailable — skipping curation, using original script (Ollama fallback disabled to prevent hallucination)")
             return full_text
         
         # Clean any accidental markdown wrapping
@@ -575,11 +755,253 @@ Output ONLY the curated spoken script as plain text. No JSON. No explanations.""
             print(f"  [CURATOR] Curated script too short ({word_count_curated} vs {word_count_original}), using original")
             return full_text
         
+        # ── CONTENT FIDELITY CHECK ──
+        # Reject if curator hallucinated a completely different topic
+        if not self._check_content_fidelity(full_text, curated):
+            print(f"  [CURATOR] ❌ Curator hallucinated different content — REJECTED, using original")
+            return full_text
+        
         # VALIDATE CLOSING: Ensure curator didn't remove the CTA
         curated = self._validate_closing(curated)
         
         print(f"  [CURATOR] Script curated: {word_count_original} → {len(curated.split())} words")
         return curated
+    
+    def _call_glm(self, system_prompt: str, user_prompt: str, temperature: float = 0.4, max_tokens: int = 2000, purpose: str = "generation") -> Optional[str]:
+        """
+        Call GLM-5 via Z.ai Coding Plan API (OpenAI-compatible).
+        Falls back to local Ollama if API key not set or call fails.
+        
+        Args:
+            system_prompt: System message
+            user_prompt: User message  
+            temperature: Sampling temperature
+            max_tokens: Max tokens to generate
+            purpose: Label for logging (e.g. "script generation", "curation", "visual prompts")
+            
+        Returns:
+            Response text or None on failure
+        """
+        api_key = os.environ.get("ZHIPUAI_API_KEY", "").strip()
+        if not api_key:
+            print(f"  [GLM-5] No API key found, falling back to local Ollama")
+            return None
+        
+        try:
+            url = "https://api.z.ai/api/coding/paas/v4/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            # GLM-5 is a reasoning model — hidden reasoning tokens consume the budget.
+            # Multiply max_tokens by 3 to ensure enough room for actual output.
+            effective_max_tokens = max_tokens * 3
+            
+            payload = {
+                "model": "glm-5",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": temperature,
+                "max_tokens": effective_max_tokens
+            }
+            
+            print(f"  [GLM-5] Calling for {purpose}...")
+            resp = requests.post(url, json=payload, headers=headers, timeout=120)
+            resp.raise_for_status()
+            
+            data = resp.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            if content:
+                print(f"  [GLM-5] Responded ({len(content)} chars)")
+                return content
+            else:
+                print(f"  [GLM-5] Empty response, falling back to Ollama")
+                return None
+                
+        except Exception as e:
+            print(f"  [GLM-5] API call failed: {e}, falling back to Ollama")
+            return None
+    
+    def generate_visual_prompts(self, script: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+        """
+        Generate 6 dedicated visual prompts from curated narration text.
+        Uses GLM-5 (Zhipu AI) for superior prompt quality, falls back to local Ollama.
+        
+        Args:
+            script: Script dict with 'stories' array containing part_1_narration / part_2_narration
+            
+        Returns:
+            List of 6 dicts: [{'scene': 'story_N_partM', 'description': '...'}, ...]
+        """
+        prompt_config = self.config["prompts"].get("visual_prompt_generator")
+        if not prompt_config:
+            print("  [VISUAL-GEN] No visual_prompt_generator config found, skipping")
+            return None
+        
+        stories = script.get('stories', [])
+        if not stories:
+            print("  [VISUAL-GEN] No stories in script, skipping")
+            return None
+        
+        # Build narration block — explicitly labeled for 1:1 mapping
+        narration_block = ""
+        for i, story in enumerate(stories, 1):
+            p1 = story.get('part_1_narration', story.get('mini_hook', ''))
+            p2 = story.get('part_2_narration', story.get('body', ''))
+            narration_block += f"""
+--- story_{i}_part1 (THE SETUP for Story {i}) ---
+NARRATION: "{p1}"
+
+--- story_{i}_part2 (THE PAYOFF for Story {i}) ---
+NARRATION: "{p2}"
+"""
+        
+        system_prompt = prompt_config["system_prompt"]
+        
+        user_prompt = f"""You MUST generate exactly 6 visual scene descriptions. Each scene MUST depict EXACTLY what the corresponding narration says.
+
+CRITICAL MAPPING RULES — DO NOT shuffle or rearrange:
+- story_1_part1 → MUST visually depict what Story 1 Part 1 narration describes
+- story_1_part2 → MUST visually depict what Story 1 Part 2 narration describes
+- story_2_part1 → MUST visually depict what Story 2 Part 1 narration describes
+- story_2_part2 → MUST visually depict what Story 2 Part 2 narration describes
+- story_3_part1 → MUST visually depict what Story 3 Part 1 narration describes
+- story_3_part2 → MUST visually depict what Story 3 Part 2 narration describes
+
+NARRATION SEGMENTS:
+{narration_block}
+
+COMPOSITION REQUIREMENTS for each scene description:
+1. STYLE: "16-bit isometric pixel art, 30-degree overhead camera angle, retro video game aesthetic"
+2. FOREGROUND: Specific subject positioned on the LEFT side (this is a split-screen layout — right side is covered by an avatar overlay)
+3. MIDGROUND: The main action/event happening — dynamic pose, motion implied
+4. BACKGROUND: The specific geographic location mentioned in narration — recognizable landmarks, terrain, flags
+5. COLOR PALETTE: Choose from — warm oranges/reds (conflict), cool blues (diplomatic), golden yellows (economic), dark greens (military) — based on story mood
+6. LIGHTING: Time of day that matches the mood — sunset (tense), dawn (hope), night (covert), golden hour (dramatic)
+7. DETAILS: Include at least 2 specific recognizable elements (flags, equipment, uniforms, buildings) that make the scene identifiable
+
+Each description MUST be 2-4 FULL SENTENCES. Start with "16-bit isometric pixel art scene:" then describe foreground, midground, background, and lighting. NO '+' shorthand. NO vague language.
+
+Output ONLY valid JSON:
+{{
+  "scenes": [
+    {{"scene": "story_1_part1", "description": "..."}},
+    {{"scene": "story_1_part2", "description": "..."}},
+    {{"scene": "story_2_part1", "description": "..."}},
+    {{"scene": "story_2_part2", "description": "..."}},
+    {{"scene": "story_3_part1", "description": "..."}},
+    {{"scene": "story_3_part2", "description": "..."}}
+  ]
+}}"""
+        
+        # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
+        response = self._call_glm(system_prompt, user_prompt, temperature=0.4, max_tokens=2000, purpose="visual prompt generation")
+        
+        if not response:
+            print("  [VISUAL-GEN] GLM-5 unavailable, trying local Ollama...")
+            response = self.generate(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                temperature=prompt_config["temperature"],
+                max_tokens=prompt_config["max_tokens"]
+            )
+        
+        if not response:
+            print("  [VISUAL-GEN] All LLM calls failed")
+            return None
+        
+        result = self._extract_json(response)
+        if not result or not isinstance(result, dict):
+            print(f"  [VISUAL-GEN] Failed to parse JSON response")
+            print(f"  [VISUAL-GEN] Raw: {response[:300]}")
+            return None
+        
+        scenes = result.get('scenes', [])
+        if not scenes or len(scenes) < 6:
+            print(f"  [VISUAL-GEN] Expected 6 scenes, got {len(scenes)}")
+            if len(scenes) >= 3:
+                while len(scenes) < 6:
+                    scenes.append({
+                        'scene': f'fallback_{len(scenes)+1}',
+                        'description': '16-bit isometric pixel art scene: Geopolitical world map with highlighted conflict regions, dramatic sunset lighting, military units positioned on left side'
+                    })
+            else:
+                return None
+        
+        # Validate each scene has a meaningful description
+        for i, scene in enumerate(scenes):
+            desc = scene.get('description', '')
+            word_count = len(desc.split())
+            if word_count < 5:
+                print(f"  [VISUAL-GEN] Scene {i} too short ({word_count} words), using fallback")
+                scenes[i]['description'] = '16-bit isometric pixel art scene: Geopolitical world map with highlighted regions, military assets in foreground left, dramatic sunset lighting'
+            scenes[i]['scene'] = scenes[i].get('scene', f'story_{(i//2)+1}_part{(i%2)+1}')
+        
+        # ── DEDUPLICATION: Detect and regenerate duplicate descriptions ──
+        scenes = self._deduplicate_visual_prompts(scenes, user_prompt, system_prompt)
+        
+        print(f"  [VISUAL-GEN] Generated {len(scenes)} visual prompts")
+        for s in scenes:
+            print(f"    [{s['scene']}] {s.get('description', '')[:80]}...")
+        
+        return scenes[:6]  # Ensure exactly 6
+    
+    def _deduplicate_visual_prompts(self, scenes: List[Dict], user_prompt: str, system_prompt: str) -> List[Dict]:
+        """Detect duplicate visual descriptions and regenerate them."""
+        from difflib import SequenceMatcher
+        
+        duplicates_found = False
+        for i in range(len(scenes)):
+            for j in range(i + 1, len(scenes)):
+                desc_i = scenes[i].get('description', '')
+                desc_j = scenes[j].get('description', '')
+                
+                # Calculate text similarity
+                similarity = SequenceMatcher(None, desc_i.lower(), desc_j.lower()).ratio()
+                
+                if similarity > 0.6:  # 60%+ overlap = duplicate
+                    print(f"  [VISUAL-GEN] ⚠️ Duplicate detected: {scenes[i]['scene']} ↔ {scenes[j]['scene']} ({similarity:.0%} similar)")
+                    duplicates_found = True
+                    
+                    # Regenerate the later scene with explicit differentiation instruction
+                    diff_prompt = f"""You previously generated these visual descriptions:
+
+SCENE A ({scenes[i]['scene']}): {desc_i}
+
+Now generate a COMPLETELY DIFFERENT description for SCENE B ({scenes[j]['scene']}).
+It must depict a DIFFERENT moment, location, and action. Do NOT reuse any nouns or verbs from Scene A.
+
+{system_prompt}
+
+Output ONLY JSON: {{"scene": "{scenes[j]['scene']}", "description": "..."}}"""
+                    
+                    retry = self._call_glm(
+                        system_prompt="You are a pixel art scene designer. Generate visually distinct scenes.",
+                        user_prompt=diff_prompt,
+                        temperature=0.6,
+                        max_tokens=300,
+                        purpose="visual dedup regeneration"
+                    )
+                    
+                    if retry:
+                        parsed = self._extract_json(retry)
+                        if parsed and isinstance(parsed, dict) and parsed.get('description'):
+                            new_desc = parsed['description']
+                            # Verify the new description is actually different
+                            new_similarity = SequenceMatcher(None, desc_i.lower(), new_desc.lower()).ratio()
+                            if new_similarity < 0.5:
+                                scenes[j]['description'] = new_desc
+                                print(f"  [VISUAL-GEN] ✅ Regenerated {scenes[j]['scene']} (similarity {similarity:.0%} → {new_similarity:.0%})")
+                            else:
+                                print(f"  [VISUAL-GEN] ⚠️ Regeneration still similar ({new_similarity:.0%}), keeping as-is")
+        
+        if not duplicates_found:
+            print(f"  [VISUAL-GEN] ✅ All 6 scenes are visually distinct (no duplicates)")
+        
+        return scenes
     
     def check_connection(self) -> bool:
         try:
