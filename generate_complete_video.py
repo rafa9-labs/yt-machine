@@ -12,8 +12,38 @@ if sys.platform == 'win32':
 
 load_dotenv()
 
+# ── File-based logging: mirror all stdout to a log file ──
+import io
+
+class _TeeWriter:
+    """Writes to both stdout and a log file simultaneously."""
+    def __init__(self, terminal, log_path):
+        self.terminal = terminal
+        self.log_file = open(log_path, 'a', encoding='utf-8')
+    
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+    
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+    
+    def reconfigure(self, **kwargs):
+        # Pass through reconfigure calls to terminal (for Windows Unicode fix)
+        if hasattr(self.terminal, 'reconfigure'):
+            self.terminal.reconfigure(**kwargs)
+
+# Create logs directory
+_log_dir = Path("output/logs")
+_log_dir.mkdir(parents=True, exist_ok=True)
+_log_path = _log_dir / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+sys.stdout = _TeeWriter(sys.stdout, str(_log_path))
+
 print("🎬 YT-MACHINE COMPLETE VIDEO GENERATION (3-News Format)")
 print("=" * 60)
+print(f"📝 Log file: {_log_path}")
 
 
 def _extract_segment_text(segment_data) -> str:
@@ -26,6 +56,9 @@ def _extract_segment_text(segment_data) -> str:
                 or segment_data.get('content')
                 or str(segment_data))
     return str(segment_data) if segment_data else ''
+
+
+from pipeline_utils import bridge_timestamp_gaps, build_fallback_prompt as _build_fallback_prompt
 
 
 # Import core components
@@ -224,9 +257,40 @@ except Exception as e:
     exit(1)
 
 # ============================================================
-# STEP 4.5: SCRIPT CURATION (LLM Speech Coach)
+# STEP 4.5: DEDICATED VISUAL PROMPT GENERATION (BEFORE curation)
+# Generate visual prompts from original narrations FIRST so images
+# always match the content, regardless of later curation rephrasing.
 # ============================================================
-print("\n🎙️ STEP 4.5: SCRIPT CURATION (Natural Delivery)")
+print("\n🖼️ STEP 4.5: DEDICATED VISUAL PROMPT GENERATION")
+print("-" * 40)
+
+try:
+    dedicated_visuals = llm.generate_visual_prompts(script)
+    
+    if dedicated_visuals and len(dedicated_visuals) >= 6:
+        # Override the script-synthesis visuals with dedicated ones
+        script['all_visual_scenes'] = dedicated_visuals
+        print(f"  ✅ Override: using {len(dedicated_visuals)} dedicated visual prompts (narration-grounded)")
+        for v in dedicated_visuals:
+            print(f"    [{v['scene']}] {v.get('description', '')[:60]}...")
+    else:
+        # Fallback: keep existing all_visual_scenes from script synthesis
+        print(f"  ⚠️ Dedicated visual generation failed — using script-synthesis visuals")
+    
+    # Save updated script with (potentially) new visuals
+    segments_file = project_folder / "script_segments.json"
+    segments_file.write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding='utf-8')
+    
+except Exception as e:
+    print(f"  ⚠️ Visual prompt generation failed: {e}")
+    print(f"  ⚠️ Continuing with script-synthesis visuals")
+
+# ============================================================
+# STEP 4.7: SCRIPT CURATION (LLM Speech Coach)
+# AFTER visual prompts — only rephrases for TTS, doesn't change facts.
+# Visual prompts already locked to original narrations above.
+# ============================================================
+print("\n🎙️ STEP 4.7: SCRIPT CURATION (Natural Delivery)")
 print("-" * 40)
 
 try:
@@ -255,14 +319,12 @@ except Exception as e:
 
 # ============================================================
 # STEP 5: PIXEL ART GENERATION (2 per story = 6 total)
+# Uses visual prompts from Step 4.7 (dedicated) or script synthesis (fallback)
 # ============================================================
-print("\n🎨 STEP 5: PIXEL ART GENERATION (2 per story)")
+print("\n🎨 STEP 5: PIXEL ART GENERATION (synced visuals)")
 print("-" * 40)
 
 try:
-    from redfish.prompt_generator import VisualPromptGenerator
-    from redfish.prompt_validator import calculate_prompt_relevance
-    
     generated_images = []
     image_folder = project_folder / "images"
     image_folder.mkdir(exist_ok=True)
@@ -271,54 +333,38 @@ try:
     base_seed = project_id % (2**32)
     print(f"  Batch seed: {base_seed}")
     
-    # Extract visual scene descriptions from script
+    # Extract visual prompts from script (new format: part_1_visual, part_2_visual)
     all_visual_scenes = script.get('all_visual_scenes', [])
     
-    # If no visual scenes, create from story content
-    if not all_visual_scenes or len(all_visual_scenes) < 6:
-        print("  ⚠️  Building visual scenes from story content...")
-        all_visual_scenes = []
-        for i, story in enumerate(script.get('stories', []), 1):
-            # Default scenes if LLM didn't provide them
-            story_scenes = story.get('visual_scenes', [])
-            if story_scenes:
-                all_visual_scenes.extend(story_scenes)
-            else:
-                # Fallback: generate from story text
-                hook_text = story.get('mini_hook', '')
-                body_text = story.get('body', '')
+    # Build script-aware fallback prompts for any missing scenes
+    stories = script.get('stories', [])
+    for s_idx in range(3):
+        for p_idx in range(2):
+            fallback_idx = s_idx * 2 + p_idx
+            if fallback_idx >= len(all_visual_scenes):
+                story = stories[s_idx] if s_idx < len(stories) else {}
+                part_key = f'part_{p_idx+1}_narration'
+                part_text = story.get(part_key, story.get('body', ''))
+                # Extract concrete nouns/entities from narration for a specific prompt
+                fallback_desc = _build_fallback_prompt(part_text, s_idx, p_idx, news_analyses)
                 all_visual_scenes.append({
-                    'scene': f'story_{i}_hook',
-                    'description': hook_text[:100]
+                    'scene': f'story_{s_idx+1}_part{p_idx+1}',
+                    'description': fallback_desc
                 })
-                all_visual_scenes.append({
-                    'scene': f'story_{i}_consequence',
-                    'description': body_text[:100]
-                })
+    all_visual_scenes = all_visual_scenes[:6]
     
-    # Ensure we have exactly 6 scenes
-    while len(all_visual_scenes) < 6:
-        idx = len(all_visual_scenes) + 1
-        all_visual_scenes.append({
-            'scene': f'fallback_{idx}',
-            'description': f'Geopolitical scene {idx}, pixel art style, dramatic lighting'
-        })
-    
-    # Generate 6 images (2 per story)
-    scene_names_for_images = []
+    # Scene names matching the timeline
+    scene_names = []
     for i in range(3):
-        scene_names_for_images.append(f'story_{i+1}_hook')
-        scene_names_for_images.append(f'story_{i+1}_consequence')
+        scene_names.append(f'story_{i+1}_part1')
+        scene_names.append(f'story_{i+1}_part2')
     
-    for scene_idx, scene_name in enumerate(scene_names_for_images):
+    for scene_idx, scene_name in enumerate(scene_names):
         print(f"\n  Generating {scene_name}...")
         
-        # Get visual scene description
-        scene_data = all_visual_scenes[scene_idx] if scene_idx < len(all_visual_scenes) else None
-        if scene_data:
-            prompt = scene_data.get('description', '')
-        else:
-            prompt = f'Geopolitical pixel art scene {scene_idx + 1}'
+        # Get visual prompt
+        scene_data = all_visual_scenes[scene_idx]
+        prompt = scene_data.get('description', '')
         
         # Build full prompt with pixel art style
         style_suffix = ('Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), '
@@ -326,14 +372,16 @@ try:
                        'detailed proportions, flat colors, dramatic lighting')
         full_prompt = f"{prompt}, {style_suffix}" if prompt else style_suffix
         
-        # Get corresponding story text for relevance check
+        # Get corresponding narration for relevance check
         story_idx = scene_idx // 2
         story_text = ''
         if story_idx < len(script.get('stories', [])):
             story = script['stories'][story_idx]
-            story_text = f"{story.get('mini_hook', '')} {story.get('body', '')}"
+            part_key = 'part_1_narration' if scene_idx % 2 == 0 else 'part_2_narration'
+            story_text = story.get(part_key, '')
         
-        print(f"    Prompt: {full_prompt[:100]}...")
+        print(f"    Visual prompt: {full_prompt[:100]}...")
+        print(f"    Narration: {story_text[:80]}...")
         
         # Generate image
         scene_seed = base_seed + scene_idx
@@ -351,9 +399,38 @@ try:
             generated_images.append(str(dst_path))
             print(f"    ✅ {dst_filename}")
         else:
-            print(f"    ❌ Failed")
+            print(f"    ❌ Failed, retrying with fallback prompt...")
+            # Retry with simplified fallback prompt
+            fallback_desc = _build_fallback_prompt(story_text, story_idx, scene_idx % 2, news_analyses)
+            fallback_prompt = f"{fallback_desc}, {style_suffix}"
+            retry_seed = base_seed + scene_idx + 100  # Different seed for retry
+            art_result = generate_pixel_art(fallback_prompt, script_text=story_text, seed=retry_seed)
+            
+            if art_result.get('success'):
+                src_path = Path(art_result.get('path'))
+                dst_filename = f"{scene_name}_{src_path.name}"
+                dst_path = image_folder / dst_filename
+                shutil.copy2(src_path, dst_path)
+                generated_images.append(str(dst_path))
+                print(f"    ✅ Retry succeeded: {dst_filename}")
+            else:
+                # Create a solid-color placeholder so we never have missing images
+                print(f"    ⚠️ Retry also failed — creating placeholder image")
+                from PIL import Image as PILImage
+                placeholder = PILImage.new('RGB', (1088, 1152), (10, 5, 25))
+                placeholder_path = image_folder / f"{scene_name}_placeholder.png"
+                placeholder.save(str(placeholder_path))
+                generated_images.append(str(placeholder_path))
     
-    print(f"\n✅ Generated {len(generated_images)} images in {image_folder}")
+    # Final validation: ensure exactly 6 images
+    if len(generated_images) < 6:
+        print(f"  ⚠️ Only {len(generated_images)} images generated (need 6)")
+        # Duplicate last image to fill gaps
+        while len(generated_images) < 6:
+            generated_images.append(generated_images[-1])
+            print(f"    ⚠️ Duplicated last image to fill slot {len(generated_images)}")
+    
+    print(f"\n✅ Generated {len(generated_images)} synced images in {image_folder}")
     
 except Exception as e:
     print(f"❌ Pixel art generation failed: {e}")
@@ -416,12 +493,132 @@ try:
     
     word_timestamps = tts_result.get('word_timestamps', [])
     
+    # ── Build scene timestamps from segment timeline ──
+    # Map each image to its start/end time based on which narration segments it covers
+    scene_timestamps = None
+    segment_timeline = script.get('segment_timeline', [])
+    
+    # Compute total audio duration from word_timestamps or TTS estimate
+    if word_timestamps:
+        total_dur = word_timestamps[-1].get('end', tts_result.get('estimated_duration_seconds', 90))
+    else:
+        total_dur = tts_result.get('estimated_duration_seconds', 90)
+    print(f"  Audio duration: {total_dur:.1f}s")
+    
+    if segment_timeline and word_timestamps:
+        # Build image-to-time mapping
+        num_images = len(generated_images)
+        image_times = [{'start': None, 'end': None} for _ in range(num_images)]
+        
+        for seg in segment_timeline:
+            img_idx = seg.get('image_idx', 0)
+            if img_idx >= num_images:
+                continue
+            
+            seg_text = seg.get('text', '').strip()
+            if not seg_text or seg_text == '....':
+                continue
+            
+            # Find this segment's words in word_timestamps by matching text
+            seg_words = seg_text.lower().split()
+            if len(seg_words) < 2:
+                continue
+            
+            # Find start time: first word of segment
+            seg_start = None
+            seg_end = None
+            first_word = seg_words[0].strip('.,!?;:')
+            
+            for wi, wt in enumerate(word_timestamps):
+                wt_word = wt.get('word', '').lower().strip('.,!?;:')
+                if wt_word == first_word and wi + len(seg_words) - 1 < len(word_timestamps):
+                    # Check if next few words match too
+                    match = True
+                    for j, sw in enumerate(seg_words[:5]):
+                        if wi + j >= len(word_timestamps):
+                            match = False
+                            break
+                        tw = word_timestamps[wi + j].get('word', '').lower().strip('.,!?;:')
+                        if tw != sw.strip('.,!?;:'):
+                            match = False
+                            break
+                    if match:
+                        seg_start = wt.get('start', 0)
+                        # End = last word of segment
+                        end_idx = min(wi + len(seg_words) - 1, len(word_timestamps) - 1)
+                        seg_end = word_timestamps[end_idx].get('end', seg_start + 5)
+                        break
+            
+            if seg_start is not None:
+                if image_times[img_idx]['start'] is None or seg_start < image_times[img_idx]['start']:
+                    image_times[img_idx]['start'] = seg_start
+                if seg_end is not None and (image_times[img_idx]['end'] is None or seg_end > image_times[img_idx]['end']):
+                    image_times[img_idx]['end'] = seg_end
+        
+        # Fill gaps and validate
+        for i, it in enumerate(image_times):
+            if it['start'] is None:
+                # Fallback: proportional split
+                if word_timestamps:
+                    it['start'] = (total_dur / num_images) * i
+                else:
+                    it['start'] = 0
+            if it['end'] is None:
+                if i + 1 < num_images and image_times[i + 1]['start'] is not None:
+                    it['end'] = image_times[i + 1]['start']
+                else:
+                    it['end'] = (total_dur / num_images) * (i + 1)
+        
+        # Ensure last image ends at audio end
+        if image_times:
+            image_times[-1]['end'] = max(image_times[-1]['end'], total_dur)
+            # Ensure first image starts at 0
+            image_times[0]['start'] = 0
+        
+        # Bridge gaps: extend each image so there are NO black frames
+        # If image[i] ends BEFORE image[i+1] starts, extend to cover the gap
+        for i in range(len(image_times) - 1):
+            current_end = image_times[i]['end']
+            next_start = image_times[i + 1]['start']
+            gap = next_start - current_end
+            if gap > 0.1:  # More than 100ms gap = potential black frame
+                # Split the gap: previous image extends 70%, next starts 30% earlier
+                split_point = current_end + gap * 0.7
+                image_times[i]['end'] = split_point
+                image_times[i + 1]['start'] = split_point
+                print(f"    ⚠️ Bridged {gap:.1f}s gap between image {i} and {i+1}")
+        
+        # Ensure minimum duration per image (at least 1 second)
+        for i, it in enumerate(image_times):
+            dur = it['end'] - it['start']
+            if dur < 1.0:
+                # Steal time from neighbors
+                needed = 1.0 - dur
+                if i > 0:
+                    steal = min(needed / 2, (image_times[i-1]['end'] - image_times[i-1]['start'] - 1.0))
+                    if steal > 0:
+                        image_times[i-1]['end'] -= steal
+                        it['start'] -= steal
+                        needed -= steal
+                if needed > 0 and i < len(image_times) - 1:
+                    steal = min(needed, (image_times[i+1]['end'] - image_times[i+1]['start'] - 1.0))
+                    if steal > 0:
+                        image_times[i+1]['start'] += steal
+                        it['end'] += steal
+        
+        scene_timestamps = image_times
+        print(f"  🎯 Built scene timestamps from timeline ({len(segment_timeline)} segments)")
+        for i, ts in enumerate(scene_timestamps):
+            dur = ts['end'] - ts['start']
+            print(f"    Image {i}: {ts['start']:.2f}s → {ts['end']:.2f}s ({dur:.2f}s)")
+    else:
+        print(f"  ⚠️ No segment_timeline or word_timestamps — using weighted fallback")
+    
     # Title from LAST story's topic (most important — for maximum retention)
-    # This title is NOT read by TTS — it's a persistent visual headline
     last_analysis = news_analyses[-1] if news_analyses else {}
     hook_text = last_analysis.get('topic', '') or last_analysis.get('angle', '')
     if not hook_text:
-        hooks = [s.get('mini_hook', '') for s in script.get('stories', [])]
+        hooks = [s.get('part_1_narration', s.get('mini_hook', '')) for s in script.get('stories', [])]
         hook_text = hooks[-1] if hooks else ''
     print(f"  Title headline: \"{hook_text[:60]}\" (from most important story)")
     
@@ -432,6 +629,7 @@ try:
         script_text=full_script,
         word_timestamps=word_timestamps,
         hook_text=hook_text,
+        scene_timestamps=scene_timestamps,
     )
     
     if assembly_result.get('success'):
@@ -521,21 +719,22 @@ with open(manifest_path, 'w', encoding='utf-8') as f:
 
 print(f"✅ Manifest saved: {manifest_path}")
 
-# Track video for diversity
+# Track video for diversity — log ALL 3 stories, not just the first
 try:
     from redfish.category_rotation import CategoryRotation
     rotation = CategoryRotation()
-    if articles:
-        matched_categories = rotation.detect_article_categories(articles[0])
+    for idx, article in enumerate(articles):
+        matched_categories = rotation.detect_article_categories(article)
         category = matched_categories[0] if matched_categories else "other"
-        region = rotation._detect_region_from_title(articles[0].get('title', ''))
+        region = rotation._detect_region_from_title(article.get('title', ''))
+        analysis = news_analyses[idx] if idx < len(news_analyses) else {}
         rotation.track_video_generated(
-            topic=news_analyses[0].get('topic', 'Unknown') if news_analyses else 'Unknown',
+            topic=analysis.get('topic', 'Unknown'),
             category=category,
             region=region,
-            article_title=articles[0].get('title', 'Unknown')
+            article_title=article.get('title', 'Unknown')
         )
-        print(f"✅ Video tracked: {category} / {region}")
+        print(f"✅ Story {idx+1} tracked: {category} / {region}")
 except Exception as e:
     print(f"⚠️  Video tracking failed: {e}")
 
