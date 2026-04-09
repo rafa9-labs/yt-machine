@@ -190,8 +190,9 @@ def _apply_audio_mastering(input_path: Path) -> bool:
 
         # 1. High-pass filter at 80Hz (remove rumble, warm up voice)
         for ch in range(arr.shape[1]):
+            n_samples = len(arr[:, ch])
             spectrum = np.fft.rfft(arr[:, ch])
-            freqs = np.fft.rfftfreq(len(spectrum), 1.0 / sr)
+            freqs = np.fft.rfftfreq(n_samples, 1.0 / sr)
             hp_mask = freqs < 80
             spectrum[hp_mask] *= 0.1  # -20dB below 80Hz
             presence_mask = (freqs >= 3000) & (freqs <= 5000)
