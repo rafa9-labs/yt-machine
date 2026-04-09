@@ -44,24 +44,34 @@ Videos rotate across these categories to avoid audience fatigue. The system trac
  
 ---
 
-## 3. Video Structure (6 Segments)
+## 3. Video Structure (3-News Multi-Story Format)
 
-Every video follows this narrative arc. Each segment gets one image.
+Every video covers **3 news stories** ordered by impact (least → most important, climax last).
+Each story gets 2 images (setup + payoff). Total: 12 segments, 6 images, 75–90 seconds.
+
+ | # | Segment | Duration | Purpose | Image |
+ |---|---|---|---|---|
+ | 1 | **intro** | ~5s | Time-of-day greeting + teaser of all 3 stories | img 0 |
+ | 2 | **intro_pause** | ~1s | Beat pause — let the hook land | img 0 |
+ | 3 | **story_1_part1** | ~8s | Story 1 setup (least important) | img 0 |
+ | 4 | **story_1_part2** | ~8s | Story 1 payoff / punchline | img 1 |
+ | 5 | **story_1_transition** | ~2s | Bridge to next story | img 1 |
+ | 6 | **separator** | ~1s | .... pause | — |
+ | 7–10 | **story_2** | ~20s | Same structure (medium importance) | img 2–3 |
+ | 11 | **separator** | ~1s | .... pause | — |
+ | 12–15 | **story_3** | ~20s | Same structure (most important — climax) | img 4–5 |
+ | 16 | **pre_closing_pause** | ~1s | Beat pause before CTA | img 5 |
+ | 17 | **closing** | ~5s | Subscribe/like CTA + "I'm Masker, see you tomorrow" | img 5 |
  
-| # | Segment | Duration | Purpose | Image Style |
-|---|---|---|---|---|
-| 1 | **hook** | 10–18 words | Pattern-interrupt opening — shocking number, question, or contrarian take | Dramatic close-up, high contrast, attention-grabbing |
-| 2 | **historical_1** | ~12s | First historical parallel (e.g., 1990s) | Wide panoramic, sepia-amber, archival feel |
-| 3 | **historical_2** | ~12s | Second historical parallel (different era) | Strategic overhead, cold war palette, olive drab |
-| 4 | **modern_pivot** | ~12s | Return to 2026 — what changed, new players | Dynamic diagonal, modern HD, sharp clean lines |
-| 5 | **consequence** | ~12s | Human impact — prices, shortages, civilian life | Ground-level, eye-height, emotional framing |
-| 6 | **future_outlook** | ~12s | Where this leads — strategic implication | Wide strategic map view, golden hour, contemplative |
+ **Intro Rules**:
+ - Time-aware greeting: "Good Morning/Afternoon/Evening! I'm Masker!"
+ - Tease all 3 stories in one punchy sentence
+ - Example: "Tonight: Turkey discovers geography makes excellent blackmail, France denies US overflights, and Ukraine's energy war escalates."
  
-**Hook Rules** (most critical segment):
-- NEVER start with a date or "Today..."
-- Use ONE of: shocking number, provocative question, contrarian statement, action scene
-- Maximum 18 words — short, punchy, one idea
-- Example: "One hundred twelve dollars per barrel. Twenty one percent of global oil just stopped flowing."
+ **Closing Rules** (mandatory):
+ - Must include subscribe/like CTA
+ - Must sign off as "I'm Masker"
+ - Must reference "see you tomorrow" or similar
  
 ---
 
@@ -134,9 +144,10 @@ Flux weights earlier tokens more heavily. Always structure prompts:
 - **No military bias** — economic, diplomatic, civilian imagery equally weighted
  
 ### Script Generation
-- **6 segments** matching the narrative structure
-- **Historical anchoring** — at least 2 historical parallels
-- **LLM context window** — 8192 tokens to prevent truncation
+- **12 segments** (3 stories × 4 segments each: part1, part2, transition, separator)
+- **GLM-5 via Z.ai** (primary) with Ollama fallback
+- **LLM max_tokens** multiplied by 3× for GLM-5 (reasoning model hidden token budget)
+- **4 LLM steps**: news analysis → script synthesis → script curation → visual prompts
  
 ### Pipeline Checks
 - **Duplicate detection** — 7-day window via `output/video_history.json`
@@ -152,13 +163,13 @@ generate_complete_video.py          ← Entry point: runs full pipeline
 │
 ├── redfish/rss_scraper.py          ← Fetches 16+ RSS feeds, scores viral potential
 ├── redfish/debate_engine.py        ← Multi-agent debate: Skeptic vs Explainer
-├── brain/llm_interface.py          ← Ollama LLM wrapper (DeepSeek R1 / Llama 3.2)
+├── brain/llm_interface.py          ← GLM-5 (Z.ai) primary + Ollama fallback LLM wrapper
 ├── redfish/prompt_generator.py     ← Script-first visual prompt construction
 ├── redfish/script_parser.py        ← Extracts visual concepts from script text
 ├── redfish/trending_analyzer.py    ← Real-time trending term extraction from RSS
 │
 ├── video_server/pixel_art_tool.py          ← FAL.ai image generation + I2I reference
-├── video_server/tts_tool.py                ← Microsoft edge-tts voiceover
+├── video_server/tts_tool.py                ← Kokoro TTS (primary) + Edge TTS (fallback) + audio mastering
 ├── video_server/split_video_assembler.py   ← Full-screen image bg + animated zoom/pan + avatar
 ├── video_server/subtitle_renderer.py       ← Karaoke subtitles with word alignment + title overlay
 ├── video_server/assembler_tool.py          ← Legacy assembler (not used in main pipeline)
@@ -191,31 +202,40 @@ generate_complete_video.py          ← Entry point: runs full pipeline
 - **Title overlay**: Hook text displayed at top with fade-in for first 5 seconds
  
 ### Key Dependencies
-- **Ollama** running at localhost:11434 (local LLM — no API cost)
+- **ZHIPUAI_API_KEY** in .env (GLM-5 via Z.ai — primary LLM for all script generation)
+- **Ollama** running at localhost:11434 (fallback LLM — no API cost)
 - **FAL_KEY** in .env (fal.ai image generation — ~$0.04/image)
-- **edge-tts** (Microsoft TTS — free, no API key)
+- **Kokoro TTS** (primary voice — natural human-like speech, open source)
+- **edge-tts** (fallback TTS — free, no API key)
+- **faster-whisper** (word timestamps for subtitle sync)
+- **soundfile + ffmpeg** (audio mastering — loudness normalization)
 - **moviepy** (video assembly — local, free)
  
 ---
 
 ## 8. Current Development Priorities
  
-### Active (feature/image-text-correlation branch)
-- Pixel-art optimized model integration (flux-pro/v1.1-ultra)
-- Image-to-Image reference pipeline for style consistency
-- Accuracy refinement parameters (4 control modes)
-- Script-to-image synchronization — images match narration
-- Trending context injection into prompts
-- Military bias removal from specificity scoring
+### Completed
+- ✅ GLM-5 (Z.ai) integration — primary LLM for all 4 pipeline steps
+- ✅ Kokoro TTS integration — natural speech with number normalization and pause handling
+- ✅ Audio mastering fix — soundfile + ffmpeg pipeline (no more array stacking errors)
+- ✅ 3-news multi-story format — 12 segments, 6 images, intro/closing with CTA
+- ✅ Script-to-image synchronization — dedicated visual prompts per narration segment
+- ✅ Trending context injection — 40 terms extracted from RSS, injected into prompts
+- ✅ Speech pipeline cleanup — number normalization, em-dash handling, story separator pauses
+- ✅ `.env.example` for onboarding
  
 ### Known Issues to Address
-- **Script relevance** is low (6–12%) — prompts don't closely match script segments
-- **Low specificity fallback** still triggers generic enrichment too often
-- **Category rotation** skews toward middle_east_conflict (see video_history.json)
-- **Audio mastering** occasionally fails with array stacking error (non-blocking)
+- **Test files** scattered in project root (should be in `tests/` directory)
+ 
+### Recently Fixed
+- ✅ **Category rotation** expanded to all 8 categories (was only 4), tracks all 3 stories
+- ✅ **Low specificity fallback** replaced with script-aware extraction (locations, actions, numbers from narration)
+- ✅ **Dead code removed**: `prosody_processor.py` deleted (was 488 lines, unused in Kokoro pipeline)
+- ✅ **File-based logging** added — all stdout mirrored to `output/logs/run_YYYYMMDD_HHMMSS.log`
  
 ### Future (Not Started)
-- n8n + Docker automation for scheduled publishing (infrastructure exists but not wired)
+- n8n + Docker automation for scheduled publishing
 - YouTube/TikTok/Instagram API publishing integration
 - A/B testing different hook styles for retention optimization
 - Audience feedback loop into content selection
