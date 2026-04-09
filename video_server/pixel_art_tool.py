@@ -352,89 +352,166 @@ def _sanitize_prompt_for_api(prompt: str) -> str:
 
 def _detect_visual_type(prompt: str) -> str:
     """
-    Enhanced visual type detection with improved keyword recognition.
-    Returns: 'military', 'economic', 'diplomatic', 'human_impact', or 'general'
+    16-category geopolitical visual type detection.
+    Returns one of: warfare, naval, aerial, arms_defense, markets,
+    trade_sanctions, energy, commodities, diplomacy, political,
+    espionage, protests, humanitarian, border, cyber, megaprojects, general
     """
     prompt_lower = prompt.lower()
-    
-    scores = {
-        'military': 0,
-        'economic': 0,
-        'diplomatic': 0,
-        'human_impact': 0
+
+    CATEGORY_KEYWORDS = {
+        'warfare': [
+            'troops', 'infantry', 'ground forces', 'invasion', 'artillery',
+            'tank', 'battle', 'frontline', 'combat', 'offensive', 'siege',
+            'ground war', 'soldiers', 'march', 'advancing', 'retreating',
+            'firefight', 'explosion', 'bombing', 'smoke', 'battlefield',
+            'military', 'forces', 'strike', 'attack', 'war', 'weapon',
+            'deployment', 'f-35', 'f-16', 's-400', 'ah-64', 'mq-9', 'uav'
+        ],
+        'naval': [
+            'warship', 'destroyer', 'frigate', 'carrier', 'submarine',
+            'naval', 'fleet', 'navy', 'strait', 'hormuz', 'blockade',
+            'patrol boat', 'convoy', 'ship', 'vessel', 'port', 'harbor',
+            'maritime', 'sealane', 'ocean', 'sea', 'flotilla'
+        ],
+        'aerial': [
+            'aircraft', 'fighter jet', 'drone', 'airstrike', 'bomber',
+            'air force', 'jet', 'plane', 'helicopter', 'sortie',
+            'aerial', 'air defense', 'missile intercept', 'contrail',
+            'uav', 'stealth', 'airspace', 'no-fly zone', 'sky', 'squadron'
+        ],
+        'arms_defense': [
+            'missile defense', 'iron dome', 'patriot', 's-300', 's-400',
+            'missile', 'defense system', 'radar', 'military hardware',
+            'weapons expo', 'arms deal', 'defense contract', 'nuclear',
+            'ballistic', 'hypersonic', 'warhead', 'arsenal', 'munitions'
+        ],
+        'markets': [
+            'stock', 'trading floor', 'wall street', 'market crash',
+            'ticker', 'traders', 'dow', 'nasdaq', 's&p', 'bear market',
+            'bull market', 'portfolio', 'hedge fund', 'market panic',
+            'price', 'economy', 'market', 'inflation', 'trading',
+            'financial', 'economic', 'revenue', 'budget'
+        ],
+        'trade_sanctions': [
+            'sanctions', 'tariff', 'trade war', 'embargo', 'import ban',
+            'export control', 'cargo', 'container', 'shipping', 'port congestion',
+            'customs', 'trade barrier', 'duties', 'supply chain', 'semiconductor ban',
+            'oil ban', 'swift', 'decoupling'
+        ],
+        'energy': [
+            'oil', 'gas', 'pipeline', 'refinery', 'lng', 'natural gas',
+            'opec', 'energy', 'petroleum', 'crude', 'shale', 'fracking',
+            'nuclear plant', 'power grid', 'electricity', 'fuel', 'diesel',
+            'petrol', 'energy crisis', 'blackout', 'power plant'
+        ],
+        'commodities': [
+            'wheat', 'grain', 'food shortage', 'famine', 'bread lines',
+            'commodity', 'gold', 'copper', 'lithium', 'rare earth',
+            'mining', 'agricultural', 'crop failure', 'drought',
+            'supply shortage', 'queue', 'shelves', 'rationing'
+        ],
+        'diplomacy': [
+            'diplomatic', 'summit', 'treaty', 'negotiation', 'agreement',
+            'minister', 'ambassador', 'embassy', 'talks', 'officials',
+            'foreign', 'envoy', 'delegation', 'ceasefire', 'accord',
+            'handshake', 'meeting', 'peace deal', 'diplomacy', 'joint statement'
+        ],
+        'political': [
+            'election', 'parliament', 'vote', 'president', 'prime minister',
+            'congress', 'senate', 'government', 'regime change', 'coup',
+            'political', 'opposition', 'rally', 'campaign', 'inauguration',
+            'resignation', 'impeachment', 'ballot', 'podium', 'legislature'
+        ],
+        'espionage': [
+            'spy', 'espionage', 'intelligence', 'surveillance', 'cia',
+            'mi6', 'fsb', 'mossad', 'intercept', 'classified', 'leak',
+            'whistleblower', 'cyber espionage', 'wiretap', 'agent',
+            'covert', 'undercover', 'espionage', 'secret service'
+        ],
+        'protests': [
+            'protest', 'demonstration', 'riot', 'unrest', 'march',
+            'crowd', 'banners', 'signs', 'police crackdown', 'tear gas',
+            'occupation', 'sit-in', 'strike', 'uprising', 'revolt',
+            'civil disobedience', 'clash with police', 'barricades'
+        ],
+        'humanitarian': [
+            'refugees', 'displaced', 'humanitarian', 'aid', 'un camp',
+            'fleeing', 'evacuation', 'rescue', 'relief', 'crisis',
+            'civilian', 'families', 'victims', 'shelter', 'tent city',
+            'convoy', 'medical', 'hospital', 'wounded', 'children'
+        ],
+        'border': [
+            'border', 'checkpoint', 'crossing', 'wall', 'fence',
+            'frontier', 'immigration', 'migrant', 'deportation',
+            'no-mans land', 'guard tower', 'territory', 'annexation',
+            'demilitarized zone', 'dmz', 'buffer zone', 'border patrol'
+        ],
+        'cyber': [
+            'cyber', 'hack', 'ransomware', 'data breach', 'server',
+            'network', 'digital', 'online', 'internet shutdown',
+            'firewall', 'malware', 'phishing', 'ddos', 'encryption',
+            'code', 'holographic', 'virtual', 'ai-powered'
+        ],
+        'megaprojects': [
+            'belt and road', 'canal', 'megaproject', 'construction',
+            'infrastructure', 'high-speed rail', 'bridge', 'dam',
+            'tunnel', 'crane', 'building', 'development project',
+            'port expansion', 'airport', 'smart city', 'industrial zone'
+        ],
     }
-    
-    # Enhanced military keywords with more specific terms
-    military_kw = [
-        'military', 'forces', 'troops', 'missile', 'tank', 'warship',
-        'aircraft', 'strike', 'attack', 'war', 'combat', 'naval', 'drone',
-        'bombing', 'invasion', 'blockade', 'weapon', 'fighter', 'destroyer',
-        'submarine', 'convoy', 'carrier', 'artillery', 'intercept', 'deployment',
-        'f-35', 'f-16', 's-400', 'ah-64', 'mq-9', 'uav', 'stealth'
-    ]
-    for kw in military_kw:
-        if kw in prompt_lower:
-            scores['military'] += 1
-    
-    # Enhanced economic keywords
-    economic_kw = [
-        'price', 'economy', 'market', 'inflation', 'trading', 'stock',
-        'gas station', 'oil prices', 'dollar', 'shortage', 'queue', 'shelves',
-        'cost', 'surge', 'supply', 'commodity', 'trading floor', 'wall street',
-        'financial', 'economic', 'revenue', 'budget', 'tariff', 'sanctions'
-    ]
-    for kw in economic_kw:
-        if kw in prompt_lower:
-            scores['economic'] += 1
-    
-    # Enhanced diplomatic keywords
-    diplomatic_kw = [
-        'diplomatic', 'summit', 'treaty', 'negotiation', 'agreement',
-        'minister', 'ambassador', 'embassy', 'talks', 'meeting', 'officials',
-        'foreign', 'policy', 'envoy', 'delegation', 'ceasefire', 'accord'
-    ]
-    for kw in diplomatic_kw:
-        if kw in prompt_lower:
-            scores['diplomatic'] += 1
-    
-    # Enhanced human impact keywords
-    human_kw = [
-        'civilian', 'families', 'people', 'protest', 'refugees',
-        'crowd', 'residents', 'evacuees', 'victims', 'humanitarian',
-        'casualties', 'displaced', 'emergency', 'aid', 'shelter', 'queue'
-    ]
-    for kw in human_kw:
-        if kw in prompt_lower:
-            scores['human_impact'] += 1
-    
-    # Weighted scoring for mixed content
-    max_score = max(scores.values())
-    if max_score == 0:
+
+    scores = {}
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        score = sum(1 for kw in keywords if kw in prompt_lower)
+        if score > 0:
+            scores[category] = score
+
+    if not scores:
         return 'general'
-    
-    # Check for strong dominance (70% of total)
-    total_score = sum(scores.values())
-    if max_score / total_score >= 0.7:
-        return max(scores.items(), key=lambda x: x[1])[0]
-    
-    # Check for military-economic mix (common in geopolitics)
-    if scores['military'] >= 2 and scores['economic'] >= 2:
-        return 'military'  # Prioritize military in mixed cases
-    
-    # Return highest scoring type
-    return max(scores.items(), key=lambda x: x[1])[0]
+
+    max_score = max(scores.values())
+    winners = [cat for cat, s in scores.items() if s == max_score]
+
+    if len(winners) == 1:
+        return winners[0]
+
+    # Tiebreaker: prefer more specific categories over general ones
+    specificity_order = [
+        'warfare', 'naval', 'aerial', 'arms_defense',
+        'espionage', 'cyber', 'protests', 'humanitarian', 'border',
+        'energy', 'commodities', 'trade_sanctions', 'markets',
+        'diplomacy', 'political', 'megaprojects'
+    ]
+    for cat in specificity_order:
+        if cat in winners:
+            return cat
+
+    return winners[0]
 
 
 def _get_adaptive_enrichment(visual_type: str) -> str:
     """
-    Get adaptive enrichment text based on visual type with structured prompting.
-    Enhanced to work with the new hierarchical prompt system.
+    Get adaptive enrichment text based on visual type.
+    Supports all 16 geopolitical visual categories with per-category emphasis.
     """
     enrichments = {
-        'military': '(tactical positioning:1.3), (strategic forces:1.2), (naval formations:1.2), (dramatic military lighting:1.1), (high tension atmosphere:1.2)',
-        'economic': '(market indicators visible:1.3), (price displays:1.2), (human scale perspective:1.2), (financial data visualization:1.1), (economic impact focus:1.2)',
-        'diplomatic': '(formal meeting setting:1.3), (official flags and insignia:1.2), (professional atmosphere:1.2), (diplomatic context:1.1), (balanced composition:1.1)',
-        'human_impact': '(civilian perspective:1.3), (emotional impact:1.2), (relatable imagery:1.2), (everyday life context:1.1), (human scale composition:1.2)',
+        'warfare': '(tactical positioning:1.3), (battlefield terrain:1.2), (smoke and fire:1.2), (military tension:1.2)',
+        'naval': '(naval formation:1.3), (ocean waves:1.2), (maritime flags:1.2), (fleet maneuvers:1.1)',
+        'aerial': '(altitude perspective:1.3), (contrails visible:1.2), (sky domination:1.2), (payload detail:1.1)',
+        'arms_defense': '(hardware detail:1.3), (technical markings:1.2), (defense system:1.2), (national insignia:1.1)',
+        'markets': '(market indicators visible:1.3), (price displays:1.2), (trading floor:1.2), (financial panic:1.1)',
+        'trade_sanctions': '(cargo containers:1.3), (port bottleneck:1.2), (trade barrier:1.2), (nation flags:1.1)',
+        'energy': '(industrial infrastructure:1.3), (flames and smoke:1.2), (pipeline terrain:1.2), (workers:1.1)',
+        'commodities': '(resource scarcity:1.3), (supply queue:1.2), (raw materials:1.2), (shortage indicators:1.1)',
+        'diplomacy': '(formal meeting setting:1.3), (official flags:1.2), (professional atmosphere:1.2), (summit table:1.1)',
+        'political': '(government building:1.3), (political rally:1.2), (ballot or podium:1.2), (crowd energy:1.1)',
+        'espionage': '(surveillance screens:1.3), (classified documents:1.2), (shadows and secrecy:1.2), (tech equipment:1.1)',
+        'protests': '(demonstration crowd:1.3), (protest banners:1.2), (police barricades:1.2), (city backdrop:1.1)',
+        'humanitarian': '(civilian perspective:1.3), (displacement crisis:1.2), (aid supplies:1.2), (distress indicators:1.1)',
+        'border': '(border fence:1.3), (checkpoint guards:1.2), (vehicle queue:1.2), (terrain context:1.1)',
+        'cyber': '(server infrastructure:1.3), (digital data:1.2), (warning alerts:1.2), (holographic displays:1.1)',
+        'megaprojects': '(massive construction:1.3), (heavy machinery:1.2), (engineering scale:1.2), (route maps:1.1)',
         'general': '(dramatic composition:1.2), (strategic perspective:1.1), (balanced lighting:1.1), (professional atmosphere:1.1)'
     }
     
@@ -585,7 +662,7 @@ def _build_i2i_generation_args(
         "strength": strength,
         "guidance_scale": guidance_scale,
         "num_inference_steps": num_inference_steps,
-        "image_size": PIXEL_ART_MODEL_CONFIG["default_params"]["image_size"],
+        "image_size": {"width": GENERATION_PARAMS.get('custom_width', 1088), "height": GENERATION_PARAMS.get('custom_height', 1152)},
         "enable_safety_checker": PIXEL_ART_MODEL_CONFIG["default_params"]["enable_safety_checker"],
         "output_format": PIXEL_ART_MODEL_CONFIG["default_params"]["output_format"],
         "num_images": 1,
@@ -779,6 +856,134 @@ def _generate_placeholder(prompt: str, output_path: Path) -> None:
     img.save(str(output_path), format="PNG")
 
 
+def _extract_visual_terms_from_narration(script_text: str) -> str:
+    """
+    Extract concrete visual terms from narration text for grounded enrichment.
+    Scans for proper nouns, locations, equipment, and numbers — then builds
+    weighted prompt tokens that reinforce what the narrator is talking about.
+    Returns empty string if nothing concrete found (caller falls back to category enrichment).
+    """
+    if not script_text:
+        return ''
+    
+    import re
+    
+    # Known geopolitical locations (partial match)
+    geo_locations = [
+        'strait of hormuz', 'hormuz', 'south china sea', 'taiwan strait',
+        'persian gulf', 'red sea', 'suez canal', 'panama canal',
+        'ukraine', 'gaza', 'syria', 'yemen', 'iran', 'israel',
+        'russia', 'china', 'taiwan', 'korea', 'kiev', 'kyiv',
+        'moscow', 'beijing', 'tehran', 'washington', 'brussels',
+        'arctic', 'sahara', 'sahel', 'himalaya', 'indian ocean',
+        'pacific', 'atlantic', 'mediterranean', 'black sea',
+        'crimea', 'donbas', 'golan heights', 'west bank',
+        'south ossetia', 'abkhazia', 'kashmir', 'kuril islands'
+    ]
+    
+    # Known equipment/hardware terms
+    equipment_terms = [
+        'f-35', 'f-16', 'f-22', 'su-35', 'su-57', 'j-20',
+        'missile', 'drone', 'tank', 'warship', 'destroyer',
+        'submarine', 'carrier', 'aircraft carrier', 'frigate',
+        'artillery', 'helicopter', 'fighter jet', 'bomber',
+        'patrol boat', 'oil tanker', 'cargo ship', 'container ship',
+        'pipeline', 'refinery', 'nuclear plant', 'power grid',
+        's-400', 's-300', 'patriot', 'iron dome', 'thaad',
+        'himars', 'm142', 'iskander', 'kinzhal', 'dagger',
+        'reaper', 'mq-9', 'bayraktar', 'tb2', 'switchblade'
+    ]
+    
+    # Known economic/infrastructure terms
+    economic_terms = [
+        'oil', 'gas', 'pipeline', 'lng', 'crude', 'petroleum',
+        'wheat', 'grain', 'semiconductor', 'chip', 'rare earth',
+        'lithium', 'copper', 'gold', 'uranium', 'cobalt',
+        'sanctions', 'tariff', 'embargo', 'trade war', 'swift',
+        'trading floor', 'stock market', 'inflation', 'price'
+    ]
+    
+    text_lower = script_text.lower()
+    found_terms = []
+    
+    # Extract locations (highest priority → weight 1.3)
+    for loc in geo_locations:
+        if loc in text_lower:
+            found_terms.append((loc, 1.3))
+            if len(found_terms) >= 3:
+                break
+    
+    # Extract equipment (second priority → weight 1.2)
+    for equip in equipment_terms:
+        if equip in text_lower:
+            found_terms.append((equip, 1.2))
+            if len(found_terms) >= 5:
+                break
+    
+    # Extract economic terms (third priority → weight 1.1)
+    for econ in economic_terms:
+        if econ in text_lower and not any(econ in ft[0] for ft in found_terms):
+            found_terms.append((econ, 1.1))
+            if len(found_terms) >= 6:
+                break
+    
+    # Extract numbers (billions, millions, percentages)
+    number_patterns = re.findall(r'\b(\d+)\s*(?:billion|million|percent|%|trillion)\b', text_lower)
+    for num in number_patterns[:2]:
+        found_terms.append((num, 1.1))
+    
+    if not found_terms:
+        return ''
+    
+    # Build weighted prompt fragment
+    # Take top 4 terms max to avoid overloading
+    top_terms = found_terms[:4]
+    weighted_parts = [f"({term}:{weight})" for term, weight in top_terms]
+    
+    return ', '.join(weighted_parts)
+
+
+def _inject_geopolitical_context(prompt: str, issues: list, script_text: str) -> Optional[str]:
+    """
+    Inject geopolitical context into a prompt that failed validation.
+    Tries to fix specific issues (missing location, missing country context, etc.)
+    by extracting relevant terms from the narration text.
+    Returns the enriched prompt, or None if no improvement could be made.
+    """
+    if not script_text:
+        return None
+    
+    issues_text = ' '.join(issues).lower()
+    enrichment_parts = []
+    
+    # If missing location context — extract from narration
+    if any(word in issues_text for word in ['location', 'geography', 'region', 'country']):
+        narration_terms = _extract_visual_terms_from_narration(script_text)
+        if narration_terms:
+            enrichment_parts.append(narration_terms)
+    
+    # If missing subject/equipment — extract key nouns from narration
+    if any(word in issues_text for word in ['subject', 'equipment', 'specific', 'vague']):
+        # Look for capitalized proper nouns in the narration
+        import re
+        proper_nouns = re.findall(r'\b([A-Z][a-z]{3,}(?:\s+[A-Z][a-z]{3,})?)\b', script_text)
+        # Filter common non-visual words
+        skip_words = {'The', 'This', 'That', 'These', 'Those', 'They', 'Their',
+                      'Masker', 'Today', 'Meanwhile', 'Actually', 'Believe', 'Simply',
+                      'Welcome', 'Afternoon', 'Evening', 'Morning', 'Subscribe', 'Story'}
+        visual_nouns = [n for n in proper_nouns if n not in skip_words][:3]
+        if visual_nouns:
+            enrichment_parts.append(', '.join(visual_nouns))
+    
+    if not enrichment_parts:
+        return None
+    
+    # Inject before the style suffix
+    enrichment = ', '.join(enrichment_parts)
+    enriched = f"{prompt}, geopolitical context: {enrichment}"
+    return enriched
+
+
 @server.tool()
 def generate_pixel_art(
     prompt: str, 
@@ -817,21 +1022,23 @@ def generate_pixel_art(
     if not prompt or not prompt.strip():
         return {"success": False, "error": "Prompt cannot be empty"}
 
-    # NEW: Geopolitical accuracy validation before generation
+    # Geopolitical accuracy validation — 3-tier: "strict", "log_only", "disabled"
+    VALIDATION_MODE = "log_only"
     geo_validator = GeopoliticalValidator()
-    # TEMPORARILY DISABLE STRICT MODE FOR TESTING
-    geo_validator.validation_rules['strict_mode'] = False
-    geo_validator.validation_rules['min_accuracy_score'] = 60
+    geo_validator.validation_rules['strict_mode'] = (VALIDATION_MODE == "strict")
+    geo_validator.validation_rules['min_accuracy_score'] = 50  # Lower threshold — let enrichment fix it
     
     should_proceed, geo_error = geo_validator.validate_before_generation(script_text or "", prompt)
     
-    if not should_proceed:
+    if not should_proceed and VALIDATION_MODE == "strict":
         return {
             "success": False, 
             "error": f"Geopolitical accuracy validation failed: {geo_error}",
             "validation_type": "geopolitical",
             "accuracy_blocked": True
         }
+    elif not should_proceed:
+        print(f"  [IMG] ⚠️ Pre-generation validation: {geo_error} (proceeding anyway)")
 
     # Enhanced visual type detection
     visual_type = _detect_visual_type(prompt)
@@ -841,13 +1048,19 @@ def generate_pixel_art(
     specificity = _score_prompt_specificity(prompt)
     print(f"  [IMG] Specificity score: {specificity}/100")
 
-    # If too generic, append adaptive scene-grounding fallback
+    # If too generic, try narration-grounded enrichment first, then category fallback
     enriched_prompt = prompt.strip()
     if specificity < 35:
-        # Determine visual type from prompt content (already done above)
-        enrichment = _get_adaptive_enrichment(visual_type)
-        enriched_prompt += f", {enrichment}"
-        print(f"  [IMG] Low specificity — {visual_type} enrichment applied")
+        # FIRST: Extract concrete terms from narration for grounded enrichment
+        narration_enrichment = _extract_visual_terms_from_narration(script_text) if script_text else ''
+        if narration_enrichment:
+            enriched_prompt += f", {narration_enrichment}"
+            print(f"  [IMG] Low specificity — narration-grounded enrichment applied")
+        else:
+            # FALLBACK: Category-based enrichment only if narration yields nothing
+            enrichment = _get_adaptive_enrichment(visual_type)
+            enriched_prompt += f", {enrichment}"
+            print(f"  [IMG] Low specificity — {visual_type} category enrichment (no narration)")
 
     # Sanitize for FAL.ai content policy before building final prompt
     sanitized_prompt = _sanitize_prompt_for_api(enriched_prompt)
@@ -860,18 +1073,28 @@ def generate_pixel_art(
     if COLOR_PALETTE_PROMPT:
         full_prompt = f"{full_prompt}, {COLOR_PALETTE_PROMPT}"
     
-    # NEW: Final geopolitical validation of the complete prompt
+    # Final geopolitical validation — log warnings, retry enrichment if score is low
     final_geo_validation = geo_validator.validate_prompt_geopolitical_accuracy(full_prompt, script_text)
     print(f"  [IMG] Geopolitical accuracy score: {final_geo_validation['accuracy_score']}%")
     
-    if not final_geo_validation['passed'] and geo_validator.validation_rules['strict_mode']:
-        return {
-            "success": False,
-            "error": f"Final prompt failed geopolitical validation: {'; '.join(final_geo_validation['issues'][:2])}",
-            "validation_type": "geopolitical_final",
-            "accuracy_score": final_geo_validation['accuracy_score'],
-            "issues": final_geo_validation['issues']
-        }
+    if not final_geo_validation['passed']:
+        if VALIDATION_MODE == "strict":
+            return {
+                "success": False,
+                "error": f"Final prompt failed geopolitical validation: {'; '.join(final_geo_validation['issues'][:2])}",
+                "validation_type": "geopolitical_final",
+                "accuracy_score": final_geo_validation['accuracy_score'],
+                "issues": final_geo_validation['issues']
+            }
+        elif VALIDATION_MODE == "log_only":
+            print(f"  [IMG] ⚠️ Geopolitical issues: {'; '.join(final_geo_validation['issues'][:3])}")
+            # Try to inject geopolitical context as a retry
+            if final_geo_validation['accuracy_score'] < 50 and script_text:
+                retry_enrichment = _inject_geopolitical_context(full_prompt, final_geo_validation['issues'], script_text)
+                if retry_enrichment:
+                    full_prompt = retry_enrichment
+                    retry_validation = geo_validator.validate_prompt_geopolitical_accuracy(full_prompt, script_text)
+                    print(f"  [IMG] 🔄 Retry accuracy: {retry_validation['accuracy_score']}%")
     
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in prompt[:40])
     filename = f"pixel_art_{safe_name}_{hash(prompt) % 100000}.png"
@@ -944,21 +1167,18 @@ def generate_pixel_art(
                     else:
                         # Standard text-to-image generation
                         _gp = GENERATION_PARAMS
+                        custom_w = _gp.get('custom_width', 1088)
+                        custom_h = _gp.get('custom_height', 1152)
                         base_args = {
                             "prompt": full_prompt,
                             "negative_prompt": NEGATIVE_PROMPT,
-                            "image_size": _gp.get('image_size', 'custom'),
+                            "image_size": {"width": custom_w, "height": custom_h},
                             "num_images": 1,
                             "num_inference_steps": _gp.get('num_inference_steps', 28),
                             "guidance_scale": _gp.get('guidance_scale', 3.5),
                             "enable_safety_checker": _gp.get('enable_safety_checker', False),
                             "output_format": _gp.get('output_format', 'png'),
                         }
-                        # Use explicit width/height for native scene dimensions (no cropping)
-                        custom_w = _gp.get('custom_width', 1088)
-                        custom_h = _gp.get('custom_height', 1152)
-                        base_args["width"] = custom_w
-                        base_args["height"] = custom_h
                         print(f"  [IMG] Custom dimensions: {custom_w}×{custom_h}")
                         if seed is not None:
                             base_args["seed"] = seed

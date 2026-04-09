@@ -227,6 +227,18 @@ def _prepare_avatar_bottom(avatar_path: str, total_duration: float) -> VideoFile
     return avatar_final
 
 
+def _create_solid_color_image(width: int, height: int, color: tuple) -> str:
+    """
+    Create a solid color image and return its temp file path.
+    Used as a background layer to prevent black frames in CompositeVideoClip.
+    """
+    img = Image.new('RGB', (width, height), color)
+    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    img.save(tmp.name, 'PNG')
+    tmp.close()
+    return tmp.name
+
+
 def build_split_video(
     audio_path: str,
     image_paths: List[str],
@@ -235,6 +247,7 @@ def build_split_video(
     script_text: str = None,
     word_timestamps: list = None,
     hook_text: str = None,
+    scene_timestamps: List[Dict] = None,
 ) -> dict:
     """
     Build a video: scene background top 60%, avatar bottom 40%, title at top,
@@ -242,12 +255,15 @@ def build_split_video(
 
     Args:
         audio_path: Path to voiceover MP3
-        image_paths: List of scene image paths (4-6 images)
+        image_paths: List of scene image paths (6 images for 3 stories)
         avatar_path: Path to avatar loop video
         output_path: Output MP4 path
         script_text: Full narration text (for subtitle word alignment)
         word_timestamps: Word timing data from whisper
         hook_text: Hook text for title overlay at top
+        scene_timestamps: Optional list of {"start": float, "end": float} per image.
+                          If provided, images switch at exact content-synced times.
+                          If None, falls back to weighted duration splitting.
 
     Returns:
         dict with success status, output path, and metadata
@@ -261,6 +277,15 @@ def build_split_video(
     if missing:
         return {"success": False, "error": f"Missing images: {missing}"}
 
+    # Validate all images can be opened (catches corrupt/truncated files)
+    for img_p in image_paths:
+        try:
+            test_img = Image.open(img_p)
+            test_img.verify()
+            test_img.close()
+        except Exception as e:
+            return {"success": False, "error": f"Corrupt image {img_p}: {e}"}
+
     if not avatar_path:
         avatar_path = str(AVATAR_PATH)
     if not Path(avatar_path).exists():
@@ -273,20 +298,66 @@ def build_split_video(
 
         # ── SCENE BACKGROUND: Images fitted to visible top area ──
         num_scenes = len(image_paths)
-        scene_durations = _calculate_scene_durations(total_dur, num_scenes)
 
-        scene_clips = []
-        for idx, img_path in enumerate(image_paths):
-            dur = scene_durations[idx]
-            clip = _resize_image_fullscreen(img_path).set_duration(dur)
-            clip = _apply_scene_effect(clip, idx, dur)
-            scene_clips.append(clip)
+        if scene_timestamps and len(scene_timestamps) == num_scenes:
+            # ── SYNCED MODE: Image switches match narration content ──
+            print(f"  [SPLIT] Using SYNCED scene timestamps (content-driven)")
+            for i, ts in enumerate(scene_timestamps):
+                print(f"    Image {i}: {ts['start']:.2f}s → {ts['end']:.2f}s ({ts['end']-ts['start']:.2f}s)")
 
-        background = concatenate_videoclips(scene_clips, method="compose")
+            scene_clips = []
+            for idx, img_path in enumerate(image_paths):
+                ts = scene_timestamps[idx]
+                start = ts['start']
+                end = ts['end']
+                dur = end - start
+                if dur <= 0:
+                    dur = 0.5  # minimum duration
+                clip = _resize_image_fullscreen(img_path).set_duration(dur).set_start(start)
+                clip = _apply_scene_effect(clip, idx, dur)
+                scene_clips.append(clip)
+
+            # Ensure last image persists to the very end of the video
+            if scene_clips:
+                last_ts = scene_timestamps[-1]
+                needed_dur = total_dur - last_ts['start']
+                if needed_dur > 0:
+                    scene_clips[-1] = (
+                        _resize_image_fullscreen(image_paths[-1])
+                        .set_duration(needed_dur)
+                        .set_start(last_ts['start'])
+                    )
+                    scene_clips[-1] = _apply_scene_effect(scene_clips[-1], len(image_paths) - 1, needed_dur)
+                    print(f"  [SPLIT] Last image extended: {last_ts['start']:.2f}s → {total_dur:.2f}s ({needed_dur:.2f}s)")
+
+            # Solid background color layer — safety net for any sub-frame gaps
+            bg_color = (10, 5, 25)  # Dark navy, matches canvas fill
+            bg_layer = ImageClip(
+                _create_solid_color_image(VIDEO_W, VIDEO_H, bg_color)
+            ).set_duration(total_dur)
+
+            # Use CompositeVideoClip: solid bg + scene clips on top
+            background = CompositeVideoClip([bg_layer] + scene_clips, size=(VIDEO_W, VIDEO_H))
+            background = background.set_duration(total_dur)
+            print(f"  [SPLIT] Background: {num_scenes} SYNCED scenes (content-timed) + solid bg layer")
+        else:
+            # ── FALLBACK: Weighted duration splitting (legacy) ──
+            if scene_timestamps:
+                print(f"  [SPLIT] ⚠️ scene_timestamps length mismatch ({len(scene_timestamps)} vs {num_scenes} images), using fallback")
+            scene_durations = _calculate_scene_durations(total_dur, num_scenes)
+
+            scene_clips = []
+            for idx, img_path in enumerate(image_paths):
+                dur = scene_durations[idx]
+                clip = _resize_image_fullscreen(img_path).set_duration(dur)
+                clip = _apply_scene_effect(clip, idx, dur)
+                scene_clips.append(clip)
+
+            background = concatenate_videoclips(scene_clips, method="compose")
+            print(f"  [SPLIT] Background: {num_scenes} scenes (weighted fallback)")
+
         if background.size != [VIDEO_W, VIDEO_H]:
             background = background.resize((VIDEO_W, VIDEO_H))
-
-        print(f"  [SPLIT] Background: {num_scenes} scenes (60/40 layout)")
 
         # ── BOTTOM AREA: Avatar loop (40% of screen) ──
         bottom_half = _prepare_avatar_bottom(avatar_path, total_dur)
@@ -338,7 +409,14 @@ def build_split_video(
             codec="libx264",
             audio_codec="aac",
             fps=FPS,
-            ffmpeg_params=['-movflags', '+faststart'],
+            ffmpeg_params=[
+                '-movflags', '+faststart',
+                '-pix_fmt', 'yuv420p',          # Max player compatibility (fixes 0xC00D36C4)
+                '-profile:v', 'high',            # H.264 High profile (broad support)
+                '-level', '4.0',                 # Level 4.0 (1080p30 safe)
+                '-crf', '20',                    # Quality (lower=better, 18-28 range)
+                '-bf', '2',                      # B-frames for efficiency
+            ],
             preset='medium',
             threads=4,
             verbose=False,

@@ -470,7 +470,9 @@ IMPORTANT: The greeting field should be EXACTLY: {greeting}
 The full_text must include the greeting, all three stories with transitions, and the closing as one continuous narration paragraph.
 
 Remember: Be witty, sassy, but accurate. Simplify complex geopolitics so anyone can understand it.
-Target: 180-250 words total for 75-90 seconds."""
+Target: 220-300 words total for 90-120 seconds.
+CRITICAL: ALL 3 stories must be roughly equal word count (50-60 words each). Max 10 words difference.
+Each non-last story must have a "segue" field with a witty transition (8-15 words)."""
         
         # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
         response = self._call_glm(
@@ -552,13 +554,13 @@ Target: 180-250 words total for 75-90 seconds."""
                     'label': f'story_{i+1}_part2'
                 })
             
-            # Transition → keep same image as part 2
-            transition = story.get('transition', '')
-            if transition:
+            # SEGUE → witty transition to next story (keep same image as part 2)
+            segue = story.get('segue', story.get('transition', ''))
+            if segue and i < len(script['stories']) - 1:
                 segment_timeline.append({
-                    'text': transition,
+                    'text': segue,
                     'image_idx': img_base + 1,
-                    'label': f'story_{i+1}_transition'
+                    'label': f'story_{i+1}_segue'
                 })
             
             # Story separator (....) except after last story
@@ -588,9 +590,7 @@ Target: 180-250 words total for 75-90 seconds."""
             'label': 'closing'
         })
         
-        # Build full_text from timeline (excluding separators from TTS text)
-        parts = [seg['text'] for seg in segment_timeline if not seg.get('is_separator')]
-        # But add separators BACK between stories for pause
+        # Build full_text from timeline (includes segues and separators)
         full_parts = []
         for seg in segment_timeline:
             full_parts.append(seg['text'])

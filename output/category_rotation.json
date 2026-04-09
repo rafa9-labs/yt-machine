@@ -2,7 +2,7 @@
   "current_cycle": {
     "day_index": 2,
     "category": "economic_warfare",
-    "date": "2026-04-04"
+    "date": "2026-04-08"
   },
   "history": [
     {
@@ -43,6 +43,22 @@
     },
     {
       "date": "2026-04-03",
+      "category": "economic_warfare"
+    },
+    {
+      "date": "2026-04-04",
+      "category": "regional_flashpoints"
+    },
+    {
+      "date": "2026-04-05",
+      "category": "middle_east_conflict"
+    },
+    {
+      "date": "2026-04-06",
+      "category": "great_power_competition"
+    },
+    {
+      "date": "2026-04-07",
       "category": "economic_warfare"
     }
   ]

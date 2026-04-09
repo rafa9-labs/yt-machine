@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-04-08 — Prosody & Punchline Delivery Fix
+
+### Problem
+TTS narrator wasn't pausing before punchlines — dramatic reveals, contrasts, and key lines ran together without the natural beat that gives them impact. Root cause: 3-dot pauses (`...`) were invisible to both Kokoro and Edge TTS engines.
+
+### What was done
+- **Fixed `_add_natural_pacing()` in `tts_tool.py`**: `...` (3 dots) now converts to `. , ` (period + comma = ~500ms TTS pause). Previously only `....` (4+ dots) was converted — 3-dot dramatic pauses passed through unconverted and were ignored by TTS.
+- **Updated curator system prompt** (`config/system_prompts.json`): Instructed curator to use **periods** before punchlines instead of `...`. Example: `"Classic leverage play. Disguised as safety."` — TTS respects period sentence boundaries as real pauses.
+- **Updated `curate_script()` inline prompt** (`brain/llm_interface.py`): Same period-based punchline rules applied to the user-level curation prompt.
+- **Added "PUNCHLINE DELIVERY" section** to curator prompt: Explicit rules for ending setup sentences with periods, starting punchlines fresh, and adding pauses after rhetorical questions.
+
+### Technical Details
+| Pause Marker | Before | After (TTS hears) | Effect |
+|---|---|---|---|
+| `....` | `. , , ` | `. , , ` (unchanged) | ~800ms story separator |
+| `...` | *(ignored)* | `. , ` | ~500ms dramatic pause |
+| Period `.` | Natural pause | Natural pause | ~300-400ms sentence break |
+| `—` | `, ` | `, ` (unchanged) | ~150ms beat |
+
+### Black Frame Fix
+- **Added solid background layer** in `split_video_assembler.py` synced mode: `CompositeVideoClip` now has a dark navy (10,5,25) solid color image underneath all scene clips. This prevents black frames from appearing when scene clips don't perfectly cover the full video duration (gaps between clips, before first clip, or after last clip).
+
+### Files Changed
+- `video_server/tts_tool.py` — Added `...` → `. , ` conversion in `_add_natural_pacing()`
+- `config/system_prompts.json` — Curator prompt: period-based pauses, punchline delivery rules
+- `brain/llm_interface.py` — `curate_script()` inline prompt updated to match
+- `video_server/split_video_assembler.py` — Solid bg layer + `_create_solid_color_image()` helper to eliminate black frames
+
 ## 2026-04-04 — LLM Verification & Correction System Analysis
 
 ### What was done
@@ -46,3 +74,23 @@ The system uses a **multi-stage pipeline** with **two layers of verification**:
 - `redfish/visual_extractor.py` — Dual-layer (LLM + spaCy) entity extraction
 - `generate_complete_video.py` — Main pipeline entry point
 - `_update_prompts.py` — Prompt update helper script
+
+## 2026-04-08 — Pipeline Reliability & Test Infrastructure
+
+### What was done
+- **Fixed black frame gaps**: Timestamp bridging logic ensures no gaps between scene images
+- **Image generation retry**: Failed images retry with fallback prompt; if still fails, creates placeholder
+- **Corrupt image detection**: Assembler validates all images before processing
+- **Extracted `bridge_timestamp_gaps()`**: Testable pure function for timestamp gap handling
+- **Moved test files to `tests/`**: Cleaned root directory (was scattered with 6 test scripts)
+- **Added unit test suite** (`tests/test_unit.py`): 25 tests covering timestamp logic, subtitles, scene durations, fallback prompts
+- **Added post-export QA validator** (`tests/validate_project.py`): 8 checks on generated projects
+- **Updated CHANGELOG.md**: This entry
+
+### Test Structure
+- `tests/test_unit.py` — Unit tests (no API calls, fast)
+- `tests/validate_project.py` — Post-export project validator
+- `tests/test_video_rebuild.py` — Integration: rebuild video from existing assets
+- `tests/test_improvements.py` — Integration: TTS + assembler improvements
+- `tests/test_timeline.py` — Integration: timeline sync testing
+- `tests/test_option_a_layout.py` — Integration: 60/40 layout testing

@@ -1,6 +1,6 @@
 """
-Category Rotation System - Implements 4-day geopolitical topic rotation
-Ensures diverse coverage: Middle East → Great Power → Economic → Regional
+Category Rotation System - Implements 8-day geopolitical topic rotation
+Ensures diverse coverage across all 8 content categories
 """
 
 import json
@@ -22,7 +22,11 @@ class CategoryRotation:
             "middle_east_conflict",
             "great_power_competition", 
             "economic_warfare",
-            "regional_flashpoints"
+            "regional_flashpoints",
+            "technology_disruption",
+            "climate_geopolitics",
+            "diplomatic_pivot",
+            "kinetic_operations"
         ]
         self._ensure_rotation_file()
         self._ensure_history_file()
@@ -71,7 +75,7 @@ class CategoryRotation:
         last_date = rotation_data["current_cycle"]["date"]
         if current_date != last_date:
             # Advance to next category
-            day_index = (rotation_data["current_cycle"]["day_index"] + 1) % 4
+            day_index = (rotation_data["current_cycle"]["day_index"] + 1) % len(self.categories)
             category = self.categories[day_index]
             
             # Update rotation data
@@ -243,9 +247,6 @@ class CategoryRotation:
             "current_cycle": rotation_data["current_cycle"],
             "categories": self.categories,
             "rotation_sequence": [
-                "Day 0: middle_east_conflict",
-                "Day 1: great_power_competition", 
-                "Day 2: economic_warfare",
-                "Day 3: regional_flashpoints"
+                f"Day {i}: {cat}" for i, cat in enumerate(self.categories)
             ]
         }

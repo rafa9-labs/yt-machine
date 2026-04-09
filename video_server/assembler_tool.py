@@ -405,7 +405,14 @@ def build_final_video(
             codec="libx264",
             audio_codec="aac",
             fps=FPS,
-            ffmpeg_params=['-movflags', '+faststart'],
+            ffmpeg_params=[
+                '-movflags', '+faststart',
+                '-pix_fmt', 'yuv420p',          # Max player compatibility (fixes 0xC00D36C4)
+                '-profile:v', 'high',
+                '-level', '4.0',
+                '-crf', '20',
+                '-bf', '2',
+            ],
             preset='medium',
             threads=4,
             verbose=False,
