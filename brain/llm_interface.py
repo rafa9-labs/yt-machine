@@ -818,7 +818,22 @@ Output ONLY the curated spoken script as plain text. No JSON. No explanations.""
                 print(f"  [GLM-5] Responded ({len(content)} chars)")
                 return content
             else:
-                print(f"  [GLM-5] Empty response, falling back to Ollama")
+                # GLM-5 reasoning model sometimes consumes all tokens on hidden reasoning.
+                # Retry once with 2× token budget.
+                print(f"  [GLM-5] Empty response (tokens may have been consumed by reasoning). Retrying with 2× budget...")
+                retry_max_tokens = effective_max_tokens * 2
+                payload["max_tokens"] = retry_max_tokens
+                
+                resp2 = requests.post(url, json=payload, headers=headers, timeout=120)
+                resp2.raise_for_status()
+                data2 = resp2.json()
+                content2 = data2.get("choices", [{}])[0].get("message", {}).get("content", "")
+                
+                if content2:
+                    print(f"  [GLM-5] Retry succeeded ({len(content2)} chars, {retry_max_tokens} tokens)")
+                    return content2
+                
+                print(f"  [GLM-5] Empty response on retry too, falling back to Ollama")
                 return None
                 
         except Exception as e:
