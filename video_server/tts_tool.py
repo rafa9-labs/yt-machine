@@ -3,6 +3,7 @@ import asyncio
 import time
 import re
 import tempfile
+import shutil
 import requests as http_requests
 from pathlib import Path
 from typing import Optional
@@ -100,6 +101,43 @@ def select_voice_for_content(script_text: str, default_tone: str = "authoritativ
     return default_tone
 
 
+def _find_ffmpeg() -> Optional[str]:
+    """
+    Find ffmpeg executable — checks system PATH, then falls back to
+    imageio_ffmpeg (bundled with moviepy/imageio). Returns full path
+    to ffmpeg binary, or None if not found anywhere.
+    """
+    # 1. Check system PATH
+    ffmpeg_path = shutil.which('ffmpeg')
+    if ffmpeg_path:
+        return ffmpeg_path
+    
+    # 2. Try imageio_ffmpeg (bundled with moviepy)
+    try:
+        import imageio_ffmpeg
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        if ffmpeg_path and os.path.isfile(ffmpeg_path):
+            return ffmpeg_path
+    except (ImportError, Exception):
+        pass
+    
+    return None
+
+# Cache the ffmpeg path on first lookup
+_FFMPEG_PATH = None
+
+def _get_ffmpeg() -> Optional[str]:
+    """Get cached ffmpeg path (resolved once, reused)."""
+    global _FFMPEG_PATH
+    if _FFMPEG_PATH is None:
+        _FFMPEG_PATH = _find_ffmpeg()
+        if _FFMPEG_PATH:
+            print(f"  [TTS] ffmpeg found: {_FFMPEG_PATH}")
+        else:
+            print(f"  [TTS] ffmpeg NOT found — audio mastering unavailable")
+    return _FFMPEG_PATH
+
+
 def _apply_audio_mastering(input_path: Path) -> bool:
     """
     Apply professional audio mastering to an audio file.
@@ -122,11 +160,17 @@ def _apply_audio_mastering(input_path: Path) -> bool:
         # For MP3 files, fall back to ffmpeg → WAV → process → MP3
         suffix = input_path.suffix.lower()
         
+        # Resolve ffmpeg path
+        ffmpeg = _get_ffmpeg()
+        if not ffmpeg:
+            print(f"  [TTS] Mastering skipped: ffmpeg not available")
+            return False
+        
         if suffix == '.mp3':
             # Convert MP3 → temp WAV with ffmpeg for reliable reading
             temp_wav = input_path.with_suffix('.master.wav')
             subprocess.run(
-                ['ffmpeg', '-y', '-i', str(input_path), str(temp_wav)],
+                [ffmpeg, '-y', '-i', str(input_path), str(temp_wav)],
                 capture_output=True, timeout=30
             )
             if not temp_wav.exists():
@@ -182,7 +226,7 @@ def _apply_audio_mastering(input_path: Path) -> bool:
             # Write WAV, then convert back to MP3 with ffmpeg
             sf.write(str(temp_wav), arr, sr)
             subprocess.run(
-                ['ffmpeg', '-y', '-i', str(temp_wav), '-codec:a', 'libmp3lame', 
+                [ffmpeg, '-y', '-i', str(temp_wav), '-codec:a', 'libmp3lame', 
                  '-qscale:a', '2', str(input_path)],
                 capture_output=True, timeout=30
             )
