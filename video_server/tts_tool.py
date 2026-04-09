@@ -3,6 +3,7 @@ import asyncio
 import time
 import re
 import tempfile
+import requests as http_requests
 from pathlib import Path
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
@@ -32,6 +33,16 @@ server = FastMCP("tts-tool")
 
 OUTPUT_DIR = Path(__file__).parent.parent / "output" / "audio"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ElevenLabs TTS — highest quality natural voice (primary engine)
+ELEVENLABS_VOICE_ID = "KDkfb6swL2m7BPf1K53e"
+ELEVENLABS_MODEL = "eleven_multilingual_v2"
+ELEVENLABS_SETTINGS = {
+    "stability": 0.45,
+    "similarity_boost": 0.70,
+    "style_exaggeration": 0.45,
+    "use_speaker_boost": True,
+}
 
 VOICE_MAPPING = {
     "authoritative": "en-US-GuyNeural",
@@ -91,141 +102,216 @@ def select_voice_for_content(script_text: str, default_tone: str = "authoritativ
 
 def _apply_audio_mastering(input_path: Path) -> bool:
     """
-    Phase 5.2: Apply professional audio mastering to an MP3 file.
-    Normalises loudness, reduces harsh sibilance, and ensures consistent levels.
-    Uses numpy + scipy if available; silently skips if not installed.
+    Apply professional audio mastering to an audio file.
+    Normalises loudness and ensures consistent levels.
+    Uses soundfile for reliable WAV I/O (avoids moviepy array stacking issues).
 
     Args:
-        input_path: Path to the MP3 file to master in-place
+        input_path: Path to the audio file to master in-place
 
     Returns:
         True if mastering was applied, False if skipped
     """
     try:
         import numpy as np
-        from moviepy.audio.io.AudioFileClip import AudioFileClip
-        from moviepy.audio.AudioClip import AudioArrayClip
+        import soundfile as sf
+        import tempfile
+        import subprocess
 
-        clip = AudioFileClip(str(input_path))
-        arr = clip.to_soundarray(fps=44100)  # shape: (N, channels)
-        clip.close()
+        # Read audio directly with soundfile (supports WAV/FLAC/OGG, not MP3)
+        # For MP3 files, fall back to ffmpeg → WAV → process → MP3
+        suffix = input_path.suffix.lower()
+        
+        if suffix == '.mp3':
+            # Convert MP3 → temp WAV with ffmpeg for reliable reading
+            temp_wav = input_path.with_suffix('.master.wav')
+            subprocess.run(
+                ['ffmpeg', '-y', '-i', str(input_path), str(temp_wav)],
+                capture_output=True, timeout=30
+            )
+            if not temp_wav.exists():
+                print(f"  [TTS] Mastering: ffmpeg MP3→WAV conversion failed")
+                return False
+            arr, sr = sf.read(str(temp_wav))
+        else:
+            temp_wav = None
+            arr, sr = sf.read(str(input_path))
 
         if arr is None or arr.size == 0:
             return False
 
-        # 1. Peak normalise to -3 dBFS (prevent clipping)
+        # Ensure 2D (samples × channels)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+
+        # 1. High-pass filter at 80Hz (remove rumble, warm up voice)
+        for ch in range(arr.shape[1]):
+            spectrum = np.fft.rfft(arr[:, ch])
+            freqs = np.fft.rfftfreq(len(spectrum), 1.0 / sr)
+            hp_mask = freqs < 80
+            spectrum[hp_mask] *= 0.1  # -20dB below 80Hz
+            presence_mask = (freqs >= 3000) & (freqs <= 5000)
+            spectrum[presence_mask] *= 1.41  # +3dB presence boost for crispness
+            arr[:, ch] = np.fft.irfft(spectrum, n=len(arr[:, ch]))
+        
+        # 2. Gentle compression (reduce dynamic range for consistent volume)
+        threshold = 0.5
+        ratio = 3.0
+        for ch in range(arr.shape[1]):
+            over = np.abs(arr[:, ch]) - threshold
+            over = np.maximum(over, 0)
+            gain_reduction = 1.0 - (over * (1.0 - 1.0 / ratio))
+            gain_reduction = np.clip(gain_reduction, 0.3, 1.0)
+            arr[:, ch] *= gain_reduction
+        
+        # 3. Peak normalize to -3 dBFS (prevent clipping)
         peak = np.max(np.abs(arr))
         if peak > 0:
             target_peak = 0.708  # -3 dBFS
             arr = arr * (target_peak / peak)
 
-        # 2. RMS normalise for consistent perceived loudness
+        # 4. Loudness normalize to ~-16 LUFS (YouTube-optimized for short-form)
         rms = np.sqrt(np.mean(arr ** 2))
-        target_rms = 0.12  # ~-18 LUFS equivalent
+        target_rms = 0.15  # slightly louder than broadcast standard
         if rms > 0:
-            rms_gain = target_rms / rms
-            # Cap gain to avoid over-amplifying silence
-            rms_gain = min(rms_gain, 3.0)
-            arr = arr * rms_gain
-            arr = np.clip(arr, -1.0, 1.0)  # hard limit
+            rms_gain = min(target_rms / rms, 3.0)
+            arr = np.clip(arr * rms_gain, -1.0, 1.0)
 
-        # 3. Write back — AudioArrayClip requires a 2D numpy ndarray (N, channels)
-        fps = 44100
-        if arr.ndim == 1:
-            arr = arr.reshape(-1, 1)
-        # Ensure contiguous float64 array for moviepy compatibility
-        arr = np.ascontiguousarray(arr, dtype=np.float64)
-        mastered_clip = AudioArrayClip(arr, fps=fps)
-        mastered_clip.write_audiofile(
-            str(input_path),
-            fps=fps,
-            verbose=False,
-            logger=None
-        )
-        mastered_clip.close()
+        # 3. Write mastered audio back
+        if suffix == '.mp3':
+            # Write WAV, then convert back to MP3 with ffmpeg
+            sf.write(str(temp_wav), arr, sr)
+            subprocess.run(
+                ['ffmpeg', '-y', '-i', str(temp_wav), '-codec:a', 'libmp3lame', 
+                 '-qscale:a', '2', str(input_path)],
+                capture_output=True, timeout=30
+            )
+            temp_wav.unlink(missing_ok=True)
+        else:
+            sf.write(str(input_path), arr, sr)
+
         return True
 
     except Exception as e:
         print(f"  [TTS] Audio mastering skipped: {e}")
         return False
 
-def _add_natural_pacing(text: str) -> str:
+def _normalize_numbers_for_speech(text: str) -> str:
     """
-    Clean script text and prepare it for natural speech with comedic timing.
-    Removes stray formatting, then INJECTS pauses for:
-    - Punchlines (after !): beat pause for laugh/impact
-    - Rhetorical questions (after ?): thinking pause
-    - Sarcastic tone shifts: comma pauses around key phrases
-    - Quote marks: dramatic beat before/after quoted phrases
+    Pre-process numbers in text for better TTS pronunciation.
+    Ported from prosody_processor.py to work with Kokoro TTS path.
+    """
+    # Dollar amounts: $70B → 70 billion dollars, $112 → 112 dollars
+    text = re.sub(r'\$(\d+)B\b', r'\1 billion dollars', text)
+    text = re.sub(r'\$(\d+)M\b', r'\1 million dollars', text)
+    text = re.sub(r'\$(\d+)', r'\1 dollars', text)
+    
+    # Percentages: 15% → 15 percent
+    text = re.sub(r'(\d+)%', r'\1 percent', text)
+    
+    # Large numbers with commas: 3,000 → three thousand
+    def _expand_number(match):
+        num_str = match.group(1).replace(',', '')
+        try:
+            num = int(num_str)
+            if num >= 1_000_000_000:
+                return f'{num // 1_000_000_000} billion {num % 1_000_000_000}'.strip()
+            elif num >= 1_000_000:
+                return f'{num // 1_000_000} million {num % 1_000_000}'.strip()
+            elif num >= 1_000:
+                return f'{num // 1_000} thousand {num % 1_000}'.strip()
+        except ValueError:
+            pass
+        return match.group(1)  # keep original if parsing fails
+    text = re.sub(r'\b(\d{1,3}(,\d{3})+)\b', _expand_number, text)
+    
+    # Decimals (but not years or versions): 3.5 → 3 point 5
+    text = re.sub(r'(\d+)\.(\d+)(?!\d)', lambda m: f"{m.group(1)} point {m.group(2)}", text)
+    
+    return text
+
+
+def _add_natural_pacing(text: str, engine: str = "kokoro") -> str:
+    """
+    Clean and prepare script text for TTS input.
+    
+    Handles:
+    - Strip markdown / formatting artifacts
+    - Convert story separators (....) to comma-based long pauses
+    - Em-dash (—) to comma pause for TTS compatibility
+    - Normalize numbers for speech (percent, dollars, large numbers)
+    - Strip LLM preamble text
+    - Keep natural punctuation (! ? : , .) intact
     
     Args:
         text: Original script text
+        engine: Target TTS engine ("kokoro" or "edge"). Both get the same treatment now.
     
     Returns:
-        Clean plain text with natural pause markers for TTS
+        Clean plain text ready for neural TTS
     """
-    # Strip any leftover SSML/XML tags (safety net)
-    text = re.sub(r'<[^>]+>', '', text)
+    # ── STRIP CURATOR/LLM PREAMBLES ──
+    # Curator LLMs love to prepend meta-text. Strip it aggressively.
+    preamble_patterns = [
+        r"^here(?:'s|\s+is)\s+(?:your|the)\s+(?:transformed|curated|final|edited)\s+(?:news\s+)?script:?\s*",
+        r"^here (?:it is|you go|is the script):?\s*",
+        r"^(?:sure|certainly|here|ok)[,!]\s*(?:here'?s|i'?ve|i have)\s+",
+        r"^here'?s\s+the\s+(?:curated|final|edited|updated)\s+(?:version|script|text):?\s*",
+        r"^i(?:'ve| have)\s+(?:curated|edited|transformed|prepared)\s+",
+        r"^the\s+(?:curated|edited|final)\s+(?:script|text|version)\s+(?:is|reads):?\s*",
+    ]
+    text_lower = text.lower()
+    for pattern in preamble_patterns:
+        match = re.match(pattern, text_lower)
+        if match:
+            text = text[match.end():]
+            break
     
-    # Replace underscores used as separators/formatting with a space
-    text = re.sub(r'_+', ' ', text)
+    # Nuclear fallback: if first line is short and doesn't contain story words, strip it
+    lines = text.split('\n', 1)
+    if len(lines) > 1:
+        first_line = lines[0].strip().lower()
+        story_words = ['good', 'hey', 'welcome', 'tonight', 'today', 'masker', 
+                       'iran', 'russia', 'china', 'us', 'turkey', 'france', 'ukraine',
+                       'the', 'so', 'but', 'and', 'well', 'alright']
+        if (len(first_line) < 80 and 
+            (not first_line.endswith(('!', '?', '.')) or
+             not any(w in first_line for w in story_words))):
+            text = lines[1]
     
-    # Replace equals signs used as separators
-    text = re.sub(r'={2,}', ' ', text)
+    # ── STRIP FORMATTING ARTIFACTS ──
+    text = re.sub(r'<[^>]+>', '', text)          # SSML/XML tags
+    text = re.sub(r'_+', ' ', text)               # Underscores
+    text = re.sub(r'={2,}', ' ', text)            # Equals signs
+    text = re.sub(r'-{3,}', ' ', text)            # Triple+ dashes
+    text = re.sub(r'[#`]', '', text)              # Markdown headers and backticks
+    text = re.sub(r'[*]', '', text)               # Asterisks
     
-    # Replace dashes used as separators (3+ dashes)
-    text = re.sub(r'-{3,}', ' ', text)
+    # ── PAUSE HANDLING ──
+    # Story separator (....): convert to period + comma chain for a long TTS pause
+    # Neural TTS reads "., ," as end-sentence + two beat pauses ≈ 800ms+
+    text = re.sub(r'\.{4,}\s*', '. , , ', text)
     
-    # Strip markdown bold/italic markers
-    text = re.sub(r'[*#`]', '', text)
+    # Dramatic pause (...): convert to period + comma for a medium TTS pause
+    # Neural TTS reads ". ," as end-sentence + one beat pause ≈ 500ms
+    text = re.sub(r'\.{3}\s*', '. , ', text)
     
-    # ── COMEDIC PAUSE INJECTION ──
+    # Em-dash (—): convert to comma pause (all TTS engines respect commas)
+    text = text.replace('—', ', ')
     
-    # 1. Exclamation marks → beat pause (punchline impact)
-    # "one shot before Easter!" → "one shot before Easter! ... "
-    text = re.sub(r'!\s*', '! ...  ', text)
+    # ── NUMBER NORMALIZATION ──
+    text = _normalize_numbers_for_speech(text)
     
-    # 2. Question marks → rhetorical pause (let it land)
-    # "Think about it." before a question → add anticipation
-    text = re.sub(r'\?\s*', '? ...  ', text)
+    # ── LIGHT CLEANUP ──
+    text = re.sub(r'[\r\n]+', ' ', text)          # Collapse newlines
+    text = re.sub(r' {2,}', ' ', text)            # Collapse multiple spaces
+    text = text.strip()
     
-    # 3. Quoted phrases → dramatic beat before the reveal
-    # "one shot before Easter" → ... "one shot before Easter" ...
-    text = re.sub(r'"([^"]+)"', r'... "\1" ...', text)
+    # ── SAFETY: ensure text ends with punctuation ──
+    if text and text[-1] not in '.!?':
+        text += '.'
     
-    # 4. Colons before reveals → dramatic pause
-    # "The answer:" → "The answer ... "
-    text = re.sub(r':\s*', ' ...  ', text)
-    
-    # 5. Double dashes (em-dash substitutes) → beat pause
-    text = re.sub(r'\s*—\s*', ' ... ', text)
-    text = re.sub(r'\s*--\s*', ' ... ', text)
-    
-    # 6. Sentence-ending periods followed by short sentences → extra pause
-    # (This creates the "beat" timing for comedic delivery)
-    text = re.sub(r'\.\s+([A-Z])', r'. ...  \1', text)
-    
-    # ── STORY SEPARATOR PAUSES ──
-    
-    # 7. Four dots (....) = longer pause between stories (~1.5s)
-    # This is injected by the script builder after each punchline
-    # Convert to a longer silence marker that TTS respects
-    text = re.sub(r'\.{4}\s*', '. ... ... ...  ', text)
-    
-    # ── CLEANUP ──
-    
-    # Collapse multiple spaces/newlines into single space
-    text = re.sub(r'[\r\n]+', ' ', text)
-    text = re.sub(r' {2,}', '  ', text)
-    
-    # Remove any triple+ periods that aren't our deliberate "..."
-    # But be careful not to collapse our injected pauses
-    text = re.sub(r'\.{5,}', '...', text)
-    
-    # Remove pause markers at very start
-    text = re.sub(r'^\s*\.{3}\s*', '', text)
-    
-    return text.strip()
+    return text
 
 def _get_voice_parameters(voice_tone: str) -> dict:
     """
@@ -401,6 +487,118 @@ def _generate_edge_tts(clean_text: str, voice_tone: str, filepath: Path) -> Opti
         return None
 
 
+def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -> Optional[dict]:
+    """
+    Generate speech using ElevenLabs API (highest quality natural voice).
+    Uses batch generation (1-3 sentences per call) for natural variation.
+    Settings optimized per creator research: stability 45%, similarity 70%, style 45%.
+    """
+    api_key = os.environ.get("ELEVEN_LABS_KEY", "").strip()
+    if not api_key:
+        return None
+    
+    try:
+        voice_id = ELEVENLABS_VOICE_ID
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+        headers = {
+            "xi-api-key": api_key,
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg",
+        }
+        
+        # ── BATCH GENERATION ──
+        # Split into sentences, then group 1-3 per batch for natural variation
+        sentences = re.split(r'(?<=[.!?])\s+', clean_text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        
+        batches = []
+        current_batch = []
+        current_words = 0
+        
+        for sentence in sentences:
+            words = len(sentence.split())
+            if current_batch and (len(current_batch) >= 3 or current_words + words > 35):
+                batches.append(' '.join(current_batch))
+                current_batch = []
+                current_words = 0
+            current_batch.append(sentence)
+            current_words += words
+        
+        if current_batch:
+            batches.append(' '.join(current_batch))
+        
+        print(f"  [ELEVENLABS] Generating in {len(batches)} batches (voice: {voice_id[:8]}...)")
+        
+        audio_segments = []
+        for i, batch_text in enumerate(batches):
+            payload = {
+                "text": batch_text,
+                "model_id": ELEVENLABS_MODEL,
+                "voice_settings": ELEVENLABS_SETTINGS,
+            }
+            
+            resp = http_requests.post(url, json=payload, headers=headers, timeout=60)
+            
+            if resp.status_code != 200:
+                print(f"  [ELEVENLABS] Batch {i+1}/{len(batches)} failed: HTTP {resp.status_code}")
+                return None
+            
+            temp_path = filepath.with_suffix(f'.batch_{i}.mp3')
+            temp_path.write_bytes(resp.content)
+            audio_segments.append(str(temp_path))
+        
+        if not audio_segments:
+            return None
+        
+        # ── CONCATENATE BATCHES ──
+        if len(audio_segments) == 1:
+            Path(audio_segments[0]).rename(filepath)
+        else:
+            from moviepy.audio.io.AudioFileClip import AudioFileClip
+            from moviepy.audio.AudioClip import concatenate_audioclips
+            
+            clips = [AudioFileClip(p) for p in audio_segments]
+            final = concatenate_audioclips(clips)
+            final.write_audiofile(str(filepath), verbose=False, logger=None)
+            for c in clips:
+                c.close()
+            final.close()
+            
+            for p in audio_segments:
+                Path(p).unlink(missing_ok=True)
+        
+        # Get duration
+        clip = AudioFileClip(str(filepath))
+        duration = clip.duration
+        clip.close()
+        
+        file_size = filepath.stat().st_size
+        word_count = len(clean_text.split())
+        
+        print(f"  [ELEVENLABS] Generated {duration:.1f}s of natural speech ({len(batches)} batches)")
+        
+        return {
+            "success": True,
+            "filename": filepath.name,
+            "path": str(filepath),
+            "voice": f"elevenlabs_{voice_id[:8]}",
+            "voice_tone": voice_tone,
+            "text_length": len(clean_text),
+            "word_count": word_count,
+            "file_size_bytes": file_size,
+            "estimated_duration_seconds": round(duration, 2),
+            "audio_mastered": False,
+            "output_directory": str(OUTPUT_DIR),
+            "engine": "elevenlabs",
+        }
+    
+    except Exception as e:
+        print(f"  [ELEVENLABS] Failed: {e}")
+        for p in filepath.parent.glob(f"{filepath.stem}.batch_*.mp3"):
+            p.unlink(missing_ok=True)
+        return None
+
+
 @server.tool()
 def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     """
@@ -425,31 +623,46 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     if voice_tone == "authoritative":
         voice_tone = select_voice_for_content(text, default_tone="authoritative")
 
-    # Clean the text (remove formatting, underscores, etc.)
-    clean_text = _add_natural_pacing(text)
+    # Determine target engine
+    target_engine = "kokoro" if KOKORO_AVAILABLE else "edge"
+    
+    # Clean the text — light formatting cleanup, keep punctuation intact
+    # Both engines get the same treatment: natural punctuation, no synthetic markers
+    clean_text = _add_natural_pacing(text, engine=target_engine)
     
     filename = f"voiceover_{voice_tone}_{hash(text) % 10000}.mp3"
     filepath = OUTPUT_DIR / filename
     
-    # === PRIMARY: Kokoro TTS (natural human-like speech) ===
+    # === PRIMARY: ElevenLabs (highest quality natural voice) ===
+    result = _generate_elevenlabs_tts(clean_text, voice_tone, filepath)
+    
+    if result and result.get('success'):
+        mastered = _apply_audio_mastering(Path(result['path']))
+        if mastered:
+            print(f"  [TTS] Audio mastering applied (EQ + compression)")
+            result['audio_mastered'] = True
+            result['file_size_bytes'] = Path(result['path']).stat().st_size
+        
+        result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)
+        return result
+    
+    # === FALLBACK 1: Kokoro TTS ===
     if KOKORO_AVAILABLE:
-        print(f"  [TTS] Trying Kokoro TTS (primary engine)...")
+        print(f"  [TTS] ElevenLabs unavailable, trying Kokoro TTS...")
         result = _generate_kokoro_tts(clean_text, voice_tone, filepath)
         
         if result and result.get('success'):
-            # Apply audio mastering
             mastered = _apply_audio_mastering(Path(result['path']))
             if mastered:
                 print(f"  [TTS] Audio mastering applied")
                 result['audio_mastered'] = True
                 result['file_size_bytes'] = Path(result['path']).stat().st_size
             
-            # Get word timestamps for subtitle sync
             result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)
             return result
     
-    # === FALLBACK: Edge TTS ===
-    print(f"  [TTS] Kokoro unavailable/failed, trying Edge TTS (fallback)...")
+    # === FALLBACK 2: Edge TTS ===
+    print(f"  [TTS] All primary engines failed, trying Edge TTS (last resort)...")
     result = _generate_edge_tts(clean_text, voice_tone, filepath)
     
     if result and result.get('success'):

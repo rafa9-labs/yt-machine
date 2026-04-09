@@ -1,10 +1,10 @@
 {
-  "version": "1.0",
-  "description": "Single source of truth for image generation style. Both pixel_art_tool.py and prompt_generator.py read from this file.",
+  "version": "2.0",
+  "description": "Single source of truth for image generation style. 16 geopolitical visual categories with structured prompting.",
 
   "style_suffix": "Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), (chunky pixels:1.5), (low resolution:1.3), (8-bit color:1.2), isometric perspective, (hard pixel edges:1.2), limited color palette, flat colors, dramatic lighting",
 
-  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, labels, annotations, blurry, low quality, jpeg artifacts, pixelated noise, distorted proportions, photorealistic, 3D render, CGI, anime style, cartoon, sketch, pencil drawing, nsfw, gore, violence close-up, human faces distorted, smooth gradients, photorealistic details, high resolution, fine details, soft shading, anti-aliasing",
+  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, labels, annotations, blurry, low quality, jpeg artifacts, pixelated noise, distorted proportions, photorealistic, 3D render, CGI, anime style, cartoon, sketch, pencil drawing, nsfw, gore, violence close-up, human faces distorted, smooth gradients, photorealistic details, high resolution, fine details, soft shading, anti-aliasing, peaceful landscape, nature scenery, flowers, trees without context, abstract art, food, cooking, sports, entertainment, celebrity, fashion, pets, cute animals, domestic scene, holiday, vacation, fantasy, fairy tale, romance, wedding, birthday party, music concert, dancing",
 
   "brand_colors": {
     "primary": "#0A1628",
@@ -39,25 +39,85 @@
   },
 
   "lora_by_visual_type": {
-    "military": {
+    "warfare": {
       "scale": 0.9,
       "trigger": "tactical pixel",
-      "additional_prompts": "detailed equipment, strategic formations"
+      "additional_prompts": "detailed military equipment, explosions, smoke, tactical formations, battlefield terrain"
     },
-    "economic": {
-      "scale": 0.8,
+    "naval": {
+      "scale": 0.9,
+      "trigger": "naval pixel",
+      "additional_prompts": "warships, ocean waves, naval formations, maritime flags, fleet maneuvers"
+    },
+    "aerial": {
+      "scale": 0.88,
+      "trigger": "aerial pixel",
+      "additional_prompts": "military aircraft, contrails, sky formations, payload detail, altitude perspective"
+    },
+    "arms_defense": {
+      "scale": 0.88,
+      "trigger": "defense pixel",
+      "additional_prompts": "military hardware closeup, technical schematics, weapon systems, national insignia"
+    },
+    "markets": {
+      "scale": 0.82,
       "trigger": "market pixel",
-      "additional_prompts": "data visualization, price displays, human scale"
+      "additional_prompts": "trading screens, stock tickers, price charts, financial data visualization, trading floor"
     },
-    "diplomatic": {
+    "trade_sanctions": {
+      "scale": 0.84,
+      "trigger": "trade pixel",
+      "additional_prompts": "cargo containers, shipping port, trade barriers, customs checkpoint, commercial vessels"
+    },
+    "energy": {
+      "scale": 0.85,
+      "trigger": "energy pixel",
+      "additional_prompts": "oil refinery, pipeline infrastructure, power plant, flames, industrial complex"
+    },
+    "commodities": {
+      "scale": 0.82,
+      "trigger": "commodity pixel",
+      "additional_prompts": "resource extraction, supply queues, scarcity indicators, warehouse shelves, raw materials"
+    },
+    "diplomacy": {
       "scale": 0.85,
       "trigger": "formal pixel",
-      "additional_prompts": "professional setting, official insignia, balanced composition"
+      "additional_prompts": "summit meeting room, diplomatic table, national flags, official documents, formal atmosphere"
     },
-    "human_impact": {
+    "political": {
       "scale": 0.85,
-      "trigger": "emotional pixel",
-      "additional_prompts": "relatable imagery, emotional composition, human perspective"
+      "trigger": "political pixel",
+      "additional_prompts": "government building, parliament chamber, podium, political rally, ballot boxes"
+    },
+    "espionage": {
+      "scale": 0.87,
+      "trigger": "spy pixel",
+      "additional_prompts": "surveillance monitors, classified documents, encrypted data, shadows, covert operations"
+    },
+    "protests": {
+      "scale": 0.85,
+      "trigger": "protest pixel",
+      "additional_prompts": "demonstration crowd, protest banners, police barricades, city streets, civil unrest"
+    },
+    "humanitarian": {
+      "scale": 0.85,
+      "trigger": "crisis pixel",
+      "additional_prompts": "refugee convoy, aid tents, emergency supplies, displacement camp, humanitarian crisis"
+    },
+    "border": {
+      "scale": 0.86,
+      "trigger": "border pixel",
+      "additional_prompts": "border fence, checkpoint, guard towers, vehicle queue, no-mans land terrain"
+    },
+    "cyber": {
+      "scale": 0.84,
+      "trigger": "cyber pixel",
+      "additional_prompts": "server room, holographic data, network attack visualization, digital infrastructure, warning alerts"
+    },
+    "megaprojects": {
+      "scale": 0.84,
+      "trigger": "infrastructure pixel",
+      "additional_prompts": "massive construction site, cranes, engineering scale, route maps, heavy machinery"
     },
     "general": {
       "scale": 0.85,
@@ -65,6 +125,7 @@
       "additional_prompts": ""
     }
   },
+
   "split_layout": {
     "width": 1080,
     "height": 1920,
