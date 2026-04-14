@@ -24,6 +24,12 @@ psycopg2-binary>=2.9.9
 # WHY: PostgreSQL vector extension support (for Phase 5 — Pinecone alternative)
 pgvector>=0.2.4
 
+# ── Phase 5: Vector Memory (pgvector + Ollama Embeddings) ──
+# WHY: Replaces open-viking's substring-based deduplication with semantic similarity.
+# Instead of checking if "iran" appears in topic text, we embed topics into 768-dim
+# vectors and use cosine distance to detect semantically similar topics.
+# Example: "Houthi attacks on cargo vessels" ≈ "Red Sea shipping crisis" (distance < 0.35)
+
 # ── Phase 2: LangChain LLM Orchestration ──
 # WHY: Replaces raw requests.post() to Ollama with structured chains, output parsers,
 # automatic retries, model fallbacks, and Pydantic-integrated output parsing.
