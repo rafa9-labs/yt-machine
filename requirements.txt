@@ -33,6 +33,14 @@ langchain>=1.2.0
 langchain-ollama>=1.1.0
 langchain-core>=1.2.0
 
+# ── Phase 3: Async Scraping + Playwright ──
+# WHY: Async HTTP client — fetches all 8 RSS feeds in parallel (~2s vs ~16s sequential)
+aiohttp>=3.9.0
+# WHY: Headless browser — extracts article text from JavaScript-rendered sites
+# (Reuters, Foreign Policy etc. load content via JS — trafilatura sees empty shell)
+# Install browser binary separately: playwright install chromium
+playwright>=1.40.0
+
 # LoRA local training (install separately - requires CUDA + ~25GB disk for FLUX.1-dev)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 torch>=2.3.0
