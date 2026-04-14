@@ -15,6 +15,14 @@ fal-client>=0.4.0
 spacy>=3.7.0
 trafilatura>=1.6.0
 
+# ── Phase 1: Industrial-Grade Stack ──
+# WHY: Data validation — replaces raw dicts with type-enforced models
+pydantic>=2.5.0
+# WHY: PostgreSQL driver — replaces JSON file storage with ACID database
+psycopg2-binary>=2.9.9
+# WHY: PostgreSQL vector extension support (for Phase 5 — Pinecone alternative)
+pgvector>=0.2.4
+
 # LoRA local training (install separately - requires CUDA + ~25GB disk for FLUX.1-dev)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 torch>=2.3.0
