@@ -64,8 +64,12 @@ from typing import Optional, List
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s')
-logger = logging.getLogger('pipeline-api')
+# ── Phase 8: Structured logging via brain/log.py ──
+# WHY? Replaces logging.basicConfig() with structlog configuration.
+# If structlog is installed → JSON-capable, leveled, timestamped logs.
+# If not → falls back to standard logging transparently.
+from brain.log import get_logger
+logger = get_logger("pipeline-api")
 
 # ── Import our Pydantic models from Phase 1 ──
 from models.schemas import (
