@@ -23,6 +23,15 @@ psycopg2-binary>=2.9.9
 # WHY: PostgreSQL vector extension support (for Phase 5 — Pinecone alternative)
 pgvector>=0.2.4
 
+# ── Phase 4: FastAPI + Uvicorn ──
+# WHY: Replaces Flask with async-first framework. Benefits:
+# 1. Pydantic request validation (reuses our models from Phase 1)
+# 2. Auto-generated Swagger docs at /docs
+# 3. Native async + BackgroundTasks (no more threading.Thread)
+# 4. Uvicorn ASGI server (production-grade, unlike Flask's Werkzeug)
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+
 # ── Phase 5: Vector Memory (pgvector + Ollama Embeddings) ──
 # WHY: Replaces open-viking's substring-based deduplication with semantic similarity.
 # Instead of checking if "iran" appears in topic text, we embed topics into 768-dim
