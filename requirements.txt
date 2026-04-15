@@ -55,6 +55,13 @@ aiohttp>=3.9.0
 # Install browser binary separately: playwright install chromium
 playwright>=1.40.0
 
+# ── Phase 8: Structured Logging ──
+# WHY: Replaces print() + _TeeWriter hack with structured, leveled logging.
+# structlog gives you: log levels, JSON output, context binding, timestamps,
+# and integrates with standard logging (so LangChain/FastAPI logs are captured too).
+# If structlog fails to import → silently falls back to standard logging module.
+structlog>=24.1.0
+
 # LoRA local training (install separately - requires CUDA + ~25GB disk for FLUX.1-dev)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 torch>=2.3.0

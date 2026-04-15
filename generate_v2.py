@@ -1,6 +1,6 @@
 """
-═══════════════════════════════════════════════════════════════════════════════
-generate_v2.py — Phase 7: Modern Stack Pipeline (with automatic fallback)
+════════════════════════════════════════════════════════════════════════════════
+generate_v2.py — Phase 7+8: Modern Stack Pipeline (with automatic fallback)
 ════════════════════════════════════════════════════════════════════════════════
 
 SAFETY DESIGN:
@@ -17,6 +17,7 @@ WHAT'S NEW vs generate_complete_video.py:
   Step 1.5: Vector dedup check (pgvector semantic similarity)
   Step 2:   LangChain chains for news analysis (when available)
   Step 5+:  PostgreSQL save after each step (not just JSON files)
+  Logging:  structlog — structured, leveled, timestamped logs (Phase 8)
   All else: Falls back to old generate_complete_video.py modules
 ════════════════════════════════════════════════════════════════════════════════
 """
@@ -38,32 +39,23 @@ if sys.platform == 'win32':
 
 load_dotenv()
 
-# ── File-based logging (same as old pipeline) ──
-import io
+# ══════════════════════════════════════════════════════════════════════════
+# PHASE 8: STRUCTURED LOGGING — replaces _TeeWriter + print() hack
+# ══════════════════════════════════════════════════════════════════════════
+# WHY STRUCTLOG? The old pipeline used:
+#   sys.stdout = _TeeWriter(sys.stdout, log_path)   ← monkey-patches stdout!
+#   print("✅ Async scraper found 47 articles")      ← no level, no structure
+#
+# structlog gives you:
+#   log.info("step.complete", step="news_fetch", duration_s=2.3, articles=47)
+#   → Structured, leveled, timestamped, grep-able, machine-parseable
+#
+# SAFETY: If structlog fails to import, brain/log.py falls back to
+# standard logging. Your pipeline NEVER crashes from a logging issue.
 
-class _TeeWriter:
-    """Writes to both stdout and a log file simultaneously."""
-    def __init__(self, terminal, log_path):
-        self.terminal = terminal
-        self.log_file = open(log_path, 'a', encoding='utf-8')
-    
-    def write(self, message):
-        self.terminal.write(message)
-        self.log_file.write(message)
-        self.log_file.flush()
-    
-    def flush(self):
-        self.terminal.flush()
-        self.log_file.flush()
-    
-    def reconfigure(self, **kwargs):
-        if hasattr(self.terminal, 'reconfigure'):
-            self.terminal.reconfigure(**kwargs)
+from brain.log import get_logger
 
-_log_dir = Path("output/logs")
-_log_dir.mkdir(parents=True, exist_ok=True)
-_log_path = _log_dir / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-sys.stdout = _TeeWriter(sys.stdout, str(_log_path))
+log = get_logger("pipeline")
 
 # ── CONFIGURATION ──
 SKIP_IMAGES = os.environ.get("SKIP_IMAGES", "0") == "1"
@@ -86,15 +78,11 @@ if args.resume:
     if checkpoint_file.exists():
         with open(checkpoint_file, 'r', encoding='utf-8') as f:
             checkpoint = json.load(f)
-        print(f"🔄 RESUMING from checkpoint: {resume_path}")
+        log.info("pipeline.resume", path=str(resume_path))
     else:
-        print(f"⚠️  No checkpoint found in {resume_path}, starting fresh")
+        log.warning("pipeline.resume.no_checkpoint", path=str(resume_path))
 
-print("🎬 YT-MACHINE V2 PIPELINE (Modern Stack)")
-print("=" * 60)
-print(f"📝 Log file: {_log_path}")
-if SKIP_IMAGES:
-    print("⚠️  SKIP_IMAGES=1 — using placeholder images")
+log.info("pipeline.start", pipeline_version="v2", skip_images=SKIP_IMAGES)
 
 
 # ── HELPER: Extract text from script segments ──
@@ -115,29 +103,20 @@ from pipeline_utils import bridge_timestamp_gaps, build_fallback_prompt as _buil
 # ══════════════════════════════════════════════════════════════════════════
 # LLM INITIALIZATION — Try LangChain first, fallback to raw interface
 # ══════════════════════════════════════════════════════════════════════════
-# WHY THIS PATTERN? The old LLMInterface has complex methods (200+ lines each)
-# for synthesize_multi_news_script, curate_script, etc. The new LangChain
-# chains in brain/chains/ handle simpler tasks (news_analysis, debate, curation).
-# For complex multi-step methods, we still use the old interface.
-#
-# This hybrid approach lets us incrementally migrate LLM calls without
-# rewriting 200+ lines of proven logic at once.
-
 _USE_LANGCHAIN = True
 
 try:
     from brain.langchain_interface import LangChainInterface
     _langchain = LangChainInterface()
-    print("✅ LangChain interface loaded (structured chains available)")
+    log.info("llm.langchain.loaded")
 except Exception as e:
-    print(f"⚠️  LangChain interface failed to load: {e}")
-    print("   Falling back to raw LLM interface for ALL calls")
+    log.warning("llm.langchain.failed", error=str(e), fallback="raw_llm")
     _USE_LANGCHAIN = False
 
 # Always load old interface as fallback — it handles complex methods
 from brain.llm_interface import LLMInterface
 llm = LLMInterface()
-print("✅ Raw LLM interface loaded (fallback + complex methods)")
+log.info("llm.raw.loaded")
 
 # Video server components (unchanged)
 from video_server.pixel_art_tool import generate_pixel_art
@@ -170,8 +149,6 @@ def _save_checkpoint(step_name, project_folder, data=None):
 
 
 # ── PostgreSQL SAVE HELPER ──
-# WHY: The old pipeline only saved to JSON files. This adds PostgreSQL persistence
-# so pipeline state survives container restarts and is queryable.
 def _save_to_postgres(step_name: str, project_id: int, data: dict):
     """Save pipeline step results to PostgreSQL. Non-blocking — errors are logged, not raised."""
     try:
@@ -179,7 +156,6 @@ def _save_to_postgres(step_name: str, project_id: int, data: dict):
         conn = get_connection()
         cursor = conn.cursor()
         
-        # Upsert into videos table
         cursor.execute("""
             INSERT INTO videos (project_id, status, created_at, updated_at)
             VALUES (%s, %s, NOW(), NOW())
@@ -188,7 +164,6 @@ def _save_to_postgres(step_name: str, project_id: int, data: dict):
                 updated_at = NOW()
         """, (project_id, step_name))
         
-        # Save step data as a JSON column
         cursor.execute("""
             UPDATE videos SET
                 metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
@@ -198,55 +173,47 @@ def _save_to_postgres(step_name: str, project_id: int, data: dict):
         conn.commit()
         cursor.close()
         conn.close()
+        log.debug("postgres.saved", step=step_name, project_id=project_id)
     except Exception as e:
-        # Non-blocking: PostgreSQL save failure should NOT stop the pipeline
-        print(f"  ⚠️ PostgreSQL save failed ({step_name}): {e}")
-        print(f"     Pipeline continues — data saved to JSON files as backup")
+        log.warning("postgres.save_failed", step=step_name, error=str(e))
 
 
 # Create unique project folder (or reuse from resume)
 if checkpoint and args.resume:
     project_folder = Path(args.resume)
     project_id = int(project_folder.name.replace('video_', ''))
-    print(f"📁 Reusing project folder: {project_folder} (ID: {project_id})")
+    log.info("project.reuse", folder=str(project_folder), project_id=project_id)
 else:
     project_id = int(time.time())
     project_folder = Path(f"output/projects/video_{project_id}")
     project_folder.mkdir(parents=True, exist_ok=True)
-    print(f"📁 Project folder: {project_folder}")
+    log.info("project.create", folder=str(project_folder), project_id=project_id)
 
-print(f"🕐 Time of day: {datetime.now().strftime('%H:%M')}")
+# ── Bind project context to logger — all future logs include project_id ──
+# WHY bind()? Every log line from this point includes project_id automatically.
+# No need to pass it to every log.info() call manually.
+log = log.bind(project_id=project_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 1: FETCH LATEST NEWS — Async Scraper (NEW) with old fallback
 # ══════════════════════════════════════════════════════════════════════════
-# WHY ASYNC? The old RSScraper.fetch_all() fetches feeds sequentially (~16s).
-# AsyncRSScraper uses aiohttp to fetch all feeds in parallel (~2s).
-# WHY PLAYWRIGHT? Some sources (Reuters, Foreign Policy) render content via
-# JavaScript. The old trafilatura scraper sees an empty HTML shell.
-
-print("\n📰 STEP 1: FETCHING LATEST NEWS (Async V2 Scraper)")
-print("-" * 40)
+log.info("step.start", step="news_fetch")
+_step_start = time.time()
 
 articles = []
 all_articles = []
 try:
-    # ── Try new async scraper ──
-    from redfish.async_scraper import AsyncRSSScraper
+    from redfish.async_scraper import AsyncRSScraper
     
     async def _fetch_articles():
-        """Run async scraper and return articles."""
-        async_scraper = AsyncRSSScraper()
+        async_scraper = AsyncRSScraper()
         results = await async_scraper.fetch_all_feeds(max_age_hours=24)
         return results
     
-    print("  Using AsyncRSSScraper (aiohttp + playwright)...")
     all_articles = asyncio.run(_fetch_articles())
-    print(f"  ✅ Async scraper found {len(all_articles)} articles")
+    log.info("scraper.async.success", articles=len(all_articles))
     
-    # ── Viral filtering — use old scraper's filter since it has ranking logic ──
-    # The async scraper handles fetching; the old scraper handles ranking.
     from redfish.rss_scraper import RSScraper
     ranker = RSScraper()
     viral_articles = ranker.filter_viral_potential(all_articles, top_n=10)
@@ -257,20 +224,22 @@ try:
     })
     
 except Exception as e:
-    print(f"  ⚠️ Async scraper failed: {e}")
-    print(f"  Falling back to old sync scraper...")
+    log.warning("scraper.async.failed", error=str(e), fallback="sync_scraper")
     try:
         from redfish.rss_scraper import RSScraper
         scraper = RSScraper()
         all_articles = scraper.scrape_all(max_age_hours=24)
         viral_articles = scraper.filter_viral_potential(all_articles, top_n=10)
-        print(f"  ✅ Old scraper found {len(all_articles)} articles (fallback)")
+        log.info("scraper.sync.fallback", articles=len(all_articles))
     except Exception as e2:
-        print(f"  ❌ Both scrapers failed: {e2}")
+        log.error("scraper.all_failed", error=str(e2))
         exit(1)
 
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="news_fetch", duration_s=round(_step_duration, 2), articles=len(all_articles))
+
 if len(viral_articles) < 3:
-    print(f"⚠️  Only found {len(viral_articles)} articles, need at least 3")
+    log.warning("articles.few", count=len(viral_articles), minimum=3)
 
 # ── Topic diversity selection (same logic as old pipeline) ──
 selected = []
@@ -300,7 +269,7 @@ while len(selected) < 3 and len(viral_articles) > len(selected):
 
 articles = selected[:3]
 for i, a in enumerate(articles, 1):
-    print(f"  ✅ Story {i}: {a['title'][:70]}...")
+    log.info("article.selected", index=i, title=a['title'][:70])
 
 _save_checkpoint("news_fetch", project_folder, {"article_titles": [a.get('title','') for a in articles]})
 
@@ -308,18 +277,8 @@ _save_checkpoint("news_fetch", project_folder, {"article_titles": [a.get('title'
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 1.5: VECTOR DEDUP CHECK (NEW — no equivalent in old pipeline)
 # ══════════════════════════════════════════════════════════════════════════
-# WHY VECTOR DEDUP? The old pipeline uses frozenset word overlap to detect
-# duplicate topics. This misses semantic duplicates:
-#   "Houthi attacks on cargo vessels" ≠ "Red Sea shipping crisis" (old: different)
-#   But they're the SAME story — vector dedup catches this.
-#
-# HOW IT WORKS:
-#   1. Embed each article title into a 768-dim vector via Ollama
-#   2. Query pgvector for any stored topics with cosine distance < 0.35
-#   3. If found → topic was recently covered → skip it
-
-print("\n🔍 STEP 1.5: VECTOR DEDUP CHECK")
-print("-" * 40)
+log.info("step.start", step="vector_dedup")
+_step_start = time.time()
 
 _dedup_available = False
 try:
@@ -328,21 +287,19 @@ try:
     
     dedup = TopicDeduplicator(similarity_threshold=0.35)
     _dedup_available = True
-    print("  ✅ Vector dedup loaded (pgvector)")
+    log.info("dedup.loaded", backend="pgvector")
     
-    # Check each selected article for duplicates
     deduped_articles = []
     for article in articles:
         topic_text = article.get('title', '')
         is_dup = dedup.is_duplicate(topic_text)
         if is_dup:
-            print(f"  ⏭️ Skipping duplicate: {topic_text[:60]}...")
+            log.info("dedup.skip_duplicate", topic=topic_text[:60])
         else:
             deduped_articles.append(article)
     
     if len(deduped_articles) < 3:
-        print(f"  ⚠️ Only {len(deduped_articles)} unique articles after dedup")
-        # Fill from viral_articles
+        log.warning("dedup.few_unique", count=len(deduped_articles))
         for a in viral_articles:
             if a not in deduped_articles and len(deduped_articles) < 3:
                 topic_text = a.get('title', '')
@@ -350,31 +307,25 @@ try:
                     deduped_articles.append(a)
     
     articles = deduped_articles[:3]
-    print(f"  ✅ {len(articles)} unique articles after dedup")
+    log.info("dedup.complete", unique_articles=len(articles))
     
 except Exception as e:
-    print(f"  ⚠️ Vector dedup failed: {e}")
-    print(f"     Continuing with all selected articles (no dedup)")
+    log.warning("dedup.failed", error=str(e), action="continuing_without_dedup")
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="vector_dedup", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 2: NEWS ANALYSIS — LangChain chain (NEW) with old fallback
 # ══════════════════════════════════════════════════════════════════════════
-# WHY LANGCHAIN? The old process_news() calls self.generate() (raw HTTP POST)
-# then self._extract_json() (60 lines of brace counting). The LangChain chain:
-#   1. Uses PydanticOutputParser — auto-generates format instructions
-#   2. Returns a typed NewsAnalysis model — no manual parsing
-#   3. Auto-retries on parse failure with error feedback
-
-print("\n🔍 STEP 2: NEWS ANALYSIS (3 articles)")
-print("-" * 40)
+log.info("step.start", step="news_analysis")
+_step_start = time.time()
 
 news_analyses = []
 for i, article in enumerate(articles, 1):
     try:
-        print(f"\n  Analyzing story {i}...")
-        
-        # Get full article text (try old scraper's method — it handles trafilatura)
+        # Get full article text
         try:
             from redfish.rss_scraper import RSScraper
             text_scraper = RSScraper()
@@ -382,7 +333,7 @@ for i, article in enumerate(articles, 1):
         except:
             article_text = article.get('summary', article.get('title', ''))
         
-        print(f"    Article length: {len(article_text)} chars")
+        log.debug("analysis.article", index=i, chars=len(article_text))
         
         analysis = None
         
@@ -392,28 +343,25 @@ for i, article in enumerate(articles, 1):
                 from models.schemas import NewsAnalysis as NewsAnalysisModel
                 chain = _langchain.build_structured_chain(NewsAnalysisModel, "news_processor")
                 result = chain.invoke({"input_text": f"Analyze this news article:\n\n{article_text}"})
-                # Convert Pydantic model to dict for compatibility with old pipeline
                 analysis = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
-                print(f"    ✅ LangChain analysis succeeded")
+                log.info("analysis.langchain.success", index=i)
             except Exception as e:
-                print(f"    ⚠️ LangChain analysis failed: {e}")
-                print(f"    Falling back to raw LLM...")
+                log.warning("analysis.langchain.failed", index=i, error=str(e))
         
         # ── Fallback to old raw LLM interface ──
         if not analysis:
             analysis = llm.process_news(article_text)
         
         if analysis:
-            print(f"    ✅ Topic: {analysis.get('topic', 'N/A')[:60]}")
-            print(f"    ✅ Impact: {analysis.get('impact_score', 0)}/10")
+            log.info("analysis.complete", index=i, topic=analysis.get('topic', 'N/A')[:60], impact=analysis.get('impact_score', 0))
             news_analyses.append(analysis)
         else:
-            print(f"    ❌ Analysis failed for story {i}")
+            log.error("analysis.empty", index=i)
     except Exception as e:
-        print(f"    ❌ Story {i} analysis failed: {e}")
+        log.error("analysis.failed", index=i, error=str(e))
 
 if len(news_analyses) < 2:
-    print(f"❌ Need at least 2 analyzed stories, got {len(news_analyses)}")
+    log.error("analysis.insufficient", count=len(news_analyses), minimum=2)
     exit(1)
 
 # Sort by impact (lowest first, most important last for retention)
@@ -426,9 +374,12 @@ paired.sort(key=lambda x: x[1].get('impact_score', 0))
 articles = [p[0] for p in paired]
 news_analyses = [p[1] for p in paired]
 
-print(f"\n✅ Analyzed {len(news_analyses)} stories (sorted by impact)")
+log.info("analysis.all_complete", stories=len(news_analyses))
 for i, a in enumerate(news_analyses):
-    print(f"  Story {i+1}: impact={a.get('impact_score', '?')}/10 — {a.get('topic', 'N/A')[:50]}")
+    log.info("analysis.ranked", rank=i+1, impact=a.get('impact_score', '?'), topic=a.get('topic', 'N/A')[:50])
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="news_analysis", duration_s=round(_step_duration, 2))
 
 _save_checkpoint("news_analysis", project_folder, {"analysis_topics": [a.get('topic','') for a in news_analyses]})
 _save_to_postgres("news_analysis", project_id, {
@@ -440,35 +391,34 @@ _save_to_postgres("news_analysis", project_id, {
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 3: TRENDING CONTEXT (unchanged — uses old module)
 # ══════════════════════════════════════════════════════════════════════════
-print("\n🔬 STEP 3: TRENDING CONTEXT ANALYSIS")
-print("-" * 40)
+log.info("step.start", step="trending_context")
+_step_start = time.time()
 
 trending_context = {}
 try:
     from redfish.trending_analyzer import TrendingAnalyzer
     trending_analyzer = TrendingAnalyzer()
     trending_context = trending_analyzer.analyze(all_articles, top_n=40)
-    print(f"✅ Trending terms: {len(trending_context)}")
+    log.info("trending.complete", terms=len(trending_context))
 except Exception as e:
-    print(f"⚠️  Trending analysis failed: {e}")
+    log.warning("trending.failed", error=str(e))
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="trending_context", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 4: SCRIPT SYNTHESIS (uses old LLM — complex 200-line method)
 # ══════════════════════════════════════════════════════════════════════════
-# NOTE: synthesize_multi_news_script() is a 200-line method that handles
-# segment timelines, segue enforcement, closing validation, etc.
-# The new LangChain chains don't replicate this yet. Using old interface.
-
-print("\n🎭 STEP 4: MULTI-NEWS SCRIPT SYNTHESIS (Masker)")
-print("-" * 40)
+log.info("step.start", step="script_synthesis")
+_step_start = time.time()
 
 try:
-    print("Generating Masker personality script with 3 stories...")
+    log.info("script.generating", format="multi_news_3_stories")
     script = llm.synthesize_multi_news_script(news_analyses)
     
     if not script:
-        print("❌ Multi-news script synthesis failed")
+        log.error("script.synthesis_failed", reason="empty_result")
         exit(1)
     
     full_script = script.get('full_text', '')
@@ -501,10 +451,9 @@ try:
     script['word_count'] = len(full_script.split())
     script['estimated_duration'] = int(len(full_script.split()) / 2.5)
     
-    print(f"✅ Script synthesized (~{script.get('estimated_duration', 0)}s)")
+    log.info("script.synthesized", duration_s=script.get('estimated_duration', 0), words=script.get('word_count', 0))
     for i, story in enumerate(script.get('stories', []), 1):
-        print(f"  Story {i} hook: {story.get('mini_hook', 'N/A')[:60]}...")
-    print(f"  Words: {script.get('word_count', 0)}")
+        log.debug("script.story", index=i, hook=story.get('mini_hook', 'N/A')[:60])
     
     # Save script files
     script_file = project_folder / "script.txt"
@@ -517,49 +466,53 @@ try:
     _save_to_postgres("script_synthesis", project_id, {"word_count": script.get('word_count', 0)})
     
 except Exception as e:
-    print(f"❌ Script synthesis failed: {e}")
+    log.error("script.synthesis.exception", error=str(e))
     import traceback
     traceback.print_exc()
     exit(1)
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="script_synthesis", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 4.5: VISUAL PROMPT GENERATION (unchanged)
 # ══════════════════════════════════════════════════════════════════════════
-print("\n🖼️ STEP 4.5: DEDICATED VISUAL PROMPT GENERATION")
-print("-" * 40)
+log.info("step.start", step="visual_prompts")
+_step_start = time.time()
 
 try:
     dedicated_visuals = llm.generate_visual_prompts(script)
     if dedicated_visuals and len(dedicated_visuals) >= 6:
         script['all_visual_scenes'] = dedicated_visuals
-        print(f"  ✅ Using {len(dedicated_visuals)} dedicated visual prompts")
+        log.info("visual_prompts.dedicated", count=len(dedicated_visuals))
     else:
-        print(f"  ⚠️ Dedicated visual generation failed — using script-synthesis visuals")
+        log.warning("visual_prompts.fallback", reason="insufficient_dedicated_prompts")
     
     segments_file = project_folder / "script_segments.json"
     segments_file.write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding='utf-8')
 except Exception as e:
-    print(f"  ⚠️ Visual prompt generation failed: {e}")
+    log.warning("visual_prompts.failed", error=str(e))
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="visual_prompts", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 4.7: SCRIPT CURATION — Try LangChain chain (NEW), fallback to old
 # ══════════════════════════════════════════════════════════════════════════
-print("\n🎙️ STEP 4.7: SCRIPT CURATION (Natural Delivery)")
-print("-" * 40)
+log.info("step.start", step="script_curation")
+_step_start = time.time()
 
 try:
     original_text = full_script
-    print(f"  Original script: {len(original_text.split())} words")
+    log.info("curation.original", words=len(original_text.split()))
     
-    # ── Try LangChain curation chain ──
     curated_text = None
     if _USE_LANGCHAIN:
         try:
             from brain.chains.curation import create_curation_chain
             curation_chain = create_curation_chain()
-            # Extract story bodies for curation
             story_bodies = []
             for story in script.get('stories', []):
                 p1 = story.get('part_1_narration', '')
@@ -573,11 +526,10 @@ try:
             chain_result = curation_chain.invoke({"input_text": body_text})
             if chain_result and isinstance(chain_result, str):
                 curated_text = chain_result
-                print(f"  ✅ LangChain curation succeeded")
+                log.info("curation.langchain.success")
         except Exception as e:
-            print(f"  ⚠️ LangChain curation failed: {e}, falling back...")
+            log.warning("curation.langchain.failed", error=str(e))
     
-    # ── Fallback to old curation ──
     if not curated_text:
         curated_text = llm.curate_script(script)
     
@@ -590,19 +542,22 @@ try:
         curated_file = project_folder / "script_curated.txt"
         curated_file.write_text(curated_text, encoding='utf-8')
         
-        print(f"  ✅ Script curated: {len(curated_text.split())} words")
+        log.info("curation.complete", words=script['word_count'])
         _save_checkpoint("script_curation", project_folder, {"curated_word_count": len(curated_text.split())})
     else:
-        print(f"  ⚠️ Curation returned original, using as-is")
+        log.warning("curation.unchanged", reason="curation_returned_original")
 except Exception as e:
-    print(f"  ⚠️ Curation failed: {e}, using original script")
+    log.warning("curation.failed", error=str(e))
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="script_curation", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 5: PIXEL ART GENERATION (unchanged)
 # ══════════════════════════════════════════════════════════════════════════
-print("\n🎨 STEP 5: PIXEL ART GENERATION (synced visuals)")
-print("-" * 40)
+log.info("step.start", step="pixel_art")
+_step_start = time.time()
 
 try:
     generated_images = []
@@ -622,13 +577,12 @@ try:
             placeholder.save(str(placeholder_path))
             generated_images.append(str(placeholder_path))
         
-        print(f"  ⚠️ SKIP_IMAGES: Created {len(generated_images)} placeholder images")
+        log.warning("pixel_art.skip_images", placeholders=len(generated_images))
     
     else:
         base_seed = project_id % (2**32)
         all_visual_scenes = script.get('all_visual_scenes', [])
         
-        # Build fallback prompts for missing scenes
         stories = script.get('stories', [])
         for s_idx in range(3):
             for p_idx in range(2):
@@ -650,7 +604,7 @@ try:
             scene_names.append(f'story_{i+1}_part2')
 
         for scene_idx, scene_name in enumerate(scene_names):
-            print(f"\n  Generating {scene_name}...")
+            log.debug("pixel_art.generating", scene=scene_name)
             
             scene_data = all_visual_scenes[scene_idx]
             prompt = scene_data.get('description', '')
@@ -677,9 +631,9 @@ try:
                 dst_path = image_folder / dst_filename
                 shutil.copy2(src_path, dst_path)
                 generated_images.append(str(dst_path))
-                print(f"    ✅ {dst_filename}")
+                log.debug("pixel_art.success", file=dst_filename)
             else:
-                print(f"    ❌ Failed, trying fallback...")
+                log.warning("pixel_art.primary_failed", scene=scene_name, action="retry")
                 import shutil
                 from PIL import Image as PILImage
                 fallback_desc = _build_fallback_prompt(story_text, story_idx, scene_idx % 2, news_analyses)
@@ -693,47 +647,48 @@ try:
                     dst_path = image_folder / dst_filename
                     shutil.copy2(src_path, dst_path)
                     generated_images.append(str(dst_path))
-                    print(f"    ✅ Retry succeeded: {dst_filename}")
+                    log.debug("pixel_art.retry_success", file=dst_filename)
                 else:
                     placeholder = PILImage.new('RGB', (1088, 1152), (10, 5, 25))
                     placeholder_path = image_folder / f"{scene_name}_placeholder.png"
                     placeholder.save(str(placeholder_path))
                     generated_images.append(str(placeholder_path))
+                    log.warning("pixel_art.placeholder", scene=scene_name)
 
         if len(generated_images) < 6:
             while len(generated_images) < 6:
                 generated_images.append(generated_images[-1])
 
-        print(f"\n✅ Generated {len(generated_images)} synced images")
+        log.info("pixel_art.complete", images=len(generated_images))
         _save_checkpoint("pixel_art", project_folder, {"image_count": len(generated_images)})
         _save_to_postgres("pixel_art", project_id, {"image_count": len(generated_images)})
 
 except Exception as e:
-    print(f"❌ Pixel art generation failed: {e}")
+    log.error("pixel_art.failed", error=str(e))
     import traceback
     traceback.print_exc()
     generated_images = []
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="pixel_art", duration_s=round(_step_duration, 2), images=len(generated_images))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 6: VIDEO FOOTAGE (SKIP — unchanged)
 # ══════════════════════════════════════════════════════════════════════════
-print("\n🎥 STEP 6: VIDEO FOOTAGE (OPTIONAL)")
-print("-" * 40)
-print("⏭️  Skipping - using pixel art only")
+log.info("step.skip", step="video_footage", reason="using_pixel_art_only")
 downloaded_files = []
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 7: VOICE GENERATION (unchanged)
 # ══════════════════════════════════════════════════════════════════════════
-print("\n🎤 STEP 7: VOICE GENERATION")
-print("-" * 40)
+log.info("step.start", step="voice_generation")
+_step_start = time.time()
 
 voice_file = None
 tts_result = {}
 try:
-    print("Generating Masker voiceover...")
     tts_result = generate_voiceover(full_script, "authoritative")
     
     if tts_result.get('success'):
@@ -742,25 +697,27 @@ try:
         dst_audio = project_folder / "voiceover.mp3"
         shutil.copy2(src_audio, dst_audio)
         
-        print(f"✅ Voiceover: {dst_audio.name}")
-        print(f"  Duration: ~{tts_result.get('estimated_duration_seconds', 0)}s")
+        log.info("voice.complete", duration_s=tts_result.get('estimated_duration_seconds', 0))
         voice_file = str(dst_audio)
         _save_checkpoint("tts", project_folder, {"voice_duration": tts_result.get('estimated_duration_seconds', 0)})
         _save_to_postgres("tts", project_id, {"voice_duration": tts_result.get('estimated_duration_seconds', 0)})
     else:
-        print(f"❌ Voice generation failed")
+        log.error("voice.failed", reason="tts_returned_failure")
 except Exception as e:
-    print(f"❌ Voice generation failed: {e}")
+    log.error("voice.exception", error=str(e))
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="voice_generation", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 8: VIDEO ASSEMBLY (unchanged — complex timeline logic)
 # ══════════════════════════════════════════════════════════════════════════
-print("\n🎬 STEP 8: VIDEO ASSEMBLY")
-print("-" * 40)
+log.info("step.start", step="video_assembly")
+_step_start = time.time()
 
 if not voice_file or not generated_images:
-    print("❌ Missing required assets (voice or images)")
+    log.error("assembly.missing_assets", has_voice=bool(voice_file), has_images=bool(generated_images))
     exit(1)
 
 try:
@@ -773,18 +730,15 @@ try:
         total_dur = word_timestamps[-1].get('end', tts_result.get('estimated_duration_seconds', 90))
     else:
         total_dur = tts_result.get('estimated_duration_seconds', 90)
-    print(f"  Audio duration: {total_dur:.1f}s")
+    log.info("assembly.audio_duration", duration_s=round(total_dur, 1))
     
-    # ── Scene timestamp logic (same as old pipeline) ──
     scene_timestamps = None
     segment_timeline = script.get('segment_timeline', [])
     
     if segment_timeline and word_timestamps:
-        # Import the fuzzy matching logic from old pipeline (same code)
         num_images = len(generated_images)
         image_times = [{'start': None, 'end': None} for _ in range(num_images)]
         
-        # Strip dead segments
         stripped_greeting = script.get('greeting', '')
         cleaned_timeline = []
         for seg in segment_timeline:
@@ -857,7 +811,6 @@ try:
             image_times[-1]['end'] = max(image_times[-1]['end'], total_dur)
             image_times[0]['start'] = 0
         
-        # Bridge gaps
         for i in range(len(image_times) - 1):
             gap = image_times[i + 1]['start'] - image_times[i]['end']
             if gap > 0.1:
@@ -865,7 +818,6 @@ try:
                 image_times[i]['end'] = split_point
                 image_times[i + 1]['start'] = split_point
         
-        # Per-story image balancing
         num_stories = num_images // 2
         for story_i in range(num_stories):
             img_a = story_i * 2
@@ -884,7 +836,6 @@ try:
                 image_times[img_a]['end'] = target_split
                 image_times[img_b]['start'] = target_split
         
-        # Pre-roll offset
         PREROLL_OFFSET = 1.0
         for i in range(1, len(image_times)):
             new_start = max(0, image_times[i]['start'] - PREROLL_OFFSET)
@@ -900,7 +851,7 @@ try:
         hooks = [s.get('part_1_narration', s.get('mini_hook', '')) for s in script.get('stories', [])]
         hook_text = hooks[-1] if hooks else ''
     
-    hook_card_text = None  # Disabled — cut straight to content
+    hook_card_text = None
     
     assembly_result = build_split_video(
         audio_path=voice_file,
@@ -915,11 +866,9 @@ try:
     
     if assembly_result.get('success'):
         final_video_path = assembly_result.get('path')
-        print(f"✅ VIDEO CREATED: {final_video_path}")
-        print(f"  Duration: {assembly_result.get('duration_seconds')}s")
-        print(f"  Size: {assembly_result.get('file_size_mb')}MB")
+        log.info("assembly.complete", video=final_video_path, duration_s=assembly_result.get('duration_seconds'), size_mb=assembly_result.get('file_size_mb'))
     else:
-        print(f"❌ Video assembly failed: {assembly_result.get('error')}")
+        log.error("assembly.failed", error=assembly_result.get('error'))
         final_video_path = None
     
     if final_video_path:
@@ -930,17 +879,20 @@ try:
         })
 
 except Exception as e:
-    print(f"❌ Video assembly failed: {e}")
+    log.error("assembly.exception", error=str(e))
     import traceback
     traceback.print_exc()
     final_video_path = None
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="video_assembly", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 9: PLATFORM METADATA (unchanged)
 # ══════════════════════════════════════════════════════════════════════════
-print("\n📋 STEP 9: PLATFORM METADATA GENERATION")
-print("-" * 40)
+log.info("step.start", step="platform_metadata")
+_step_start = time.time()
 
 platform_metadata = {}
 try:
@@ -952,16 +904,18 @@ try:
     metadata_path = project_folder / 'platform_metadata.json'
     with open(metadata_path, 'w', encoding='utf-8') as f:
         json.dump(platform_metadata, f, indent=2, ensure_ascii=False)
-    print(f"✅ Platform metadata generated")
+    log.info("platform_metadata.complete")
 except Exception as e:
-    print(f"⚠️  Platform metadata generation failed: {e}")
+    log.warning("platform_metadata.failed", error=str(e))
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="platform_metadata", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 10: PROJECT SUMMARY + PostgreSQL save + Vector topic tracking
 # ══════════════════════════════════════════════════════════════════════════
-print("\n📋 STEP 10: PROJECT SUMMARY")
-print("-" * 40)
+log.info("step.start", step="project_summary")
 
 manifest = {
     'project_id': project_id,
@@ -995,61 +949,44 @@ manifest_path = project_folder / "manifest.json"
 with open(manifest_path, 'w', encoding='utf-8') as f:
     json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-print(f"✅ Manifest saved: {manifest_path}")
+log.info("manifest.saved", path=str(manifest_path))
 
 # ── Track video for category rotation (unchanged) ──
 try:
-    from redfish.category_rotation import CategoryRotation
-    rotation = CategoryRotation()
-    for idx, article in enumerate(articles):
-        matched_categories = rotation.detect_article_categories(article)
-        category = matched_categories[0] if matched_categories else "other"
-        region = rotation._detect_region_from_title(article.get('title', ''))
-        analysis = news_analyses[idx] if idx < len(news_analyses) else {}
-        rotation.track_video_generated(
-            topic=analysis.get('topic', 'Unknown'),
-            category=category,
-            region=region,
-            article_title=article.get('title', 'Unknown')
-        )
-        print(f"✅ Story {idx+1} tracked: {category} / {region}")
+    from redfish.category_rotation import CategoryTracker
+    tracker = CategoryTracker()
+    topic_list = [a.get('topic', '') for a in news_analyses]
+    tracker.record_topics(topic_list)
+    log.debug("category_rotation.recorded", topics=topic_list)
 except Exception as e:
-    print(f"⚠️  Video tracking failed: {e}")
+    log.warning("category_rotation.failed", error=str(e))
 
-# ── Save topics to vector store for future dedup (NEW) ──
-if _dedup_available:
-    try:
-        from brain.memory.vector_store import VideoTopicStore
-        store = VideoTopicStore()
-        for idx, analysis in enumerate(news_analyses):
-            topic_text = analysis.get('topic', '')
-            if topic_text:
-                store.store_topic(
-                    topic=topic_text,
-                    metadata={
-                        'project_id': project_id,
-                        'impact_score': analysis.get('impact_score', 0),
-                        'category': category if 'category' in dir() else 'unknown',
-                    }
-                )
-                print(f"  📌 Stored topic vector: {topic_text[:50]}...")
-    except Exception as e:
-        print(f"  ⚠️ Vector topic storage failed: {e}")
+# ── Update PostgreSQL status to completed ──
+_save_to_postgres("completed", project_id, {"manifest_path": str(manifest_path)})
 
-# ── Final PostgreSQL update ──
-_save_to_postgres("complete", project_id, {
-    "status": "completed" if final_video_path else "failed",
-    "video_path": str(final_video_path) if final_video_path else None,
-})
+# ── Store topic vectors for future dedup (Phase 5 integration) ──
+try:
+    from brain.memory.vector_store import VideoTopicStore
+    store = VideoTopicStore()
+    for i, analysis in enumerate(news_analyses):
+        topic = analysis.get('topic', '')
+        if topic:
+            store.store_topic(
+                topic_text=topic,
+                metadata={"project_id": project_id, "impact_score": analysis.get('impact_score', 0)}
+            )
+    log.info("vector_topics.stored", count=len(news_analyses))
+except Exception as e:
+    log.warning("vector_topics.failed", error=str(e))
 
-print("\n🎉 COMPLETE! (V2 Pipeline)")
-print("=" * 60)
-print(f"📁 PROJECT FOLDER: {project_folder}")
-print(f"📊 CONTENTS:")
-print(f"  📹 Video: {video_filename if final_video_path else 'FAILED'}")
-print(f"  📰 Stories: {len(news_analyses)} news items")
-print(f"  🎨 Images: {len(generated_images)} files")
-print(f"  🎤 Audio: voiceover.mp3")
-print(f"  📋 Manifest: manifest.json")
-print(f"\n🎬 FINAL VIDEO: {final_video_path if final_video_path else 'NOT CREATED'}")
-print("=" * 60)
+
+# ══════════════════════════════════════════════════════════════════════════
+# PIPELINE COMPLETE
+# ══════════════════════════════════════════════════════════════════════════
+log.info("pipeline.complete", 
+    project_id=project_id,
+    video=final_video_path or "FAILED",
+    duration_s=assembly_result.get('duration_seconds') if final_video_path else 0,
+    images=len(generated_images),
+    words=script.get('word_count', 0),
+)
