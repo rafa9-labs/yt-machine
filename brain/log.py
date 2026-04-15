@@ -220,36 +220,23 @@ def configure():
         console_renderer = ConsoleRenderer()
         file_renderer = ConsoleRenderer()     # File also human-readable in dev
     
-    # Wrap structlog processors around standard logging Formatter
-    # WHY ProcessorFormatter? It bridges structlog and standard logging.
-    # LangChain uses `logging.getLogger("langchain")`. ProcessorFormatter
-    # intercepts those records and feeds them through our structlog processors.
-    shared_processors = [
-        _add_timestamp,
-        _add_log_level,
-        _add_caller_info,
-        _filter_redacted,
-    ]
+    # Configure standard logging handlers with simple formatters
+    # WHY simple formatters? structlog 25.x changed ProcessorFormatter's API.
+    # Using standard logging.Formatter is compatible across ALL structlog versions.
+    # Standard logging (LangChain, FastAPI, Uvicorn) → formatted normally.
+    # structlog loggers → processed through structlog's own pipeline.
     
-    console_handler.setFormatter(
-        ProcessorFormatter(
-            processors=[
-                structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-            ],
-            foreign_pre_chain=shared_processors,
-            renderer=console_renderer,
-        )
+    console_fmt = logging.Formatter(
+        "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_fmt = logging.Formatter(
+        "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     
-    file_handler.setFormatter(
-        ProcessorFormatter(
-            processors=[
-                structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-            ],
-            foreign_pre_chain=shared_processors,
-            renderer=file_renderer,
-        )
-    )
+    console_handler.setFormatter(console_fmt)
+    file_handler.setFormatter(file_fmt)
     
     # Configure root logger
     root_logger = logging.getLogger()
@@ -258,6 +245,14 @@ def configure():
     root_logger.addHandler(file_handler)
     
     # ── Configure structlog itself ──
+    # WHY these processors? They run in order for each log.info()/error() call:
+    #   1. add_log_level → attaches "info"/"error"/"warning" to the event dict
+    #   2. PositionalArgumentsFormatter → handles positional args (like stdlib)
+    #   3. StackInfoRenderer → renders stack traces as strings
+    #   4. format_exc_info → converts exc_info tuples to strings
+    #   5. ConsoleRenderer/JSONRenderer → final output formatting
+    final_renderer = file_renderer if log_format == "json" else console_renderer
+    
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
@@ -266,7 +261,7 @@ def configure():
             _filter_redacted,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+            final_renderer,
         ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
