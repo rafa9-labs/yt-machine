@@ -190,14 +190,32 @@ class HealthResponse(BaseModel):
 # be handled while the video generates.
 
 async def _run_generation(job_id: str):
-    """Run the full video generation pipeline in a background thread."""
+    """Run the full video generation pipeline in a background thread.
+    
+    PIPELINE VERSION TOGGLE (Phase 7 safety mechanism):
+    ───────────────────────────────────────────────────
+    Set PIPELINE_VERSION in .env to control which pipeline runs:
+      - "v2" → generate_v2.py (modern stack: async scraper, LangChain, pgvector)
+      - "v1" → generate_complete_video.py (old reliable pipeline — instant rollback)
+    
+    WHY? If the new pipeline has any issues, change ONE line in .env and
+    restart. No code changes needed. The old pipeline is NEVER deleted.
+    
+    This is the "feature flag" pattern used in production systems:
+    https://martinfowler.com/articles/feature-toggles.html
+    """
     global _generation_status
-    logger.info(f"🎬 Starting video generation: {job_id}")
+    
+    # ── Pipeline version selection ──
+    pipeline_version = os.getenv("PIPELINE_VERSION", "v1").lower()
+    pipeline_script = "generate_v2.py" if pipeline_version == "v2" else "generate_complete_video.py"
+    
+    logger.info(f"🎬 Starting video generation: {job_id} (pipeline={pipeline_version}, script={pipeline_script})")
 
     def _blocking_run():
         """This runs in a thread pool — blocking is OK here."""
         return subprocess.run(
-            [sys.executable, "generate_complete_video.py"],
+            [sys.executable, pipeline_script],
             capture_output=True,
             text=True,
             timeout=600,  # 10 minute timeout
