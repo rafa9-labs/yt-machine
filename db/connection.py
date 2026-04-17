@@ -114,6 +114,13 @@ def init_db():
     conn = get_connection()
     cur = conn.cursor()
 
+    # ── ENABLE PGVECTOR EXTENSION ──
+    # WHY? PostgreSQL doesn't support vector operations natively.
+    # The pgvector extension adds the VECTOR column type and similarity
+    # operators (<=>, <->, <=>) needed for semantic search.
+    # Must be run BEFORE creating any tables with VECTOR columns.
+    cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+
     # ── VIDEOS TABLE ──
     # This replaces your videos.json file
     cur.execute("""
@@ -240,7 +247,7 @@ def init_db():
                 ON DELETE CASCADE,
             topic TEXT NOT NULL,
             category TEXT NOT NULL,
-            embedding VECTOR(1536),
+            embedding VECTOR(768),
             created_at TIMESTAMP DEFAULT NOW()
         );
     """)

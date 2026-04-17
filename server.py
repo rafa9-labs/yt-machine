@@ -193,28 +193,69 @@ class HealthResponse(BaseModel):
 # thread, yielding control back to the event loop. Other requests can still
 # be handled while the video generates.
 
+def _send_to_telegram(job_id: str, stdout: str) -> dict:
+    """
+    Find the latest generated video and send it to Telegram.
+    Called automatically after successful video generation.
+    If TELEGRAM_BOT_TOKEN is not configured, skips silently.
+    """
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+
+    if not bot_token or not chat_id:
+        logger.info("📱 Telegram not configured (TELEGRAM_BOT_TOKEN/CHAT_ID) — skipping auto-send")
+        return {"skipped": True, "reason": "not configured"}
+
+    try:
+        from tools.telegram_sender import send_video_to_telegram
+
+        # Find the video file for this job
+        project_dir = Path(__file__).parent / "output" / "projects" / job_id
+        if not project_dir.exists():
+            # Fallback: find latest video
+            from publish_video import find_latest_video
+            latest = find_latest_video()
+            video_path = latest.get("video_path")
+        else:
+            # Look for the video in the job's project directory
+            video_files = list(project_dir.glob(f"{job_id}.mp4"))
+            # Exclude .remux.mp4 files
+            video_files = [v for v in video_files if ".remux" not in v.name]
+            if not video_files:
+                return {"skipped": True, "reason": f"No video found in {project_dir}"}
+            video_path = str(video_files[0])
+
+        logger.info(f"📱 Sending video to Telegram: {video_path}")
+
+        result = send_video_to_telegram(
+            video_path=video_path,
+            caption=f"📹 Masker Daily News — {datetime.now().strftime('%b %d, %Y')}",
+        )
+
+        if result.get("success"):
+            logger.info(f"📱 ✅ Video sent to Telegram (msg_id={result.get('message_id')})")
+        else:
+            logger.warning(f"📱 ❌ Telegram send failed: {result.get('error')}")
+
+        return result
+
+    except Exception as e:
+        logger.warning(f"📱 Telegram auto-send error: {e}")
+        return {"error": str(e)}
+
+
 async def _run_generation(job_id: str):
-    """Run the full video generation pipeline in a background thread.
+    """Run the unified video generation pipeline in a background thread.
     
-    PIPELINE VERSION TOGGLE (Phase 7 safety mechanism):
-    ───────────────────────────────────────────────────
-    Set PIPELINE_VERSION in .env to control which pipeline runs:
-      - "v2" → generate_v2.py (modern stack: async scraper, LangChain, pgvector)
-      - "v1" → generate_complete_video.py (old reliable pipeline — instant rollback)
-    
-    WHY? If the new pipeline has any issues, change ONE line in .env and
-    restart. No code changes needed. The old pipeline is NEVER deleted.
-    
-    This is the "feature flag" pattern used in production systems:
-    https://martinfowler.com/articles/feature-toggles.html
+    The v1/v2 pipelines have been merged into generate_complete_video.py.
+    All features (async scraper, LangChain, pgvector, Telegram) are built-in
+    with graceful fallbacks. No pipeline version toggle needed.
     """
     global _generation_status
     
-    # ── Pipeline version selection ──
-    pipeline_version = os.getenv("PIPELINE_VERSION", "v1").lower()
-    pipeline_script = "generate_v2.py" if pipeline_version == "v2" else "generate_complete_video.py"
+    pipeline_script = "generate_complete_video.py"
     
-    logger.info(f"🎬 Starting video generation: {job_id} (pipeline={pipeline_version}, script={pipeline_script})")
+    logger.info(f"🎬 Starting video generation: {job_id} (pipeline=unified)")
 
     def _blocking_run():
         """This runs in a thread pool — blocking is OK here."""
@@ -233,10 +274,18 @@ async def _run_generation(job_id: str):
 
         if result.returncode == 0:
             logger.info(f"✅ Video generation complete: {job_id}")
+
+            # ── Auto-send to Telegram ──
+            telegram_result = _send_to_telegram(job_id, result.stdout)
+
             _generation_status.update({
                 "status": "completed",
                 "last_run": datetime.now().isoformat(),
-                "last_result": {"returncode": 0, "stdout": result.stdout[-500:]},
+                "last_result": {
+                    "returncode": 0,
+                    "stdout": result.stdout[-500:],
+                    "telegram": telegram_result,
+                },
                 "current_job": None,
             })
         else:

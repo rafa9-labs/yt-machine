@@ -144,14 +144,22 @@ class LangChainInterface:
     # Prompt Template Builder
     # ──────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _escape_for_template(text: str) -> str:
+        """Escape literal curly braces for LangChain ChatPromptTemplate.
+        
+        Doubles all { and } so Python string formatting treats them as literals.
+        Only called when building LangChain templates — raw LLM path uses unescaped text.
+        """
+        return text.replace('{', '{{').replace('}', '}}')
+
     def get_prompt(self, task_name: str) -> ChatPromptTemplate:
         """
         Build a ChatPromptTemplate from your existing system_prompts.json config.
-
-        WHY: Separates prompt structure from data. No more f-string mixing.
+        Escapes literal braces in system prompt so they don't clash with template variables.
         """
         prompt_config = self.config["prompts"][task_name]
-        system_prompt = prompt_config["system_prompt"]
+        system_prompt = self._escape_for_template(prompt_config["system_prompt"])
 
         return ChatPromptTemplate.from_messages([
             ("system", system_prompt),
@@ -200,18 +208,14 @@ class LangChainInterface:
         """
         config = self.get_prompt_config(task_name)
 
-        # Step 1: Create the output parser for this Pydantic model.
         parser = PydanticOutputParser(pydantic_object=pydantic_model)
 
-        # Step 2: Append format instructions to system prompt.
-        # The parser generates instructions that tell the LLM the exact
-        # JSON schema it should output — matching your Pydantic model.
-        system_with_format = config["system_prompt"] + "\n\n{format_instructions}"
+        escaped_system = self._escape_for_template(config["system_prompt"])
 
         prompt = ChatPromptTemplate.from_messages([
-            ("system", system_with_format),
+            ("system", escaped_system + "\n\n{format_instructions}"),
             ("human", "{input_text}"),
-        ])
+        ]).partial(format_instructions=parser.get_format_instructions())
 
         # Step 3: Create the LLM with fallback support.
         llm = self.get_llm_with_fallback(
@@ -238,8 +242,10 @@ class LangChainInterface:
         """
         config = self.get_prompt_config(task_name)
 
+        escaped_system = self._escape_for_template(config["system_prompt"])
+
         prompt = ChatPromptTemplate.from_messages([
-            ("system", config["system_prompt"]),
+            ("system", escaped_system),
             ("human", "{input_text}"),
         ])
 
