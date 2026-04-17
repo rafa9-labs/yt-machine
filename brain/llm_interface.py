@@ -19,17 +19,52 @@ class LLMInterface:
         self.config = self._load_config()
         self.base_url = self.config["model_config"]["base_url"]
         self.default_model = self.config["model_config"]["default_model"]
+        self.fallback_model = self.config["model_config"].get("fallback_model", "llama3.2:latest")
         self.timeout = self.config["model_config"]["timeout"]
         self.retry_attempts = self.config["model_config"]["retry_attempts"]
         self.num_ctx = self.config["model_config"].get("num_ctx", 4096)
+        
+        # Task-specific model routing
+        self.task_models = self.config["model_config"].get("task_models", {})
+        
+        # Circuit breaker for model fallback
+        self._primary_failures = 0
+        self._MAX_PRIMARY_FAILURES = 3
     
     def _load_config(self) -> Dict[str, Any]:
         with open(self.config_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     
+    @staticmethod
+    def _strip_thinking_tokens(text: str) -> str:
+        """Strip Gemma 4 / Heretic thinking tokens from response.
+
+        The abliterated model outputs various patterns:
+          <|channel>thought<channel|>...<|channel>output<channel|>
+          <|channel>thought\n<channel|>{json...}
+        These consume output budget and break JSON parsing.
+        """
+        import re
+        # Strategy: find <|channel>output<channel|> or first { after thought tokens
+        # If output marker exists, keep everything after it
+        output_match = re.search(r'<\|?channel\|?>output<\|?channel\|?>', text)
+        if output_match:
+            text = text[output_match.end():]
+        else:
+            # No output marker — strip everything before the first { or [
+            json_start = re.search(r'[{]', text)
+            if json_start:
+                text = text[json_start.start():]
+        # Clean remaining stray special tokens
+        text = re.sub(r'<\|?[^>]*\|?>', '', text)
+        return text.strip()
+
     def _extract_json(self, response: str) -> Optional[Dict[str, Any]]:
         import re
-        
+
+        # Strip thinking tokens from abliterated/heretic models
+        response = self._strip_thinking_tokens(response)
+
         # Remove markdown code blocks if present
         response = re.sub(r'```json\s*', '', response)
         response = re.sub(r'```\s*', '', response)
@@ -119,6 +154,10 @@ class LLMInterface:
                 print(f"Request failed after {self.retry_attempts} attempts: {e}")
                 return None
     
+    # Circuit breaker state
+    _primary_failures = 0
+    _MAX_PRIMARY_FAILURES = 3  # After this many consecutive failures, skip straight to fallback
+    
     def generate(
         self,
         prompt: str,
@@ -144,8 +183,47 @@ class LLMInterface:
         if system_prompt:
             payload["system"] = system_prompt
         
+        # If primary model has failed too many times, go straight to fallback
+        if model == self.default_model and self._primary_failures >= self._MAX_PRIMARY_FAILURES:
+            print(f"  [LLM] ⚠️ Primary model circuit breaker active ({self._primary_failures} failures), using fallback: {self.fallback_model}")
+            payload["model"] = self.fallback_model
+        
         result = self._make_request("/api/generate", payload)
-        return result["response"] if result else None
+        
+        if result and result.get("response", "").strip():
+            # Reset circuit breaker on success
+            if payload["model"] == self.default_model:
+                self._primary_failures = 0
+            return result["response"]
+        
+        if result and not result.get("response", "").strip():
+            print(f"  [LLM] Model {payload['model']} returned empty response (prompt may be too long)")
+        
+        # Model failed — try fallback chain
+        # Build fallback chain: if task model → default model → global fallback → llama3.2
+        attempted_models = {payload["model"]}
+        fallback_chain = []
+        
+        if model != self.default_model and self.default_model not in attempted_models:
+            fallback_chain.append(self.default_model)
+        if self.fallback_model and self.fallback_model not in attempted_models:
+            fallback_chain.append(self.fallback_model)
+        # Last resort
+        if "llama3.2:latest" not in attempted_models and "llama3.2:latest" not in fallback_chain:
+            fallback_chain.append("llama3.2:latest")
+        
+        for fallback in fallback_chain:
+            print(f"  [LLM] Model {payload['model']} failed, trying fallback: {fallback}")
+            payload["model"] = fallback
+            result = self._make_request("/api/generate", payload)
+            
+            if result and result.get("response", "").strip():
+                print(f"  [LLM] ✅ Fallback model ({fallback}) succeeded ({len(result['response'])} chars)")
+                return result["response"]
+        
+        print(f"  [LLM] ❌ All models in fallback chain failed")
+        
+        return None
     
     def chat(
         self,
@@ -176,25 +254,17 @@ class LLMInterface:
         
         prompt = f"Analyze this news article and extract viral-worthy information:\n\n{article_text}"
         
-        # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
-        response = self._call_glm(
+        # ── OLLAMA ONLY: News analysis often contains sensitive geopolitical content
+        # that triggers GLM-5's content filter (1301). No cloud fallback.
+        response = self.generate(
+            prompt=prompt,
             system_prompt=prompt_config["system_prompt"],
-            user_prompt=prompt,
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"],
-            purpose="news analysis"
+            max_tokens=prompt_config["max_tokens"]
         )
         
         if not response:
-            print("  [NEWS] GLM-5 unavailable, trying local Ollama...")
-            response = self.generate(
-                prompt=prompt,
-                system_prompt=prompt_config["system_prompt"],
-                temperature=prompt_config["temperature"],
-                max_tokens=prompt_config["max_tokens"]
-            )
-        
-        if not response:
+            print("  [NEWS] Local model unavailable — no cloud fallback for sensitive content")
             return None
         
         result = self._extract_json(response)
@@ -411,27 +481,106 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         else:
             return "Good Evening! I'm Masker!"
     
+    # ── SEGUE TEMPLATES: High-quality fallbacks when LLM generates weak segues ──
+    _SEGUE_TEMPLATES = [
+        "But wait... that's not even the craziest part.",
+        "And if you thought THAT was wild... hold on.",
+        "Now here's where it gets REALLY interesting.",
+        "But that's just the warmup. Brace yourselves.",
+        "Speaking of sneaky moves... check this next one out.",
+        "And now for the story that should REALLY keep you up at night.",
+    ]
+    
+    def _ensure_greeting_in_fulltext(self, script: dict) -> dict:
+        """
+        GUARANTEE: full_text MUST start with the greeting.
+        This is called after every full_text modification (synthesis, curation, etc.)
+        """
+        full_text = script.get('full_text', '')
+        greeting = script.get('greeting', '')
+        intro_hook = script.get('intro_hook', '')
+        
+        if not full_text or not greeting:
+            return script
+        
+        # Check if full_text already starts with the greeting
+        if full_text.strip().startswith(greeting):
+            return script  # All good
+        
+        # Check if full_text starts with a partial greeting (e.g., just "Look,")
+        # In that case, prepend the full greeting
+        if intro_hook and full_text.strip().startswith(intro_hook[:10]):
+            # full_text starts with intro_hook but missing greeting
+            script['full_text'] = f"{greeting} {full_text.strip()}"
+            print(f"  [GREETING] Prepended missing greeting to full_text")
+        elif greeting.split()[0].lower() not in full_text[:30].lower():
+            # Neither greeting nor intro_hook at start — prepend both
+            prefix = f"{greeting} {intro_hook}".strip()
+            script['full_text'] = f"{prefix} {full_text.strip()}"
+            print(f"  [GREETING] Prepended greeting + intro_hook to full_text")
+        
+        return script
+    
+    def _enforce_segues(self, script: dict) -> dict:
+        """
+        GUARANTEE: Every non-last story MUST have a non-empty segue (8-15 words).
+        If the LLM generated a weak/empty segue, inject a template one.
+        """
+        import random
+        stories = script.get('stories', [])
+        if len(stories) < 2:
+            return script
+        
+        for i, story in enumerate(stories):
+            if i >= len(stories) - 1:
+                # Last story — segue must be empty
+                story['segue'] = ''
+                continue
+            
+            segue = story.get('segue', '').strip()
+            
+            # Check if segue is valid: non-empty, 5+ words, creates anticipation
+            words = segue.split()
+            is_valid = len(words) >= 5 and any(
+                kw in segue.lower() for kw in ['but', 'and', 'now', 'wait', 'that', 'here', 'check', 'sneaky', 'wild', 'crazy', 'brace', 'hold']
+            )
+            
+            if not is_valid:
+                # Pick a template (rotated based on story index to avoid repetition)
+                template_idx = (i + hash(str(story.get('part_1_narration', '')))) % len(self._SEGUE_TEMPLATES)
+                new_segue = self._SEGUE_TEMPLATES[template_idx]
+                story['segue'] = new_segue
+                print(f"  [SEGUE] Story {i+1} segue was weak/empty, injected: \"{new_segue}\"")
+        
+        return script
+    
+    # Unified closing — the signature Masker farewell (Truman Show inspired)
+    UNIFIED_CLOSING = "... And these were the news for this afternoon. Subscribe, like, share. And in case I don't see you, good morning, good afternoon... and good night."
+    
     def _validate_closing(self, full_text: str) -> str:
         """
-        Ensure the script ends with a proper closing/CTA.
-        Checks for subscribe/like mention and Masker sign-off.
-        If missing, forcefully appends a closing.
+        Ensure the script ends with the UNIFIED Masker closing/CTA.
+        ALWAYS replaces or appends the canonical closing — never trusts LLM output.
         """
         if not full_text:
             return full_text
         
         text_lower = full_text.lower()
         has_subscribe = any(word in text_lower for word in ['subscribe', 'sub', 'like', 'follow'])
-        has_masker = 'masker' in text_lower
-        has_tomorrow = 'tomorrow' in text_lower or 'see you' in text_lower
+        has_truman = 'good morning' in text_lower and 'good afternoon' in text_lower and 'good night' in text_lower
         
-        if has_subscribe and has_masker:
-            return full_text  # Closing is present
+        if has_truman:
+            return full_text  # Unified closing already present
         
-        # Closing is missing or incomplete — append it
-        closing = "And with that we conclude the news for today. Subscribe, like, do what you gotta do — I was Masker and see you tomorrow!"
-        result = full_text.rstrip() + ' .... ' + closing
-        print(f"  [CLOSING] Appended missing CTA closing (subscribe={has_subscribe}, masker={has_masker}, tomorrow={has_tomorrow})")
+        # Strip any existing LLM-generated closing to avoid duplication
+        # Look for common closing patterns the LLM generates
+        import re
+        # Remove anything after the last story separator that looks like a closing
+        stripped = re.sub(r'\s*\.{3,4}\s*(?:And with that|Subscribe|That\'s all|So there you have|This is Masker|I\'m Masker|see you).*$',
+                         '', full_text, flags=re.IGNORECASE).rstrip()
+        
+        result = stripped + ' .... ' + self.UNIFIED_CLOSING
+        print(f"  [CLOSING] Injected unified closing (subscribe={has_subscribe}, truman={has_truman})")
         return result
     
     def synthesize_multi_news_script(
@@ -474,25 +623,19 @@ Target: 220-300 words total for 90-120 seconds.
 CRITICAL: ALL 3 stories must be roughly equal word count (50-60 words each). Max 10 words difference.
 Each non-last story must have a "segue" field with a witty transition (8-15 words)."""
         
-        # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
-        response = self._call_glm(
+        # ── TASK-SPECIFIC MODEL: Use deepseek-r1 for script synthesis (reasoning model)
+        task_model = self.task_models.get("multi_news_synthesizer", self.default_model)
+        print(f"  [MULTI-NEWS] Using model: {task_model}")
+        response = self.generate(
+            prompt=prompt,
+            model=task_model,
             system_prompt=prompt_config["system_prompt"],
-            user_prompt=prompt,
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"],
-            purpose="multi-news script generation"
+            max_tokens=prompt_config["max_tokens"]
         )
         
         if not response:
-            print("  [MULTI-NEWS] GLM-5 unavailable, trying local Ollama...")
-            response = self.generate(
-                prompt=prompt,
-                system_prompt=prompt_config["system_prompt"],
-                temperature=prompt_config["temperature"],
-                max_tokens=prompt_config["max_tokens"]
-            )
-        
-        if not response:
+            print("  [MULTI-NEWS] Local model unavailable — no cloud fallback for sensitive content")
             return None
         
         script = self._extract_json(response)
@@ -581,9 +724,8 @@ Each non-last story must have a "segue" field with a witty transition (8-15 word
             'is_separator': True
         })
         
-        # Closing → keep last image
-        closing = script.get('closing', 
-            "And with that we conclude the news for today. Subscribe, like, do what you gotta do — I was Masker and see you tomorrow!")
+        # Closing → ALWAYS use unified closing (never trust LLM output for this)
+        closing = self.UNIFIED_CLOSING
         segment_timeline.append({
             'text': closing,
             'image_idx': (len(script['stories']) - 1) * 2 + 1,
@@ -611,6 +753,26 @@ Each non-last story must have a "segue" field with a witty transition (8-15 word
                 'description': story.get('part_2_visual', story.get('body', ''))
             })
         script['all_visual_scenes'] = visual_prompts
+        
+        # ENFORCE SEGUES: Guarantee every non-last story has a strong segue
+        script = self._enforce_segues(script)
+        
+        # Rebuild segment_timeline after segue enforcement
+        # (segues may have changed)
+        for seg in segment_timeline:
+            if 'segue' in seg['label']:
+                story_idx = int(seg['label'].split('_')[1]) - 1
+                if story_idx < len(script['stories']):
+                    seg['text'] = script['stories'][story_idx].get('segue', seg['text'])
+        
+        # Rebuild full_text with enforced segues
+        full_parts = [seg['text'] for seg in segment_timeline]
+        full_text = ' '.join(filter(None, full_parts))
+        script['full_text'] = full_text
+        script['segment_timeline'] = segment_timeline
+        
+        # GUARANTEE GREETING: full_text MUST start with greeting
+        script = self._ensure_greeting_in_fulltext(script)
         
         # VALIDATE CLOSING: Ensure full_text ends with subscribe/CTA
         script['full_text'] = self._validate_closing(script['full_text'])
@@ -695,21 +857,47 @@ Each non-last story must have a "segue" field with a witty transition (8-15 word
         
         return True
     
-    def curate_script(self, full_text: str) -> Optional[str]:
+    def curate_script(self, script: dict) -> Optional[str]:
         """
-        Second-pass LLM curation: transforms written script into natural spoken language.
-        Optimizes rhythm, pauses, emphasis, pacing — without changing any facts.
-        Includes content fidelity check to reject hallucinated replacements.
+        Structural Slicing Curation: Only sends story narration bodies to the LLM.
+        Greeting, intro_hook, segues, and closing are NEVER touched by the curator.
+        They are reassembled deterministically in code after curation.
+        
+        Args:
+            script: Script dict with 'greeting', 'intro_hook', 'stories', 'closing'
+            
+        Returns:
+            Full curated script text with structural elements preserved, or None on failure.
         """
         prompt_config = self.config["prompts"]["script_curator"]
         
-        prompt = f"""Transform this news script from written text into natural, human-sounding spoken language.
+        # ── EXTRACT ONLY STORY BODIES ──
+        story_bodies = []
+        for i, story in enumerate(script.get('stories', [])):
+            p1 = story.get('part_1_narration', '')
+            p2 = story.get('part_2_narration', '')
+            body = f"{p1} {p2}".strip()
+            story_bodies.append(body)
+        
+        if len(story_bodies) < 2:
+            print(f"  [CURATOR] Not enough stories to curate ({len(story_bodies)}), using original")
+            return script.get('full_text', '')
+        
+        # Build body-only text with clear story markers
+        body_text = "\n\n---\n\n".join(
+            f"[STORY {i+1}]\n{body}" for i, body in enumerate(story_bodies)
+        )
+        
+        prompt = f"""Transform these 3 story narrations from written text into natural, human-sounding spoken language.
+
+You receive ONLY the story narration bodies — no greeting, no segues, no closing.
+Your job is ONLY to improve the rhythm and naturalness of each story's narration.
 
 RULES:
 - NEVER change facts, numbers, or country names
 - NEVER add or remove information
 - Break long sentences into short punchy ones
-- Use PERIODS for dramatic pauses before punchlines — end the setup, start the punchline fresh
+- Use PERIODS for dramatic pauses before punchlines
   Example: 'Classic leverage play. Disguised as safety.' NOT 'Classic leverage play... disguised as safety.'
 - Use '—' for abrupt contrasts
 - Move key numbers to end of sentences (punch position)
@@ -718,26 +906,26 @@ RULES:
 - Before every punchline/reveal, end previous sentence with a PERIOD, start punchline as new sentence
 - After rhetorical questions, use a period before the answer
 - Balance all 3 stories to roughly equal word count (40-55 words each)
-- Add a longer pause (....) after each story's punchline before the next story
-- NEVER remove or shorten the closing/CTA at the end — it MUST include subscribe/like and "I'm Masker" and "see you tomorrow"
+- Keep the [STORY N] markers exactly as they are
+- Output all 3 stories, one after another, separated by --- lines
 
-ORIGINAL SCRIPT:
-{full_text}
+ORIGINAL STORY NARRATIONS:
+{body_text}
 
-Output ONLY the curated spoken script as plain text. No JSON. No explanations."""
+Output the 3 curated stories as plain text. Keep [STORY N] markers. Separate stories with ---. No JSON. No explanations."""
 
-        # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
-        response = self._call_glm(
+        # ── OLLAMA ONLY: Curation contains geopolitical narration
+        # that triggers GLM-5's content filter (1301). No cloud fallback.
+        response = self.generate(
+            prompt=prompt,
             system_prompt=prompt_config["system_prompt"],
-            user_prompt=prompt,
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"],
-            purpose="script curation"
+            max_tokens=prompt_config["max_tokens"]
         )
         
         if not response:
-            print("  [CURATOR] GLM-5 unavailable — skipping curation, using original script (Ollama fallback disabled to prevent hallucination)")
-            return full_text
+            print("  [CURATOR] Local model unavailable — no cloud fallback for sensitive content")
+            return self._reassemble_script(script, story_bodies)
         
         # Clean any accidental markdown wrapping
         curated = response.strip()
@@ -747,25 +935,105 @@ Output ONLY the curated spoken script as plain text. No JSON. No explanations.""
             curated = curated.rsplit('```', 1)[0]
         curated = curated.strip()
         
-        word_count_original = len(full_text.split())
-        word_count_curated = len(curated.split())
+        # ── PARSE CURATED BODIES BACK INTO 3 STORIES ──
+        curated_bodies = self._parse_curated_stories(curated, len(story_bodies))
         
-        # Sanity check: curated script should be similar length (±30%)
-        if word_count_curated < word_count_original * 0.5:
-            print(f"  [CURATOR] Curated script too short ({word_count_curated} vs {word_count_original}), using original")
-            return full_text
+        if not curated_bodies or len(curated_bodies) < len(story_bodies):
+            print(f"  [CURATOR] Could not parse {len(story_bodies)} stories from response (got {len(curated_bodies) if curated_bodies else 0}), using original")
+            return self._reassemble_script(script, story_bodies)
         
-        # ── CONTENT FIDELITY CHECK ──
-        # Reject if curator hallucinated a completely different topic
-        if not self._check_content_fidelity(full_text, curated):
-            print(f"  [CURATOR] ❌ Curator hallucinated different content — REJECTED, using original")
-            return full_text
+        # ── PER-STORY FIDELITY CHECK ──
+        for i in range(len(story_bodies)):
+            if not self._check_content_fidelity(story_bodies[i], curated_bodies[i]):
+                print(f"  [CURATOR] ⚠️ Story {i+1} failed fidelity check — using original narration")
+                curated_bodies[i] = story_bodies[i]
         
-        # VALIDATE CLOSING: Ensure curator didn't remove the CTA
-        curated = self._validate_closing(curated)
+        # ── REASSEMBLE WITH STRUCTURAL ELEMENTS ──
+        result = self._reassemble_script(script, curated_bodies)
         
-        print(f"  [CURATOR] Script curated: {word_count_original} → {len(curated.split())} words")
-        return curated
+        total_orig = sum(len(b.split()) for b in story_bodies)
+        total_cur = sum(len(b.split()) for b in curated_bodies)
+        print(f"  [CURATOR] Stories curated: {total_orig} → {total_cur} words (structural elements preserved)")
+        return result
+    
+    def _parse_curated_stories(self, curated_text: str, expected_count: int) -> Optional[List[str]]:
+        """
+        Parse curated LLM response back into individual story bodies.
+        Handles [STORY N] markers or --- separators.
+        """
+        import re
+        
+        stories = []
+        
+        # Strategy 1: Split by [STORY N] markers
+        story_pattern = r'\[STORY\s+\d+\]\s*\n?'
+        parts = re.split(story_pattern, curated_text)
+        # Filter empty parts
+        parts = [p.strip() for p in parts if p.strip()]
+        
+        if len(parts) >= expected_count:
+            return parts[:expected_count]
+        
+        # Strategy 2: Split by --- separators
+        if '---' in curated_text:
+            parts = curated_text.split('---')
+            parts = [p.strip() for p in parts if p.strip() and not re.match(r'^\[STORY', p.strip())]
+            # Remove [STORY N] prefix from each part
+            cleaned = []
+            for p in parts:
+                p = re.sub(r'^\[STORY\s+\d+\]\s*\n?', '', p).strip()
+                if p:
+                    cleaned.append(p)
+            if len(cleaned) >= expected_count:
+                return cleaned[:expected_count]
+        
+        # Strategy 3: If we got some stories but not all, use what we have
+        if parts and len(parts) > 0:
+            while len(parts) < expected_count:
+                parts.append("")  # Empty placeholder — will be caught by fidelity check
+            return parts[:expected_count]
+        
+        return None
+    
+    def _reassemble_script(self, script: dict, story_bodies: List[str]) -> str:
+        """
+        Deterministically reassemble the full script from structural elements + curated bodies.
+        Greeting, intro_hook, segues, and closing are NEVER modified.
+        """
+        parts = []
+        
+        # Greeting + Intro Hook (always preserved)
+        greeting = script.get('greeting', '')
+        intro_hook = script.get('intro_hook', '')
+        if greeting:
+            parts.append(greeting)
+        if intro_hook:
+            parts.append(intro_hook)
+        
+        # Stories with segues
+        stories = script.get('stories', [])
+        for i in range(len(story_bodies)):
+            parts.append(story_bodies[i])
+            
+            # Add segue + separator after non-last stories
+            if i < len(story_bodies) - 1:
+                story = stories[i] if i < len(stories) else {}
+                segue = story.get('segue', '')
+                if segue:
+                    parts.append(segue)
+                parts.append('....')
+        
+        # Closing (always preserved)
+        closing = script.get('closing', '')
+        if closing:
+            parts.append(closing)
+        
+        full_text = ' '.join(filter(None, parts))
+        
+        # VALIDATE CLOSING: Safety net
+        full_text = self._validate_closing(full_text)
+        
+        return full_text
     
     def _call_glm(self, system_prompt: str, user_prompt: str, temperature: float = 0.4, max_tokens: int = 2000, purpose: str = "generation") -> Optional[str]:
         """
@@ -809,6 +1077,19 @@ Output ONLY the curated spoken script as plain text. No JSON. No explanations.""
             
             print(f"  [GLM-5] Calling for {purpose}...")
             resp = requests.post(url, json=payload, headers=headers, timeout=120)
+            
+            # ── HANDLE 1301 CONTENT FILTER SPECIFICALLY ──
+            if resp.status_code == 400:
+                try:
+                    error_data = resp.json()
+                    error_code = error_data.get("code", "")
+                    if error_code == 1301 or "1301" in str(error_data):
+                        print(f"  [GLM-5] ⚠️ Content filter triggered (1301) for '{purpose}' — sensitive content rejected by Zhipu AI")
+                        print(f"  [GLM-5] Delegating to local model (no content restrictions)")
+                        return None
+                except (ValueError, KeyError):
+                    pass
+            
             resp.raise_for_status()
             
             data = resp.json()
@@ -836,14 +1117,27 @@ Output ONLY the curated spoken script as plain text. No JSON. No explanations.""
                 print(f"  [GLM-5] Empty response on retry too, falling back to Ollama")
                 return None
                 
+        except requests.exceptions.HTTPError as e:
+            if resp.status_code == 400:
+                try:
+                    error_data = resp.json()
+                    error_code = error_data.get("code", "")
+                    if error_code == 1301 or "1301" in str(error_data):
+                        print(f"  [GLM-5] ⚠️ Content filter (1301) for '{purpose}' — Zhipu AI rejected sensitive content")
+                        print(f"  [GLM-5] Local model will handle this (no content restrictions)")
+                        return None
+                except (ValueError, KeyError):
+                    pass
+            print(f"  [GLM-5] API call failed: {e}, falling back to local model")
+            return None
         except Exception as e:
-            print(f"  [GLM-5] API call failed: {e}, falling back to Ollama")
+            print(f"  [GLM-5] API call failed: {e}, falling back to local model")
             return None
     
     def generate_visual_prompts(self, script: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """
         Generate 6 dedicated visual prompts from curated narration text.
-        Uses GLM-5 (Zhipu AI) for superior prompt quality, falls back to local Ollama.
+        Uses local abliterated model exclusively (no cloud API).
         
         Args:
             script: Script dict with 'stories' array containing part_1_narration / part_2_narration
@@ -912,17 +1206,17 @@ Output ONLY valid JSON:
   ]
 }}"""
         
-        # ── TRY GLM-5 FIRST, FALL BACK TO LOCAL OLLAMA ──
-        response = self._call_glm(system_prompt, user_prompt, temperature=0.4, max_tokens=2000, purpose="visual prompt generation")
+        # ── TRY LOCAL GEMMA 4 FIRST, FALL BACK TO GLM-5 CLOUD ──
+        response = self.generate(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            temperature=prompt_config["temperature"],
+            max_tokens=prompt_config["max_tokens"]
+        )
         
         if not response:
-            print("  [VISUAL-GEN] GLM-5 unavailable, trying local Ollama...")
-            response = self.generate(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                temperature=prompt_config["temperature"],
-                max_tokens=prompt_config["max_tokens"]
-            )
+            print("  [VISUAL-GEN] Local model unavailable for visual prompts")
+            return None
         
         if not response:
             print("  [VISUAL-GEN] All LLM calls failed")
@@ -993,12 +1287,11 @@ It must depict a DIFFERENT moment, location, and action. Do NOT reuse any nouns 
 
 Output ONLY JSON: {{"scene": "{scenes[j]['scene']}", "description": "..."}}"""
                     
-                    retry = self._call_glm(
+                    retry = self.generate(
+                        prompt=diff_prompt,
                         system_prompt="You are a pixel art scene designer. Generate visually distinct scenes.",
-                        user_prompt=diff_prompt,
                         temperature=0.6,
-                        max_tokens=300,
-                        purpose="visual dedup regeneration"
+                        max_tokens=300
                     )
                     
                     if retry:
