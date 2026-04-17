@@ -325,17 +325,95 @@ NEGATIVE_PROMPT = IMAGE_STYLE_CONFIG.get('negative_prompt',
 # Phase 5.1: Quality check keywords — prompt must contain enough specificity
 MIN_SPECIFICITY_WORDS = 4  # Below this, prompt is flagged as too generic
 
-# FAL.ai content-policy safe substitutions - MINIMAL LAYER
-# Only replace extreme terms that actually trigger content policy violations
-# flux-lora and flux/dev are permissive - most military/geopolitical terms are fine
+# FAL.ai content-policy safe substitutions - MULTI-LAYER DEFENSE
+# Layer 1: Extreme terms (always applied via _sanitize_prompt_for_api)
+# Layer 2: Named people + military actions (applied via _progressive_content_scrub level 1)
+# Layer 3: Visual-only extraction (applied via _progressive_content_scrub level 2)
 _SAFE_SUBSTITUTIONS = [
+    # Extreme/violent terms
     (r'\bgore\b',                     'aftermath'),
     (r'\bblood(?:y|ied)?\b',          'impact scene'),
     (r'\bcasualt(?:y|ies)\b',         'aftermath scene'),
     (r'\bdead bodies\b',              'aftermath scene'),
     (r'\bcorpse(?:s)?\b',             'aftermath scene'),
     (r'\bexecution(?:s)?\b',          'confrontation'),
+    (r'\bmassacre\b',                 'aftermath scene'),
+    (r'\bgenocide\b',                 'aftermath scene'),
+    (r'\btortur(?:e|ed|ing)\b',       'confrontation'),
+    (r'\bmass\s+grave\b',             'memorial scene'),
+    (r'\bbody\s+bag(?:s)?\b',         'aftermath scene'),
+    (r'\bdeath(?:s)?\b',              'aftermath'),
+    (r'\bdyi(?:ng|ed)\b',             'fallen'),
+    (r'\bwounded\b',                  'affected'),
+    (r'\bdestroyed\b',                'damaged'),
+    (r'\bdestroy(?:ing)?\b',          'damaging'),
+    (r'\bkill(?:ed|ing|er)?\b',       'affected'),
+    (r'\bmurd(?:er|ered|ering)\b',    'confrontation'),
+    (r'\bassassina\w+\b',             'confrontation'),
+    (r'\bsuicide\b',                  'incident'),
+    (r'\bterroris\w+\b',             'militant'),
+    (r'\bexplosi\w+\b',              'detonation scene'),
+    (r'\bnuclear\s+weapon(?:s)?\b',   'strategic installation'),
+    (r'\bweapon(?:s)?\b',             'equipment'),
+    (r'\barmed\b',                    'equipped'),
 ]
+
+# Layer 2 substitutions — named people + military actions (applied on retry)
+_NAMED_ENTITY_SUBSTITUTIONS = [
+    # Political figures
+    (r'\bTrump\b',                    'a president'),
+    (r'\bPutin\b',                    'a world leader'),
+    (r'\bXi(?:\s+Jinping)?\b',        'a world leader'),
+    (r'\b[Zz]elenskyy?\b',            'a president'),
+    (r'\bBiden\b',                    'a president'),
+    (r'\bNetanyahu\b',                'a prime minister'),
+    (r'\bKim\s+Jong\s+Un\b',         'a leader'),
+    (r'\bJD\s+Vance\b',              'a vice president'),
+    (r'\bEric\s+Cheng\b',            'a politician'),
+    (r'\bScholz\b',                   'a chancellor'),
+    (r'\bMacron\b',                   'a president'),
+    (r'\bStarmer\b',                  'a prime minister'),
+    (r'\bModi\b',                     'a prime minister'),
+    # Military action softening
+    (r'\bwarship(?:s)?\b',            'naval vessel'),
+    (r'\bwar\b',                      'conflict'),
+    (r'\bmissile(?:s)?\b',            'equipment'),
+    (r'\bdrone\s+strike(?:s)?\b',     'aerial operation'),
+    (r'\battack(?:ing|ed|s)?\b',      'maneuver'),
+    (r'\binvasi\w+\b',               'advance'),
+    (r'\bstrike(?:s)?\b',             'operation'),
+    (r'\bbomb(?:ing|ed|s)?\b',        'operation'),
+    (r'\bshoot(?:ing|s|er)?\b',       'confrontation'),
+    (r'\bbl[oe]w\w*\b',              'struck'),
+    (r'\bfire(?:d|s)?\b',            'launched'),
+    (r'\bcombat\b',                   'engagement'),
+    (r'\bbattle(?:s|field)?\b',       'engagement zone'),
+    (r'\boffensive\b',               'operation'),
+    (r'\bsiege\b',                    'blockade'),
+    (r'\bfrontline\b',               'front'),
+    (r'\bammunit\w+\b',              'supplies'),
+]
+
+# Pre-approved safe prompts per visual category — last resort before placeholder
+_CATEGORY_SAFE_PROMPTS = {
+    'warfare': '16-bit isometric pixel art scene: tactical landscape with smoke in the distance, military terrain at dusk, dramatic orange sky, trenches and fortifications, atmospheric haze',
+    'naval': '16-bit isometric pixel art scene: ocean harbor with docked vessels at sunset, calm waves reflecting orange sky, maritime flags on masts, nautical atmosphere',
+    'aerial': '16-bit isometric pixel art scene: open sky with cloud formations at golden hour, distant contrails, dramatic sunset colors of orange and purple, atmospheric depth',
+    'arms_defense': '16-bit isometric pixel art scene: military installation with radar equipment at dusk, technical markings visible, national insignia on structures, moody lighting',
+    'markets': '16-bit isometric pixel art scene: trading floor with screens and displays, financial charts in blue and green, professional atmosphere, dramatic lighting',
+    'trade_sanctions': '16-bit isometric pixel art scene: cargo port with container stacks and cranes, ships docked at harbor, industrial atmosphere, overcast sky',
+    'energy': '16-bit isometric pixel art scene: industrial complex with smokestacks and flames at night, pipeline infrastructure, orange glow on horizon, moody atmosphere',
+    'commodities': '16-bit isometric pixel art scene: warehouse with supply crates and storage, resource materials stacked, industrial lighting, scarcity atmosphere',
+    'diplomacy': '16-bit isometric pixel art scene: grand meeting hall with flags of many nations, formal table setting, chandeliers, diplomatic atmosphere, warm lighting',
+    'political': '16-bit isometric pixel art scene: government building interior with marble columns, parliamentary seating, formal atmosphere, warm golden lighting',
+    'espionage': '16-bit isometric pixel art scene: dark office with surveillance screens, classified documents on desk, shadows and moody lighting, mystery atmosphere',
+    'protests': '16-bit isometric pixel art scene: city square with crowds and banners, buildings in background, dramatic sky, urban atmosphere',
+    'humanitarian': '16-bit isometric pixel art scene: refugee camp with tents and supplies, mountain backdrop, humanitarian atmosphere, dramatic sunset lighting',
+    'border': '16-bit isometric pixel art scene: border checkpoint with fence stretching to horizon, guard towers in distance, dramatic sky, frontier atmosphere',
+    'cyber': '16-bit isometric pixel art scene: server room with glowing blue screens, digital data visualization, holographic displays, cyber atmosphere',
+    'megaprojects': '16-bit isometric pixel art scene: massive construction site with cranes and scaffolding, engineering scale, dramatic lighting, industrial atmosphere',
+    'general': '16-bit isometric pixel art scene: dramatic landscape at golden hour, strategic overview perspective, balanced composition, atmospheric lighting',
+}
 
 
 def _sanitize_prompt_for_api(prompt: str) -> str:
@@ -347,6 +425,78 @@ def _sanitize_prompt_for_api(prompt: str) -> str:
     result = prompt
     for pattern, replacement in _SAFE_SUBSTITUTIONS:
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    return result
+
+
+def _progressive_content_scrub(prompt: str, visual_type: str, level: int = 1) -> str:
+    """
+    Progressively scrub a prompt to bypass FAL.ai content policy rejections.
+    
+    Level 1: Remove named people + soften military actions
+    Level 2: Extract visual-only terms (strip all narrative, keep colors/shapes/lighting)
+    Level 3: Use pre-approved category-safe prompt (last resort)
+    
+    Args:
+        prompt: The original prompt that was rejected
+        visual_type: Detected visual category (warfare, naval, etc.)
+        level: Scrubbing aggressiveness (1-3)
+    
+    Returns:
+        Scrubbed prompt string
+    """
+    import re
+    
+    if level >= 1:
+        # Level 1: Named entity removal + military action softening
+        result = prompt
+        for pattern, replacement in _NAMED_ENTITY_SUBSTITUTIONS:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        # Also apply L1 substitutions
+        for pattern, replacement in _SAFE_SUBSTITUTIONS:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        print(f"  [IMG] 🧹 Content scrub level 1: removed named entities + softened military terms")
+        if level == 1:
+            return result
+    
+    if level >= 2:
+        # Level 2: Visual-only extraction — strip narrative, keep only visual elements
+        # Extract: colors, lighting, perspective, composition, architecture, atmosphere
+        visual_keywords = [
+            'pixel art', 'isometric', '16-bit', 'snes', 'retro', 'dramatic',
+            'sunset', 'dawn', 'dusk', 'night', 'golden hour', 'overcast',
+            'orange', 'blue', 'red', 'green', 'grey', 'dark', 'warm', 'cool',
+            'smoke', 'fire', 'fog', 'haze', 'clouds', 'storm', 'rain',
+            'foreground', 'midground', 'background', 'perspective',
+            'silhouette', 'horizon', 'skyline', 'landscape', 'terrain',
+            'urban', 'industrial', 'harbor', 'ocean', 'mountain', 'desert',
+            'forest', 'city', 'building', 'structure', 'vehicle', 'vessel',
+            'flag', 'uniform', 'helmet', 'equipment', 'radar', 'screen',
+            'table', 'chair', 'document', 'crane', 'tower', 'fence',
+            'lighting', 'atmosphere', 'composition', 'shadows', 'glow',
+            'reflection', 'waves', 'trenches', 'fortifications',
+        ]
+        
+        # Rebuild prompt preserving only visual terms
+        words = re.findall(r'\b\w+\b', prompt.lower())
+        preserved = [w for w in words if any(vk.startswith(w) or w in vk for vk in visual_keywords)]
+        
+        # Build a visual-only prompt with the style suffix
+        if preserved:
+            visual_fragment = ', '.join(set(preserved[:15]))
+            result = f"16-bit isometric pixel art scene: {visual_fragment}"
+        else:
+            result = _CATEGORY_SAFE_PROMPTS.get(visual_type, _CATEGORY_SAFE_PROMPTS['general'])
+        
+        print(f"  [IMG] 🧹 Content scrub level 2: visual-only extraction")
+        if level == 2:
+            return result
+    
+    if level >= 3:
+        # Level 3: Pre-approved safe prompt — guaranteed to pass
+        result = _CATEGORY_SAFE_PROMPTS.get(visual_type, _CATEGORY_SAFE_PROMPTS['general'])
+        print(f"  [IMG] 🧹 Content scrub level 3: category-safe fallback ({visual_type})")
+        return result
+    
     return result
 
 
@@ -1257,9 +1407,85 @@ def generate_pixel_art(
 
         except Exception as e:
             error_msg = str(e)
-            # Always fall back to placeholder on any FAL error
+            is_content_policy = any(kw in error_msg.lower() for kw in [
+                'content', 'safety', 'policy', 'inappropriate', 'nsfw',
+                'sensitive', 'filtered', 'blocked', 'moderation', 'flagged'
+            ])
+            
             print(f"⚠️  FAL.ai generation failed: {error_msg[:120]}")
-            print(f"   Generating placeholder image as fallback.")
+            
+            # ── PROGRESSIVE CONTENT SCRUB RETRY ──
+            # If the error looks like a content policy rejection, try progressively
+            # scrubbing the prompt before giving up and using a placeholder
+            if is_content_policy:
+                import time
+                for scrub_level in [1, 2, 3]:
+                    print(f"  [IMG] 🔄 Content policy detected — retrying with scrub level {scrub_level}/3...")
+                    
+                    # Get progressively scrubbed prompt
+                    scrubbed = _progressive_content_scrub(
+                        enriched_prompt, visual_type, level=scrub_level
+                    )
+                    # Re-apply LoRA trigger and style suffix
+                    scrubbed_enhanced = _enhance_prompt_with_lora_trigger(scrubbed, visual_type)
+                    scrubbed_full = f"{scrubbed_enhanced}, {STYLE_SUFFIX}"
+                    if COLOR_PALETTE_PROMPT:
+                        scrubbed_full = f"{scrubbed_full}, {COLOR_PALETTE_PROMPT}"
+                    
+                    try:
+                        # Try with flux/schnell (fastest, most permissive)
+                        _gp = GENERATION_PARAMS
+                        retry_args = {
+                            "prompt": scrubbed_full,
+                            "image_size": {"width": _gp.get('custom_width', 1088), "height": _gp.get('custom_height', 1152)},
+                            "num_images": 1,
+                            "num_inference_steps": MODEL_STEP_CONFIG.get("fal-ai/flux/schnell", 6),
+                            "guidance_scale": 3.0,
+                            "enable_safety_checker": False,
+                            "output_format": "png",
+                        }
+                        if seed is not None:
+                            retry_args["seed"] = seed + scrub_level
+                        
+                        retry_result = fal_client.run("fal-ai/flux/schnell", arguments=retry_args)
+                        retry_image_url = retry_result["images"][0]["url"]
+                        
+                        img_response = requests.get(retry_image_url, timeout=30)
+                        img_response.raise_for_status()
+                        
+                        with open(output_path, "wb") as f:
+                            f.write(img_response.content)
+                        
+                        try:
+                            _upscale_pixel_art(str(output_path))
+                        except Exception:
+                            pass
+                        
+                        print(f"  [IMG] ✓ Scrub level {scrub_level} succeeded — image saved")
+                        return {
+                            "success": True,
+                            "filename": filename,
+                            "path": str(output_path),
+                            "prompt_used": scrubbed_full,
+                            "original_prompt": full_prompt,
+                            "visual_type": visual_type,
+                            "source": f"fal-ai/flux/schnell (scrub level {scrub_level})",
+                            "scrub_level": scrub_level,
+                            "note": f"Content policy retry succeeded at scrub level {scrub_level}",
+                            "size": "1024x1792",
+                            "output_directory": str(OUTPUT_DIR),
+                            "geopolitical_validation": final_geo_validation,
+                            "i2i_used": False,
+                            "i2i_params": None
+                        }
+                    
+                    except Exception as retry_err:
+                        print(f"  [IMG] ✗ Scrub level {scrub_level} also failed: {str(retry_err)[:80]}")
+                        time.sleep(1)  # Brief pause between retries
+                
+                print(f"  [IMG] ❌ All scrub levels failed — falling to placeholder")
+            else:
+                print(f"   Non-content error — generating placeholder image as fallback.")
             
             _generate_placeholder(prompt, output_path)
             return {

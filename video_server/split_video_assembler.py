@@ -10,6 +10,7 @@ Layout (Option A — 60/40 split):
 
 import os
 import math
+import random
 import tempfile
 import numpy as np
 from pathlib import Path
@@ -19,12 +20,12 @@ from PIL import Image
 try:
     from moviepy.editor import (
         VideoFileClip, AudioFileClip, ImageClip,
-        CompositeVideoClip, concatenate_videoclips, vfx
+        CompositeVideoClip, CompositeAudioClip, concatenate_videoclips, vfx
     )
 except ImportError:
     from moviepy import (
         VideoFileClip, AudioFileClip, ImageClip,
-        CompositeVideoClip, concatenate_videoclips
+        CompositeVideoClip, CompositeAudioClip, concatenate_videoclips
     )
 
 from .subtitle_renderer import create_subtitle_clips, create_title_clip
@@ -38,6 +39,27 @@ FPS = 30
 
 # Avatar asset path
 AVATAR_PATH = Path(__file__).parent.parent / "assets" / "avatar" / "avatar_loop.mp4"
+
+# Background music path
+MUSIC_PATH = Path(__file__).parent.parent / "assets" / "avatar" / "music" / "news-yt.mp3"
+
+
+def _find_ffmpeg() -> str:
+    """Find ffmpeg executable — check imageio_ffmpeg bundled binary first, then system PATH."""
+    # 1. imageio_ffmpeg bundled binary (used by moviepy)
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, Exception):
+        pass
+
+    # 2. System PATH
+    import shutil
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+
+    return None
 
 
 def _resize_image_fullscreen(img_path: str) -> ImageClip:
@@ -102,15 +124,15 @@ def _resize_image_fullscreen(img_path: str) -> ImageClip:
 def _apply_zoom_out(clip: ImageClip, duration: float) -> ImageClip:
     """
     Animated zoom-out: starts tight (cropped center) and gradually reveals full image.
-    Subtle 5% zoom — enough for life without losing image content.
+    20% zoom — noticeable cinematic movement that reveals the full scene.
     """
     def zoom_out_transform(get_frame, t):
         frame = get_frame(t)
         h, w = frame.shape[:2]
 
-        # Start at 5% crop (subtle), end at 0% crop (full frame)
+        # Start at 20% crop (cinematic), end at 0% crop (full frame)
         progress = t / duration if duration > 0 else 1.0
-        crop_pct = 0.05 * (1.0 - progress)
+        crop_pct = 0.20 * (1.0 - progress)
 
         crop_h = int(h * crop_pct)
         crop_w = int(w * crop_pct)
@@ -137,8 +159,8 @@ def _apply_pan_top_to_bottom(clip: ImageClip, duration: float) -> ImageClip:
 
         progress = t / duration if duration > 0 else 1.0
 
-        # Pan range: scroll ~5% of frame height (subtle, no wrapping)
-        pan_range = int(h * 0.05)
+        # Pan range: scroll ~20% of frame height (cinematic movement)
+        pan_range = int(h * 0.20)
         offset = int(pan_range * progress)
 
         if offset > 0:
@@ -153,16 +175,87 @@ def _apply_pan_top_to_bottom(clip: ImageClip, duration: float) -> ImageClip:
     return clip.fl(pan_transform)
 
 
+def _apply_breathing_pulse(clip: ImageClip, duration: float) -> ImageClip:
+    """
+    Subtle 1-2% scale oscillation (sin wave) — gives images a 'living' feel.
+    Oscillates between 1.0x and 1.02x centered on the image.
+    Completely contained within image bounds — no overflow.
+    """
+    def breathing_transform(get_frame, t):
+        frame = get_frame(t)
+        h, w = frame.shape[:2]
+        scale = 1.0 + 0.02 * math.sin(2 * math.pi * 0.5 * t)
+        new_w = int(w / scale)
+        new_h = int(h / scale)
+        crop_x = (w - new_w) // 2
+        crop_y = (h - new_h) // 2
+        cropped = frame[crop_y:crop_y + new_h, crop_x:crop_x + new_w]
+        pil_img = Image.fromarray(cropped).resize((w, h), Image.LANCZOS)
+        return np.array(pil_img)
+
+    return clip.fl(breathing_transform)
+
+
+def _apply_pixel_shimmer(clip: ImageClip, duration: float, density: float = 0.002) -> ImageClip:
+    """
+    Random 1-2px 'sparkle' overlay at low opacity — CRT/retro pixel-art effect.
+    Randomly brightens a tiny fraction of pixels each frame for a subtle alive feeling.
+    """
+    rng = random.Random(42)
+
+    def shimmer_transform(get_frame, t):
+        frame = get_frame(t).copy()
+        h, w = frame.shape[:2]
+        n_pixels = int(h * w * density)
+        for _ in range(n_pixels):
+            y = rng.randint(0, h - 1)
+            x = rng.randint(0, w - 1)
+            boost = rng.randint(15, 40)
+            frame[y, x] = np.clip(frame[y, x].astype(np.int16) + boost, 0, 255).astype(np.uint8)
+        return frame
+
+    return clip.fl(shimmer_transform)
+
+
+def _apply_vignette_breath(clip: ImageClip, duration: float) -> ImageClip:
+    """
+    Subtle brightness pulse at edges — simulates ambient lighting breathing.
+    Oscillates edge darkening at 0.3Hz, barely perceptible but adds depth.
+    """
+    def vignette_transform(get_frame, t):
+        frame = get_frame(t).copy()
+        h, w = frame.shape[:2]
+        pulse = 0.85 + 0.15 * math.sin(2 * math.pi * 0.3 * t)
+        edge_h = h // 10
+        edge_w = w // 10
+        for i in range(edge_h):
+            factor = pulse * (i / edge_h)
+            frame[i, :] = (frame[i, :].astype(np.float32) * factor).astype(np.uint8)
+            frame[h - 1 - i, :] = (frame[h - 1 - i, :].astype(np.float32) * factor).astype(np.uint8)
+        for i in range(edge_w):
+            factor = pulse * (i / edge_w)
+            frame[:, i] = (frame[:, i].astype(np.float32) * factor).astype(np.uint8)
+            frame[:, w - 1 - i] = (frame[:, w - 1 - i].astype(np.float32) * factor).astype(np.uint8)
+        return frame
+
+    return clip.fl(vignette_transform)
+
+
 def _apply_scene_effect(clip: ImageClip, scene_idx: int, duration: float) -> ImageClip:
     """
-    Apply alternating effects to scene clips:
-    - Even indices: zoom out
-    - Odd indices: pan top to bottom
+    Apply layered effects to scene clips:
+    - Motion effect (zoom/pan) varies by scene index
+    - Subtle ambient effect (breathing/shimmer/vignette) layered on top
     """
-    if scene_idx % 2 == 0:
-        return _apply_zoom_out(clip, duration)
-    else:
-        return _apply_pan_top_to_bottom(clip, duration)
+    motion_effects = [_apply_zoom_out, _apply_pan_top_to_bottom]
+    ambient_effects = [_apply_breathing_pulse, _apply_pixel_shimmer, _apply_vignette_breath]
+
+    motion_fn = motion_effects[scene_idx % len(motion_effects)]
+    ambient_fn = ambient_effects[scene_idx % len(ambient_effects)]
+
+    clip = motion_fn(clip, duration)
+    clip = ambient_fn(clip, duration)
+    return clip
 
 
 def _calculate_scene_durations(total_duration: float, num_scenes: int) -> List[float]:
@@ -191,10 +284,12 @@ def _calculate_scene_durations(total_duration: float, num_scenes: int) -> List[f
 def _prepare_avatar_bottom(avatar_path: str, total_duration: float) -> VideoFileClip:
     """
     Load the avatar video, crop/resize to FILL 1080x768 bottom area, and loop.
+    Trims 0.05s from the end to avoid moviepy's known MP4 duration rounding bug
+    (ffmpeg reports slightly longer duration than actual readable frames).
     """
     avatar = VideoFileClip(avatar_path)
     av_w, av_h = avatar.size
-    avatar_duration = avatar.duration
+    avatar_duration = avatar.duration - 0.05  # Safety trim to prevent last-frame read error
 
     scale_factor = BOTTOM_H / av_h
     scaled_w = int(av_w * scale_factor)
@@ -211,16 +306,17 @@ def _prepare_avatar_bottom(avatar_path: str, total_duration: float) -> VideoFile
         avatar_cropped = avatar_scaled
 
     avatar_resized = avatar_cropped
+    avatar_trimmed = avatar_resized.subclip(0, avatar_duration)
 
     loops_needed = math.ceil(total_duration / avatar_duration)
 
     if loops_needed > 1:
-        clips = [avatar_resized]
+        clips = [avatar_trimmed]
         for _ in range(loops_needed - 1):
-            clips.append(avatar_resized.copy())
+            clips.append(avatar_trimmed.copy())
         avatar_looped = concatenate_videoclips(clips)
     else:
-        avatar_looped = avatar_resized
+        avatar_looped = avatar_trimmed
 
     avatar_final = avatar_looped.subclip(0, total_duration)
 
@@ -239,6 +335,87 @@ def _create_solid_color_image(width: int, height: int, color: tuple) -> str:
     return tmp.name
 
 
+def _create_hook_card(hook_text: str, width: int, height: int, duration: float = 1.5) -> Optional[ImageClip]:
+    """
+    Create a bold 1.5-second text-card overlay — a pattern interrupt for the first seconds.
+    Uses PIL to render text on a solid dark background, then wraps as a MoviePy clip.
+    
+    The Orientation Response (Sokolov, 1963): the brain reflexively attends to
+    novel visual stimuli. A bold text card before the greeting creates a 'wait, what?'
+    moment that hooks the viewer before they swipe away.
+    """
+    if not hook_text or len(hook_text.strip()) < 5:
+        return None
+    
+    try:
+        from PIL import ImageDraw, ImageFont
+        
+        # Dark navy background matching the video aesthetic
+        img = Image.new('RGB', (width, height), (10, 5, 25))
+        draw = ImageDraw.Draw(img)
+        
+        # Try to load a bold font, fall back to default
+        font_size = 52
+        try:
+            font = ImageFont.truetype("arialbd.ttf", font_size)
+        except:
+            try:
+                font = ImageFont.truetype("arial.ttf", font_size)
+            except:
+                font = ImageFont.load_default()
+        
+        # Word-wrap the text to fit width
+        max_width = width - 120  # 60px padding each side
+        words = hook_text.strip().upper().split()
+        lines = []
+        current_line = ""
+        for word in words:
+            test_line = f"{current_line} {word}".strip()
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            if bbox[2] - bbox[0] > max_width and current_line:
+                lines.append(current_line)
+                current_line = word
+            else:
+                current_line = test_line
+        if current_line:
+            lines.append(current_line)
+        
+        # Limit to 3 lines max
+        lines = lines[:3]
+        
+        # Calculate text block height
+        line_height = font_size + 12
+        total_text_height = len(lines) * line_height
+        y_start = (height - total_text_height) // 2
+        
+        # Draw each line centered
+        for i, line in enumerate(lines):
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+            x = (width - text_width) // 2
+            y = y_start + i * line_height
+            
+            # White text with subtle shadow
+            draw.text((x + 2, y + 2), line, fill=(30, 20, 50), font=font)
+            draw.text((x, y), line, fill=(255, 255, 255), font=font)
+        
+        # Save to temp file
+        tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        img.save(tmp.name, 'PNG')
+        tmp.close()
+        
+        clip = ImageClip(tmp.name).set_duration(duration).set_start(0)
+        # Fade out the hook card in the last 0.3s
+        clip = clip.crossfadeout(0.3)
+        
+        print(f"  [SPLIT] Hook card: \"{hook_text[:50]}...\" ({duration:.1f}s)")
+        return clip
+    
+    except Exception as e:
+        print(f"  [SPLIT] ⚠️ Hook card creation failed: {e}")
+        return None
+
+
 def build_split_video(
     audio_path: str,
     image_paths: List[str],
@@ -248,6 +425,7 @@ def build_split_video(
     word_timestamps: list = None,
     hook_text: str = None,
     scene_timestamps: List[Dict] = None,
+    hook_card_text: str = None,
 ) -> dict:
     """
     Build a video: scene background top 60%, avatar bottom 40%, title at top,
@@ -367,6 +545,13 @@ def build_split_video(
         # ── COMPOSITE: Stack all layers ──
         layers = [background, bottom_half]
 
+        # ── HOOK CARD: 1.5s pattern-interrupt text card at video start ──
+        if hook_card_text:
+            hook_clip = _create_hook_card(hook_card_text, VIDEO_W, VIDEO_H, duration=1.5)
+            if hook_clip:
+                layers.append(hook_clip)
+                print(f"  [SPLIT] Hook card added (1.5s pattern interrupt)")
+
         # ── TITLE OVERLAY: Persistent headline at top (entire video) ──
         if hook_text:
             title_clip = create_title_clip(
@@ -395,7 +580,118 @@ def build_split_video(
             print(f"  [SPLIT] No subtitle data — skipping subtitles")
 
         final = CompositeVideoClip(layers, size=(VIDEO_W, VIDEO_H))
-        final = final.set_audio(audio)
+
+        # ── BACKGROUND MUSIC: news-yt.mp3 (broadcast standard -20dB) ──
+        # Broadcast standard: music under speech = -20dB to -25dB (EBU R128 / ATSC A/85)
+        # -20dB ≈ 0.10 linear. Anything louder increases cognitive load (Cocktail Party Effect).
+        MUSIC_DIM_DURATION = 10.0  # seconds — music dims from 10% → 5% in last 10s
+        VIDEO_FADE_DURATION = 0.8  # seconds — final video fade to black
+        MUSIC_BASE_VOLUME = 0.10  # -20dB broadcast background standard (~10% of voice)
+        mixed_audio = audio  # Default: voice only
+
+        if MUSIC_PATH.exists():
+            try:
+                music = AudioFileClip(str(MUSIC_PATH))
+                # Trim music to video length
+                if music.duration > total_dur:
+                    music = music.subclip(0, total_dur)
+                
+                # Set music to broadcast background level (-20dB ≈ 0.10)
+                music_loud = music.volumex(MUSIC_BASE_VOLUME)
+                
+                # Apply 10-second fadeout: dims from 10% → 5%
+                music_loud = music_loud.audio_fadeout(MUSIC_DIM_DURATION)
+                
+                # Mix voice (100%) + music (10% → 5%)
+                mixed_audio = CompositeAudioClip([audio, music_loud.set_duration(total_dur)])
+                music.close()
+                print(f"  [SPLIT] ♪ news-yt.mp3 at {MUSIC_BASE_VOLUME:.0%} (-20dB), {MUSIC_DIM_DURATION:.0f}s dim to ~5%")
+            except Exception as music_err:
+                print(f"  [SPLIT] ⚠️ Music mixing failed, using voice only: {music_err}")
+                mixed_audio = audio
+        else:
+            print(f"  [SPLIT] No news-yt.mp3 found, skipping background music")
+
+        # ── PRE-RENDER AUDIO TO FILE (avoids moviepy ffmpeg subprocess crash) ──
+        # moviepy's ffmpeg audio reader subprocess dies on Windows during
+        # CompositeAudioClip rendering. Solution: use ffmpeg CLI directly to mix,
+        # then open the simple pre-mixed file for the video export.
+        audio_tmp = tempfile.NamedTemporaryFile(suffix='_mixed.wav', delete=False)
+        audio_tmp_path = audio_tmp.name
+        audio_tmp.close()
+
+        # Close moviepy audio objects to release their ffmpeg processes
+        try:
+            mixed_audio.close()
+        except:
+            pass
+        try:
+            audio.close()
+        except:
+            pass
+        try:
+            if 'music' in dir():
+                music.close()
+        except:
+            pass
+
+        pre_rendered_ok = False
+        if MUSIC_PATH.exists():
+            try:
+                # Use ffmpeg CLI directly to mix voice + music with 10s dim
+                ffmpeg_exe = _find_ffmpeg()
+                if ffmpeg_exe:
+                    import subprocess as sp
+                    dim_start = max(0, total_dur - MUSIC_DIM_DURATION)
+                    # Volume: base 10% (-20dB broadcast standard), dims to 0% over last 10s via afade
+                    # Uses simple afade instead of complex if() expression — Windows ffmpeg 7.1
+                    # doesn't support the \, comma escaping needed by if() in filter_complex.
+                    mix_cmd = [
+                        ffmpeg_exe, '-y',
+                        '-i', audio_path,                           # Voice (100%)
+                        '-i', str(MUSIC_PATH),                      # Music (10% → fade out)
+                        '-filter_complex',
+                        # Music: trim to video length, set 10% volume,
+                        # highpass=80 removes sub-bass rumble,
+                        # 1s safety fade-in as belt-and-suspenders (source file already pre-processed).
+                        # Only fade-out over last 10s for smooth ending.
+                        f'[1:a]atrim=0:{total_dur:.3f},asetpts=PTS-STARTPTS,'
+                        f'highpass=f=80,'
+                        f'afade=t=in:st=0:d=1,'
+                        f'volume=0.10,afade=t=out:st={dim_start:.3f}:d={MUSIC_DIM_DURATION:.1f}[music];'
+                        # Mix voice (100%) + dimmed music (10%→0%), no normalization
+                        # normalize=0 keeps voice at full volume (amix default divides by input count)
+                        f'[0:a][music]amix=inputs=2:duration=longest:normalize=0,'
+                        f'afade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}[out]',
+                        '-map', '[out]',
+                        '-ar', '44100', '-ac', '2',
+                        audio_tmp_path
+                    ]
+                    result = sp.run(mix_cmd, capture_output=True, timeout=60)
+                    if result.returncode == 0 and Path(audio_tmp_path).exists():
+                        pre_rendered_audio = AudioFileClip(audio_tmp_path)
+                        final = final.set_audio(pre_rendered_audio)
+                        pre_rendered_ok = True
+                        print(f"  [SPLIT] Pre-mixed audio via ffmpeg CLI ({Path(audio_tmp_path).stat().st_size/1024:.0f}KB)")
+                    else:
+                        print(f"  [SPLIT] ffmpeg mix failed (rc={result.returncode}): {result.stderr[:200]}")
+            except Exception as e:
+                print(f"  [SPLIT] ffmpeg CLI mix error: {e}")
+
+        if not pre_rendered_ok:
+            # Fallback: just use voice audio directly (no music)
+            try:
+                voice_audio = AudioFileClip(audio_path)
+                voice_audio = voice_audio.subclip(0, total_dur)
+                final = final.set_audio(voice_audio)
+                print(f"  [SPLIT] Using voice-only audio (no music)")
+            except Exception as e2:
+                print(f"  [SPLIT] ⚠️ Even voice-only audio failed: {e2}")
+                # Last resort: export without audio, then mux with ffmpeg
+                final = final.set_audio(None)
+
+        final = final.fadeout(VIDEO_FADE_DURATION)
+        print(f"  [SPLIT] Applied {VIDEO_FADE_DURATION}s video fade-out")
 
         # ── EXPORT ──
         if not output_path:
@@ -426,6 +722,37 @@ def build_split_video(
         out_path = Path(output_path)
         if not out_path.exists():
             return {"success": False, "error": "Output file not created"}
+
+        # ── POST-EXPORT REMUX: Fix Windows MP4 container corruption ──
+        # moviepy's two-pass audio mux on Windows can produce a broken MP4 container
+        # (0xC00D36C4 in Windows Media Player). Remux with ffmpeg fixes it.
+        try:
+            ffmpeg_exe = _find_ffmpeg()
+            if ffmpeg_exe:
+                remux_path = out_path.with_suffix('.remux.mp4')
+                remux_cmd = [
+                    ffmpeg_exe, '-y',
+                    '-i', str(out_path),
+                    '-c', 'copy',                    # No re-encoding — just fix container
+                    '-movflags', '+faststart',        # Move moov atom to start
+                    '-map', '0:v',                   # All video streams
+                    '-map', '0:a',                   # All audio streams
+                    str(remux_path)
+                ]
+                import subprocess as sp
+                remux_result = sp.run(remux_cmd, capture_output=True, timeout=60)
+                if remux_result.returncode == 0 and remux_path.exists():
+                    # Replace original with remuxed version
+                    remux_path.replace(out_path)
+                    print(f"  [SPLIT] ✅ Remuxed MP4 container (Windows compatibility fix)")
+                else:
+                    print(f"  [SPLIT] ⚠️ Remux failed (rc={remux_result.returncode}), keeping original")
+                    try:
+                        remux_path.unlink()
+                    except:
+                        pass
+        except Exception as e:
+            print(f"  [SPLIT] ⚠️ Remux error: {e}")
 
         file_size = out_path.stat().st_size
         print(f"  [SPLIT] Export complete: {file_size / (1024*1024):.1f}MB")

@@ -1,0 +1,8 @@
+# Environment Context
+- Operating System: Windows
+- Terminal: Windows PowerShell 5.1
+
+# Command Execution Rules
+- **CRITICAL:** Do NOT use `&&` to chain commands together. The `&&` operator is not supported in this version of PowerShell.
+- Use `;` to separate commands on a single line (e.g., `git add . ; git commit -m "update"`).
+- Alternatively, execute multiple commands as separate, sequential terminal steps rather than trying to combine them into a single one-liner.
