@@ -19,15 +19,14 @@ except ImportError:
 SUBTITLE_STYLE = {
     'font_size': 64,
     'font_name': 'Arial-Bold',
-    'highlight_color': (255, 215, 0),   # Yellow for current word
-    'previous_color': (255, 255, 255),  # White for previous words
-    'upcoming_color': (180, 180, 180),  # Gray for upcoming words
+    'highlight_color': (255, 215, 0),
+    'previous_color': (255, 255, 255),
+    'upcoming_color': (180, 180, 180),
     'outline_color': (0, 0, 0),
     'outline_width': 5,
-    'band_height': 120,      # Vertical space allocated for subtitle rendering
+    'band_height': 120,
     'padding_x': 50,
     'lead_in_seconds': 0.3,
-    'time_offset': 0.0,      # No offset — raw whisper timestamps
 }
 
 TITLE_STYLE = {
@@ -187,6 +186,51 @@ def align_whisper_to_script(
             'end': whisper_words[twi0]['end'],
         }
     
+    # ── GAP-AWARE REDISTRIBUTION ──
+    # Detect large pauses (>1.5s gap between consecutive words) and redistribute
+    # word timing within each segment independently. This prevents closing words
+    # from being stretched over silence gaps (causes sped-up subtitle mismatch).
+    PAUSE_THRESHOLD = 1.5  # seconds — anything larger is a structural pause
+    gap_count = 0
+    for i in range(1, len(aligned)):
+        gap = aligned[i]['start'] - aligned[i-1]['end']
+        if gap > PAUSE_THRESHOLD:
+            gap_count += 1
+    
+    if gap_count > 0:
+        # Split into segments at pause boundaries
+        segments = []
+        seg_start = 0
+        for i in range(1, len(aligned)):
+            gap = aligned[i]['start'] - aligned[i-1]['end']
+            if gap > PAUSE_THRESHOLD:
+                segments.append((seg_start, i))
+                seg_start = i
+        segments.append((seg_start, len(aligned)))
+        
+        # Redistribute timing within each segment
+        for seg_s, seg_e in segments:
+            seg_words = aligned[seg_s:seg_e]
+            n_seg = len(seg_words)
+            if n_seg < 2:
+                continue
+            
+            # Total time span of this segment (including intra-word gaps)
+            seg_time_start = seg_words[0]['start']
+            seg_time_end = seg_words[-1]['end']
+            seg_total = seg_time_end - seg_time_start
+            
+            if seg_total <= 0:
+                continue
+            
+            # Redistribute evenly within segment
+            word_dur = seg_total / n_seg
+            for j in range(n_seg):
+                aligned[seg_s + j]['start'] = seg_time_start + j * word_dur
+                aligned[seg_s + j]['end'] = seg_time_start + (j + 1) * word_dur
+        
+        print(f"  [SUB] Gap-aware redistribution: {gap_count} pauses detected, {len(segments)} segments")
+    
     # Ensure no overlapping timestamps and minimum word duration
     for i in range(len(aligned)):
         if aligned[i]['end'] <= aligned[i]['start']:
@@ -206,14 +250,42 @@ def _fuzzy_match(a: str, b: str) -> bool:
     """Check if two words are similar enough to be considered a match."""
     if len(a) < 3 or len(b) < 3:
         return False
-    # Check if one contains the other (handles contractions, possessives)
     if a in b or b in a:
         return True
-    # Check edit distance for short words
     if abs(len(a) - len(b)) > 2:
         return False
     matches = sum(1 for ca, cb in zip(a, b) if ca == cb)
-    return matches >= min(len(a), len(b)) * 0.7
+    if matches >= min(len(a), len(b)) * 0.6:
+        return True
+    return _phonetic_match(a, b)
+
+
+def _phonetic_match(a: str, b: str) -> bool:
+    """Simple phonetic matching for proper nouns and accented words."""
+    vowel_map = str.maketrans('aeiou', 'aaaaa')
+    a_phonetic = a.translate(vowel_map)
+    b_phonetic = b.translate(vowel_map)
+    if a_phonetic == b_phonetic:
+        return True
+    a_cons = ''.join(c for c in a if c not in 'aeiou')
+    b_cons = ''.join(c for c in b if c not in 'aeiou')
+    if a_cons and b_cons and (a_cons == b_cons or a_cons in b_cons or b_cons in a_cons):
+        return True
+    return False
+
+
+def _compute_drift(anchors, whisper_words, n_script, total_duration) -> float:
+    """Compute per-video whisper drift by comparing anchor positions to expected positions."""
+    if len(anchors) < 3:
+        return 0.0
+    drifts = []
+    for si, twi in anchors:
+        expected_time = (si / n_script) * total_duration if n_script > 0 else 0
+        actual_time = whisper_words[twi]['start']
+        drifts.append(actual_time - expected_time)
+    drifts.sort()
+    median_drift = drifts[len(drifts) // 2]
+    return max(-0.4, min(0.4, median_drift))
 
 
 def _estimate_from_script(script_text: str, total_duration: float) -> List[Dict]:
@@ -387,7 +459,8 @@ def _clean_display(word: str) -> str:
         return ''
     return cleaned
 def _render_phrase_frame(words: List[Dict], phrase_start_idx: int, phrase_end_idx: int,
-                      time: float, width: int, band_h: int, font, style) -> np.ndarray:
+                      time: float, width: int, band_h: int, font, style,
+                      drift: float = 0.0) -> np.ndarray:
     """
     Render transparent subtitle frame for a phrase at given time.
     No background — just outlined text.
@@ -408,7 +481,7 @@ def _render_phrase_frame(words: List[Dict], phrase_start_idx: int, phrase_end_id
         return np.array(img)  # Keep RGBA for transparency
 
     # Find active word (with time offset to compensate for whisper delay)
-    adjusted_time = time + style.get('time_offset', 0)
+    adjusted_time = time + drift
     global_active_idx = _find_active_word_idx(words, adjusted_time)
     relative_active_idx = global_active_idx - phrase_start_idx if global_active_idx >= phrase_start_idx else -1
 
@@ -542,6 +615,21 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
     # Filter out any words that render as empty after cleaning
     aligned_words = [w for w in aligned_words if _clean_display(w['word'])]
 
+    # Compute dynamic drift from whisper alignment
+    whisper_total = word_timestamps[-1]['end'] if word_timestamps else 1.0
+    whisper_cleaned = [w['word'].strip('.,;:!?—–').lower() for w in word_timestamps]
+    script_cleaned_list = [w.strip('.,;:!?—–').lower() for w in clean_script.split()] if clean_script else []
+    quick_anchors = []
+    wi = 0
+    for si, sword in enumerate(script_cleaned_list):
+        for twi in range(max(0, wi - 1), min(len(whisper_cleaned), wi + 4)):
+            if sword == whisper_cleaned[twi]:
+                quick_anchors.append((si, twi))
+                wi = twi + 1
+                break
+    drift = _compute_drift(quick_anchors, word_timestamps, len(script_cleaned_list), whisper_total)
+    print(f"  [SUB] Computed whisper drift: {drift*1000:.0f}ms ({len(quick_anchors)} anchors)")
+
     phrases = _split_into_phrases(aligned_words, max_words=5)
     if not phrases:
         return []
@@ -557,20 +645,19 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
         if duration <= 0:
             continue
 
-        def make_frame(t, si=start_idx, ei=end_idx, cs=clip_start):
+        def make_frame(t, si=start_idx, ei=end_idx, cs=clip_start, dr=drift):
             frame = _render_phrase_frame(
                 aligned_words, si, ei,
-                cs + t, video_width, band_h, font, s
+                cs + t, video_width, band_h, font, s, drift=dr
             )
-            return frame[:, :, :3]  # RGB only — alpha handled by mask
+            return frame[:, :, :3]
 
         clip = VideoClip(make_frame, duration=duration)
         clip = clip.set_start(clip_start)
         clip = clip.set_position((0, band_y_position))
-        # Create mask from alpha channel (ismask=True required by moviepy)
         mask_clip = VideoClip(
-            lambda t, si=start_idx, ei=end_idx, cs=clip_start: _make_alpha_mask(
-                t, cs, si, ei, aligned_words, video_width, band_h, font, s),
+            lambda t, si=start_idx, ei=end_idx, cs=clip_start, dr=drift: _make_alpha_mask(
+                t, cs, si, ei, aligned_words, video_width, band_h, font, s, dr),
             ismask=True, duration=duration
         )
         clip = clip.set_mask(mask_clip)
@@ -582,9 +669,9 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
     return clips
 
 
-def _make_alpha_mask(t, cs, si, ei, aligned_words, video_width, band_h, font, style):
+def _make_alpha_mask(t, cs, si, ei, aligned_words, video_width, band_h, font, style, drift=0.0):
     """Create alpha mask for subtitle transparency."""
-    frame = _render_phrase_frame(aligned_words, si, ei, cs + t, video_width, band_h, font, style)
+    frame = _render_phrase_frame(aligned_words, si, ei, cs + t, video_width, band_h, font, style, drift=drift)
     # Extract alpha channel from RGBA
     if frame.shape[2] == 4:
         alpha = frame[:, :, 3] / 255.0

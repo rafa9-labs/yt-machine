@@ -1,0 +1,44 @@
+# Output and generated files
+output/
+*.mp4
+*.mp3
+*.wav
+
+# Credentials (mounted as volume)
+credentials/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Temp files
+*.TEMP_*
+*.log
+
+# Docker
+Dockerfile
+docker-compose.yml
+
+# Docs (not needed in container)
+README.md
+CHANGELOG.md
+AGENT_CONTEXT.md
+config/ollama_setup.md
+
+# Tests
+tests/
+
+# Tools (training scripts, not needed in production)
+tools/

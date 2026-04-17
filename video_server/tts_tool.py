@@ -222,7 +222,11 @@ def _apply_audio_mastering(input_path: Path) -> bool:
             rms_gain = min(target_rms / rms, 3.0)
             arr = np.clip(arr * rms_gain, -1.0, 1.0)
 
-        # 3. Write mastered audio back
+        # 5. Noise gate: silence any sample below -70dB (kills residual noise floor)
+        noise_gate_threshold = 10 ** (-70 / 20)  # -70dB
+        arr[np.abs(arr) < noise_gate_threshold] = 0.0
+
+        # 6. Write mastered audio back
         if suffix == '.mp3':
             # Write WAV, then convert back to MP3 with ffmpeg
             sf.write(str(temp_wav), arr, sr)
@@ -333,13 +337,13 @@ def _add_natural_pacing(text: str, engine: str = "kokoro") -> str:
     text = re.sub(r'[*]', '', text)               # Asterisks
     
     # ── PAUSE HANDLING ──
-    # Story separator (....): convert to period + comma chain for a long TTS pause
-    # Neural TTS reads "., ," as end-sentence + two beat pauses ≈ 800ms+
-    text = re.sub(r'\.{4,}\s*', '. , , ', text)
+    # Story separator (....): strip entirely — silence buffers between batches handle pauses.
+    # Avoids ElevenLabs interpreting comma chains as vocalized "CHET" sounds.
+    text = re.sub(r'\.{4,}\s*', '.  ', text)
     
-    # Dramatic pause (...): convert to period + comma for a medium TTS pause
-    # Neural TTS reads ". ," as end-sentence + one beat pause ≈ 500ms
-    text = re.sub(r'\.{3}\s*', '. , ', text)
+    # Dramatic pause (...): convert to period + double space for natural sentence break.
+    # Double space causes a natural TTS pause without vocalized artifacts.
+    text = re.sub(r'\.{3}\s*', '.  ', text)
     
     # Em-dash (—): convert to comma pause (all TTS engines respect commas)
     text = text.replace('—', ', ')
@@ -426,8 +430,26 @@ def _generate_kokoro_tts(clean_text: str, voice_tone: str, filepath: Path) -> Op
             print(f"  [KOKORO] No audio segments generated")
             return None
         
-        # Concatenate all audio segments
-        full_audio = np.concatenate(audio_segments)
+        # Concatenate all audio segments with 200ms silence buffers
+        # Kokoro segments can cut abruptly; silence prevents word blending
+        silence_duration = 0.20  # 200ms natural pause
+        silence_samples = int(sample_rate * silence_duration)
+        # Use zero silence with fade envelope — no noise floor artifacts
+        silence = np.zeros(silence_samples, dtype=np.float32)
+        fade_len = min(50, silence_samples // 2)
+        fade_in = np.linspace(0, 1, fade_len, dtype=np.float32)
+        fade_out = np.linspace(1, 0, fade_len, dtype=np.float32)
+        silence[:fade_len] *= fade_in
+        silence[-fade_len:] *= fade_out
+        
+        parts = []
+        for i, seg in enumerate(audio_segments):
+            parts.append(seg)
+            if i < len(audio_segments) - 1:
+                parts.append(silence)
+        
+        full_audio = np.concatenate(parts)
+        print(f"  [KOKORO] Added {silence_duration}s silence x {len(audio_segments)-1} between segments")
         
         # Save as WAV first (Kokoro outputs numpy arrays)
         wav_path = filepath.with_suffix('.wav')
@@ -599,20 +621,49 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
         if len(audio_segments) == 1:
             Path(audio_segments[0]).rename(filepath)
         else:
-            from moviepy.audio.io.AudioFileClip import AudioFileClip
-            from moviepy.audio.AudioClip import concatenate_audioclips
+            # Use numpy-based concatenation with silence buffers between batches
+            # This prevents word cutting at batch boundaries
+            batch_arrays = []
+            for p in audio_segments:
+                arr, sr = sf.read(str(p))
+                batch_arrays.append(arr)
             
-            clips = [AudioFileClip(p) for p in audio_segments]
-            final = concatenate_audioclips(clips)
-            final.write_audiofile(str(filepath), verbose=False, logger=None)
-            for c in clips:
-                c.close()
-            final.close()
+            # Create 300ms silence buffer at native sample rate
+            silence_duration = 0.30  # 300ms natural pause between batches
+            silence_samples = int(sr * silence_duration)
+            fade_len = min(50, silence_samples // 2)
+            fade_in = np.linspace(0, 1, fade_len, dtype=np.float32)
+            fade_out = np.linspace(1, 0, fade_len, dtype=np.float32)
+            
+            # Determine channels from first batch
+            if batch_arrays[0].ndim == 1:
+                # Zero silence with fade envelope — no noise floor artifacts
+                silence = np.zeros(silence_samples, dtype=np.float32)
+                silence[:fade_len] *= fade_in
+                silence[-fade_len:] *= fade_out
+            else:
+                n_ch = batch_arrays[0].shape[1]
+                silence = np.zeros((silence_samples, n_ch), dtype=np.float32)
+                silence[:fade_len] *= fade_in[:, None]
+                silence[-fade_len:] *= fade_out[:, None]
+            
+            # Interleave batches with silence
+            parts = []
+            for i, arr in enumerate(batch_arrays):
+                parts.append(arr)
+                if i < len(batch_arrays) - 1:
+                    parts.append(silence)
+            
+            full_audio = np.concatenate(parts, axis=0)
+            sf.write(str(filepath), full_audio, sr)
+            
+            print(f"  [ELEVENLABS] Added {silence_duration}s silence × {len(batches)-1} between batches")
             
             for p in audio_segments:
                 Path(p).unlink(missing_ok=True)
         
         # Get duration
+        from moviepy.audio.io.AudioFileClip import AudioFileClip
         clip = AudioFileClip(str(filepath))
         duration = clip.duration
         clip.close()

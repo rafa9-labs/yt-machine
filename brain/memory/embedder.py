@@ -1,4 +1,4 @@
-"""
+w"""
 Embedder Module — Text → Vector via Ollama
 ============================================
 
