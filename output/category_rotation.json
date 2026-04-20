@@ -1,8 +1,8 @@
 {
   "current_cycle": {
-    "day_index": 2,
-    "category": "economic_warfare",
-    "date": "2026-04-08"
+    "day_index": 4,
+    "category": "technology_disruption",
+    "date": "2026-04-20"
   },
   "history": [
     {
@@ -60,6 +60,46 @@
     {
       "date": "2026-04-07",
       "category": "economic_warfare"
+    },
+    {
+      "date": "2026-04-08",
+      "category": "regional_flashpoints"
+    },
+    {
+      "date": "2026-04-09",
+      "category": "technology_disruption"
+    },
+    {
+      "date": "2026-04-10",
+      "category": "climate_geopolitics"
+    },
+    {
+      "date": "2026-04-13",
+      "category": "diplomatic_pivot"
+    },
+    {
+      "date": "2026-04-14",
+      "category": "kinetic_operations"
+    },
+    {
+      "date": "2026-04-15",
+      "category": "middle_east_conflict"
+    },
+    {
+      "date": "2026-04-16",
+      "category": "great_power_competition"
+    },
+    {
+      "date": "2026-04-17",
+      "category": "economic_warfare"
+    },
+    {
+      "date": "2026-04-18",
+      "category": "regional_flashpoints"
+    },
+    {
+      "date": "2026-04-19",
+      "category": "technology_disruption"
     }
   ]
 }

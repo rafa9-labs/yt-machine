@@ -1,165 +1,165 @@
 {
   "videos": [
     {
-      "project_id": 1775503127,
-      "topic": "US and Iran Review Ceasefire Deal Amid Trump Ultimatum",
+      "project_id": 1776345196,
+      "topic": "Lebanese-Israeli Rapprochement: The Return of the 'Pro-Israel' Executive Class",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "US and Iran reviewing ceasefire deal, reports say",
-      "created_at": "2026-04-06 20:18:47"
+      "article_title": "War on Iran: How the West is shaping a dystopian era",
+      "created_at": "2026-04-16 14:13:16"
     },
     {
-      "project_id": 1775504829,
-      "topic": "US Troops' Desperate Gambit: Iran's Geography Proves to be a Double-Edged Sword",
+      "project_id": 1776345196,
+      "topic": "The Invisible Inflation of Humanitarian Logistics via the Iran-US-Israel Conflict",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "Two mountain ranges, two deserts, two seas: Iran\u2019s geography is its greatest weapon",
-      "created_at": "2026-04-06 20:47:09"
+      "article_title": "Why do Lebanese leaders keep courting Israel?",
+      "created_at": "2026-04-16 14:13:16"
     },
     {
-      "project_id": 1775506932,
-      "topic": "Iran Prepares for War as US Troops Approach",
+      "project_id": 1776354344,
+      "topic": "The New Lebanese-Israeli Convergence: A Century of Strategic Alignment",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "Two mountain ranges, two deserts, two seas: Iran\u2019s geography is its greatest weapon",
-      "created_at": "2026-04-06 21:22:12"
+      "article_title": "Why do Lebanese leaders keep courting Israel?",
+      "created_at": "2026-04-16 16:45:44"
     },
     {
-      "project_id": 1775581021,
-      "topic": "Turkey Rejects Ukraine's LNG Plan Through Bosphorus",
-      "category": "middle_east_conflict",
-      "region": "great_power",
-      "article_title": "Turkey opposes Ukraine proposal to ship LNG through Bosphorus",
-      "created_at": "2026-04-07 17:57:01"
-    },
-    {
-      "project_id": 1775586114,
-      "topic": "Turkey Blocks Ukraine LNG Chokepoint Play",
-      "category": "middle_east_conflict",
-      "region": "great_power",
-      "article_title": "Turkey opposes Ukraine proposal to ship LNG through Bosphorus",
-      "created_at": "2026-04-07 19:21:54"
-    },
-    {
-      "project_id": 1775663774,
-      "topic": "AQ Khan's Shadow Network: How Pakistan Nearly Made Iran Nuclear",
+      "project_id": 1776354344,
+      "topic": "The Invisible Inflation of Humanitarian Logistics in the Iran-US-Israel War",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "'Islamic bomb': The secret Pakistani scheme to make Iran a nuclear power",
-      "created_at": "2026-04-08 16:56:14"
+      "article_title": "Iran war: What has the war done to the cost of humanitarian aid?",
+      "created_at": "2026-04-16 16:45:44"
     },
     {
-      "project_id": 1775663774,
-      "topic": "Iran's post-ceasefire blitz shatters Gulf stability, targets energy infrastructure",
+      "project_id": 1776354344,
+      "topic": "Lebanese Presidential Rejection of Netanyahu Call Amid Infrastructure Decapitation",
       "category": "middle_east_conflict",
       "region": "middle_east",
-      "article_title": "Saudi Arabia, UAE, Kuwait, Bahrain report attacks after Iran-US ceasefire",
-      "created_at": "2026-04-08 16:56:14"
+      "article_title": "Lebanon's Aoun rejects call with Netanyahu as Israel severs last bridge to the south",
+      "created_at": "2026-04-16 16:45:44"
     },
     {
-      "project_id": 1775663774,
-      "topic": "Hezbollah's Deadlier Second Act: Iranian Proxy Rebuilds in Weeks What Took Years Before",
+      "project_id": 1776489447,
+      "topic": "Japan and Australia Deepen Rare Earths Collaboration to Counter Geopolitical Risks",
+      "category": "technology_disruption",
+      "region": "other",
+      "article_title": "Japan\u2019s Takaichi to Forge Closer Cooperation With Australia in Rare Earths",
+      "created_at": "2026-04-18 06:17:27"
+    },
+    {
+      "project_id": 1776489447,
+      "topic": "Liberia's Economic Resilience Under Oil Price Volatility",
+      "category": "economic_warfare",
+      "region": "economic",
+      "article_title": "Liberia: World Bank, Liberia Assess Economic Stability Under Oil Pressure",
+      "created_at": "2026-04-18 06:17:27"
+    },
+    {
+      "project_id": 1776489447,
+      "topic": "Iran war: Strait of Hormuz open amid Israel-Lebanon truce",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Iran war: Strait of Hormuz open amid Israel-Lebanon truce",
+      "created_at": "2026-04-18 06:17:27"
+    },
+    {
+      "project_id": 1776613724,
+      "topic": "War on Iran: Why Israel and the US are the ultimate losers",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "War on Iran: Why Israel and the US are the ultimate losers",
+      "created_at": "2026-04-19 16:48:44"
+    },
+    {
+      "project_id": 1776613724,
+      "topic": "India's harvest festivals under climate strain",
+      "category": "technology_disruption",
+      "region": "regional",
+      "article_title": "India\u2019s harvest festivals under climate strain",
+      "created_at": "2026-04-19 16:48:44"
+    },
+    {
+      "project_id": 1776613724,
+      "topic": "North Korea's missile tests signal regional escalation",
+      "category": "regional_flashpoints",
+      "region": "regional",
+      "article_title": "North Korea launches ballistic missiles toward sea",
+      "created_at": "2026-04-19 16:48:44"
+    },
+    {
+      "project_id": 1776627190,
+      "topic": "Iran-US ceasefire talks stall as Strait of Hormuz tensions resurface",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "War on Iran: Mediators push ceasefire extension as deal hopes fade",
+      "created_at": "2026-04-19 20:33:10"
+    },
+    {
+      "project_id": 1776627190,
+      "topic": "Ethiopia's 'Singapore' dream: A continent's new authoritarian model",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "From Sudan to Gaza, becoming 'Singapore' means choosing to comply",
+      "created_at": "2026-04-19 20:33:10"
+    },
+    {
+      "project_id": 1776627190,
+      "topic": "North Korea's missile tests intensify regional tensions",
+      "category": "regional_flashpoints",
+      "region": "regional",
+      "article_title": "North Korea launches ballistic missiles toward sea",
+      "created_at": "2026-04-19 20:33:10"
+    },
+    {
+      "project_id": 1776631035,
+      "topic": "Iran-US ceasefire talks stall as uranium dispute and allied forces remain contentious",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "War on Iran: Mediators push ceasefire extension as deal hopes fade",
+      "created_at": "2026-04-19 21:37:15"
+    },
+    {
+      "project_id": 1776631035,
+      "topic": "North Korea's missile tests signal regional tension",
+      "category": "regional_flashpoints",
+      "region": "regional",
+      "article_title": "North Korea launches ballistic missiles toward sea",
+      "created_at": "2026-04-19 21:37:15"
+    },
+    {
+      "project_id": 1776631035,
+      "topic": "African Nations Reimagined as 'Singapore': Compliance as a Political Strategy",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "From Sudan to Gaza, becoming 'Singapore' means choosing to comply",
+      "created_at": "2026-04-19 21:37:15"
+    },
+    {
+      "project_id": 1776656493,
+      "topic": "India's Harvest Festivals Face Climate and Structural Strains",
+      "category": "technology_disruption",
+      "region": "regional",
+      "article_title": "India's harvest festivals under climate strain",
+      "created_at": "2026-04-20 04:41:33"
+    },
+    {
+      "project_id": 1776656493,
+      "topic": "India protests Iran fire on two vessels in Strait of Hormuz",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "India protests Iran fire on two vessels in Strait of Hormuz",
+      "created_at": "2026-04-20 04:41:33"
+    },
+    {
+      "project_id": 1776656493,
+      "topic": "French ship in Strait of Hormuz targeted by Iran, intensifying regional tensions",
       "category": "middle_east_conflict",
       "region": "other",
-      "article_title": "Lebanon: How Hezbollah is rising from the ashes",
-      "created_at": "2026-04-08 16:56:14"
-    },
-    {
-      "project_id": 1775668126,
-      "topic": "Pakistan's Secret Nuclear Proliferation to Iran Exposes Decades-Long Double Game",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "'Islamic bomb': The secret Pakistani scheme to make Iran a nuclear power",
-      "created_at": "2026-04-08 18:08:46"
-    },
-    {
-      "project_id": 1775668126,
-      "topic": "Hezbollah's Phoenix Moment: From Written Off to Battle-Ready in 90 Days",
-      "category": "middle_east_conflict",
-      "region": "other",
-      "article_title": "Lebanon: How Hezbollah is rising from the ashes",
-      "created_at": "2026-04-08 18:08:46"
-    },
-    {
-      "project_id": 1775668126,
-      "topic": "Ukraine's Drone Campaign Nullifies Russia's Iran War Oil Windfall",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Ukraine torches Putin\u2019s Iran war windfall, as EU allies sweat over high energy prices",
-      "created_at": "2026-04-08 18:08:46"
-    },
-    {
-      "project_id": 1775671989,
-      "topic": "Pakistan's Shadow Nuclear Proliferation Network: The Unfinished Iran Connection",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "'Islamic bomb': The secret Pakistani scheme to make Iran a nuclear power",
-      "created_at": "2026-04-08 19:13:09"
-    },
-    {
-      "project_id": 1775671989,
-      "topic": "Iran's Strategic Victory Shatters US Deterrence Credibility as Trump Retreats from 'Apocalypse Now' Threats",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Trump's 'Apocalypse Now' is a busted flush. Iran has proved it and China knows it",
-      "created_at": "2026-04-08 19:13:09"
-    },
-    {
-      "project_id": 1775671989,
-      "topic": "Hezbollah's Phoenix Moment: From Written Off to Battle-Ready in 90 Days",
-      "category": "middle_east_conflict",
-      "region": "other",
-      "article_title": "Lebanon: How Hezbollah is rising from the ashes",
-      "created_at": "2026-04-08 19:13:09"
-    },
-    {
-      "project_id": 1775682556,
-      "topic": "Pakistan's Rogue Nuclear Bazaar: How One Man Armed the Axis of Resistance",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "'Islamic bomb': The secret Pakistani scheme to make Iran a nuclear power",
-      "created_at": "2026-04-08 22:09:16"
-    },
-    {
-      "project_id": 1775682556,
-      "topic": "US-Iran Ceasefire Cements Tehran's Strategic Gains and Exposes American Leverage Vacuum",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Trump's 'Apocalypse Now' is a busted flush. Iran has proved it and China knows it",
-      "created_at": "2026-04-08 22:09:16"
-    },
-    {
-      "project_id": 1775682556,
-      "topic": "Vance-Led Ceasefire Mission to Islamabad as Israel Torches the Deal in Beirut",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "JD Vance to lead Iran ceasefire negotiations in Pakistan, White House says",
-      "created_at": "2026-04-08 22:09:16"
-    },
-    {
-      "project_id": 1775687973,
-      "topic": "Iran Ceasefire Reveals US Strategic Collapse: Hormuz Leverage Transfers to Tehran",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Trump's 'Apocalypse Now' is a busted flush. Iran has proved it and China knows it",
-      "created_at": "2026-04-08 23:39:33"
-    },
-    {
-      "project_id": 1775687973,
-      "topic": "Trump's Strait of Hormuz Toll Deal with Iran Exposes Gulf Allies",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "'Ceasefire not holding': US and Iran may have to talk 'as guns are firing'",
-      "created_at": "2026-04-08 23:39:33"
-    },
-    {
-      "project_id": 1775687973,
-      "topic": "Vance Leads Fragile Iran Ceasefire Talks As Israel Torpedoes Deal With Beirut Massacre",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "JD Vance to lead Iran ceasefire negotiations in Pakistan, White House says",
-      "created_at": "2026-04-08 23:39:33"
+      "article_title": "French commercial vessel in Strait of Hormuz fired at, says report",
+      "created_at": "2026-04-20 04:41:33"
     }
   ],
-  "last_updated": "2026-04-08 23:39:33"
+  "last_updated": "2026-04-20 04:41:33"
 }
