@@ -9,29 +9,37 @@ An agentic AI system that autonomously creates viral short-form videos from glob
 │                    YT MACHINE PIPELINE                       │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  Phase 1: Brain & Memory                                    │
-│  ├─ Ollama (DeepSeek R1/V3)                                 │
-│  ├─ Open Viking Memory System                               │
-│  └─ System Prompt Configuration                             │
+│  Stage A: Web Scraping (Redfish)                            │
+│  ├─ 8 RSS feeds (aiohttp parallel fetch, ~2s)               │
+│  ├─ Full article extraction (trafilatura + Playwright)      │
+│  └─ Viral scoring + category rotation                       │
 │                                                              │
-│  Phase 2: Ideation Engine                                   │
-│  ├─ Redfish (RSS Scraper)                                   │
-│  ├─ Debate Agents (Skeptic vs Explainer)                    │
-│  └─ Promptfoo Quality Assurance                             │
+│  Stage B: LLM Pipeline (Fast-Slow Architecture)             │
+│  ├─ Worker: Qwen3 4B abliterated (all JSON/text tasks)      │
+│  │   ├─ news_processor (structured analysis)                 │
+│  │   ├─ debate_skeptic / debate_explainer                    │
+│  │   ├─ visual_prompt_generator                              │
+│  │   ├─ script_curator                                       │
+│  │   └─ salience_extractor                                   │
+│  ├─ Brain: Qwen3 30B MoE abliterated (reasoning only)       │
+│  │   └─ multi_news_synthesizer (3-story script synthesis)    │
+│  └─ Fallback: Gemma 4 26B Heretic (safety net)              │
 │                                                              │
-│  Phase 3: Video MCP Server                                  │
-│  ├─ Voiceover Generation (edge-tts)                         │
-│  ├─ Stock Footage Fetcher (Pexels API)                      │
-│  └─ Video Assembly (moviepy)                                │
+│  Stage C: Video Production                                   │
+│  ├─ Voiceover (edge-tts / Kokoro / ElevenLabs)              │
+│  ├─ Pixel Art Images (FAL.ai FLUX + LoRA)                   │
+│  ├─ Stock Footage (Pexels API)                               │
+│  └─ Video Assembly (moviepy + ffmpeg)                        │
 │                                                              │
-│  Phase 4: Automation & Publishing                           │
-│  ├─ n8n Workflow Orchestration                              │
-│  └─ Multi-Platform Publishing (YT/TikTok/IG)                │
+│  Stage D: Automation & Publishing                           │
+│  ├─ automate.py (single entry point)                        │
+│  ├─ Telegram notifications                                   │
+│  └─ Windows Task Scheduler integration                       │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Current Status: Phase 1 & 2 Complete ✓
+## Current Status: Stages A-D Operational
 
 ### Completed Components
 
@@ -42,11 +50,14 @@ An agentic AI system that autonomously creates viral short-form videos from glob
    - Memory Reader: Query past videos, check duplicates, analyze performance
    - Tested: All memory operations verified with sample data
 
-2. **LLM Brain Interface**
-   - Model: Llama 3.2 (via Ollama)
-   - System Prompts: 4 specialized personas (News Processor, Skeptic, Explainer, Script Synthesizer)
-   - LLM Wrapper: Ollama API integration with retry logic, streaming, and robust JSON parsing
+2. **LLM Brain Interface (Fast-Slow Architecture)**
+   - Worker: Qwen3 4B abliterated (fast JSON/text, ~80+ tok/s on RTX 3090)
+   - Brain: Qwen3 30B-A3B MoE abliterated (reasoning, ~60+ tok/s on RTX 3090)
+   - Fallback: Gemma 4 26B Heretic (safety net)
+   - System Prompts: 7 specialized personas with per-task model routing
+   - LLM Wrapper: Ollama API + LangChain with retry logic, streaming, and Pydantic output parsing
    - Debate System: Multi-agent conversation framework
+   - Thinking token stripping: Handles Qwen3 `<think`, Gemma4 `<|channel|>`, DeepSeek-R1 patterns
 
 #### Phase 2: Ideation Engine & Testing ✓
 1. **Redfish RSS Scraper**
@@ -72,20 +83,49 @@ pip install -r requirements.txt
 ### 2. Install Ollama
 Download from: https://ollama.ai/download
 
-### 3. Pull DeepSeek Model
+### 3. Pull LLM Models (Fast-Slow Architecture)
+
+The pipeline uses a two-model setup optimized for RTX 3090 24GB:
+
+| Role | Model | VRAM | Purpose |
+|---|---|---|---|
+| **Worker** | `huihui_ai/qwen3-abliterated:4b` | ~4 GB | JSON output, news analysis, curation (fast) |
+| **Brain** | `huihui_ai/qwen3-abliterated:30b-a3b` | ~19 GB | Script synthesis, reasoning (MoE) |
+| **Fallback** | `hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF` | ~16 GB | Safety net if Qwen3 models fail |
+
+All three models are abliterated/uncensored — no content restrictions on geopolitical news topics.
+
 ```powershell
-ollama pull deepseek-r1:latest
+# Pull the Worker (2.5 GB download — fast JSON/text tasks)
+ollama pull huihui_ai/qwen3-abliterated:4b
+
+# Pull the Brain (18 GB download — MoE reasoning model)
+ollama pull huihui_ai/qwen3-abliterated:30b-a3b
+
+# Pull the Fallback (16 GB download — already have it? skip this)
+ollama pull hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest
+
+# Verify all models are available
+ollama list
 ```
 
-### 4. Verify Installation
-```powershell
-# Test memory system
-cd open-viking
-python test_memory.py
+**Why this setup?** The Brain is a Mixture-of-Experts (MoE) model — 30B total parameters but only ~3B active per token. This gives large-model intelligence at small-model speed. The Worker handles all structured tasks (JSON output, curation, dedup) at 80+ tok/s. Only script synthesis hits the Brain. Total VRAM: ~23 GB of 24 GB.
 
-# Test LLM interface (requires Ollama running)
-cd ..\brain
-python test_llm.py
+### 4. Install LangChain (Recommended)
+
+LangChain adds auto-retry on JSON parse failures, Pydantic-validated output, and declarative model fallbacks. Without it, the pipeline uses raw HTTP requests with manual JSON parsing.
+
+```powershell
+pip install langchain langchain-ollama langchain-core
+```
+
+### 5. Verify Installation
+```powershell
+# Test model connectivity + benchmark all 3 model tiers
+python test_ollama.py
+
+# Run full pipeline validation (config, token stripping, live LLM calls)
+python tests\test_pipeline_models.py
 ```
 
 ## Project Structure
@@ -145,18 +185,88 @@ print(f"Top keywords: {stats['top_keywords']}")
 from brain.llm_interface import LLMInterface
 
 llm = LLMInterface()
-
-# Process news article
+# Worker (4B) handles these — fast structured output
 analysis = llm.process_news(article_text)
-# Returns: {topic, key_facts, angle, keywords, virality_score}
+# Returns: {topic, key_facts, angle, keywords, impact_score, ...}
 
-# Run debate
 skeptic = llm.debate_skeptic(analysis)
 explainer = llm.debate_explainer(analysis, skeptic)
 
-# Generate final script
-script = llm.synthesize_script(analysis, skeptic, explainer)
-# Returns: {hook, body, twist, cta, word_count, estimated_duration}
+# Brain (30B MoE) handles this — heavy reasoning
+script = llm.synthesize_multi_news_script([analysis1, analysis2, analysis3])
+# Returns: {greeting, stories: [{headline, part1, part2, segue}, ...], full_text, segment_timeline}
+```
+
+## Running the Pipeline
+
+### Quick Reference
+
+| Command | What it does |
+|---|---|
+| `python generate_complete_video.py` | **Full pipeline** — scrape, analyze, script, images, voice, video |
+| `python generate_complete_video.py --skip-images` | **No images** — uses placeholders (faster, no FAL.ai API calls) |
+| `python generate_complete_video.py --no-telegram` | **No Telegram** — skips delivery notification |
+| `python generate_complete_video.py --resume output/projects/video_XXXXX` | **Resume** — picks up a failed run from where it stopped |
+
+### Full Production Run
+
+```powershell
+# Complete pipeline: RSS → analysis → debate → script → images → voice → video
+python generate_complete_video.py
+# Output: output/projects/video_<timestamp>/<timestamp>.mp4
+# Time: ~10-15 min total (LLM ~6 min, images ~5 min, video assembly ~2 min)
+```
+
+### Testing & Debugging Runs
+
+```powershell
+# Skip image generation — uses placeholder black frames instead
+# Saves ~5 min and avoids FAL.ai API costs
+python generate_complete_video.py --skip-images
+
+# Skip Telegram notification (useful when testing repeatedly)
+python generate_complete_video.py --no-telegram
+
+# Combine both for fastest test cycle
+python generate_complete_video.py --skip-images --no-telegram
+
+# Resume a failed pipeline run (reuses existing analysis/script/images)
+python generate_complete_video.py --resume output/projects/video_1776278345
+```
+
+### Automation via automate.py
+
+```powershell
+# Generate only (PC already on, no Wake-on-LAN)
+python automate.py --generate
+
+# Generate + publish to all platforms (YouTube, TikTok, Instagram)
+python automate.py --publish
+
+# Generate + publish to YouTube only
+python automate.py --publish youtube
+
+# Full flow: Wake PC via WOL → wait for boot → generate → Telegram notify
+python automate.py
+
+# Wake the PC only (don't generate)
+python automate.py --wake-only
+
+# Resume a failed run via automation (with Telegram notifications)
+python automate.py --resume output/projects/video_1776278345
+```
+
+### Scheduling
+
+```powershell
+# Install daily scheduled task at 8:00 AM
+python automate.py --schedule "08:00"
+
+# Install with default time (08:00)
+python automate.py --install-schedule
+
+# Remove the scheduled task
+python automate.py --remove-schedule
 ```
 
 ## Next Steps (Phase 3: Video MCP Server)
@@ -166,13 +276,6 @@ script = llm.synthesize_script(analysis, skeptic, explainer)
 - [ ] Implement `fetch_stock_video(keyword)` using Pexels API
 - [ ] Implement `assemble_short(audio, video)` using moviepy
 - [ ] Test end-to-end video generation from script
-
-## Phase 4: Automation & Publishing
-
-- [ ] Set up n8n workflow orchestration
-- [ ] Configure cron triggers for automated runs
-- [ ] Integrate YouTube, TikTok, Instagram APIs
-- [ ] Deploy full autonomous pipeline
 
 ## Configuration
 
@@ -184,11 +287,24 @@ Edit `config/system_prompts.json` to customize:
 - Model parameters (temperature, max_tokens)
 
 ### Ollama Settings
-Default configuration:
+Default configuration (in `config/system_prompts.json`):
 - **Base URL**: `http://localhost:11434`
-- **Model**: `deepseek-r1:latest`
-- **Timeout**: 30 seconds
+- **Default Model**: `huihui_ai/qwen3-abliterated:4b` (Worker)
+- **Reasoning Model**: `huihui_ai/qwen3-abliterated:30b-a3b` (Brain — MoE)
+- **Fallback Model**: `hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF` (Gemma 4 Heretic)
+- **Context Window**: 16384 tokens (reduced from 32768 to fit both models in VRAM)
+- **Timeout**: 300 seconds
 - **Retry Attempts**: 3
+
+### Model Routing
+Task → Model mapping (configured in `config/system_prompts.json` → `task_models`):
+- `multi_news_synthesizer` → Brain (30B MoE) — heavy reasoning
+- `news_processor` → Worker (4B) — structured JSON
+- `visual_prompt_generator` → Worker (4B) — structured JSON
+- `script_curator` → Worker (4B) — text transformation
+- `salience_extractor` → Worker (4B) — analysis
+- `debate_skeptic` → Worker (4B) — debate
+- `debate_explainer` → Worker (4B) — debate
 
 ## Troubleshooting
 
@@ -197,10 +313,35 @@ Default configuration:
 # Check if Ollama is running
 curl http://localhost:11434/api/tags
 
+# List available models
+ollama list
+
 # Restart Ollama
 Stop-Process -Name "ollama" -Force
 ollama serve
 ```
+
+### Model Issues
+```powershell
+# If a model fails to load, check VRAM usage
+nvidia-smi
+
+# Unload all models from VRAM (frees ~23 GB)
+# Ollama auto-unloads after 5 min idle, but this forces it
+ollama stop huihui_ai/qwen3-abliterated:30b-a3b
+ollama stop huihui_ai/qwen3-abliterated:4b
+
+# If both models don't fit simultaneously (24 GB limit):
+# Option 1: Reduce num_ctx in config/system_prompts.json (16384 → 8192)
+# Option 2: Only load one model at a time (Ollama auto-swaps but slower)
+# Option 3: Use only the Worker (4B) for all tasks (fast but lower quality scripts)
+```
+
+### Thinking Token Issues
+If LLM responses contain `<think...` or `<|channel|>` in the output:
+- `_strip_thinking_tokens()` in `brain/llm_interface.py` handles these automatically
+- If tokens leak through, the JSON extraction will still find the `{...}` block
+- Run `python test_ollama.py` to verify token stripping works for your model
 
 ### Memory System Errors
 - Ensure `open-viking/history/videos.json` exists

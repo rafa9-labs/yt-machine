@@ -334,7 +334,9 @@ def _add_natural_pacing(text: str, engine: str = "kokoro") -> str:
     text = re.sub(r'={2,}', ' ', text)            # Equals signs
     text = re.sub(r'-{3,}', ' ', text)            # Triple+ dashes
     text = re.sub(r'[#`]', '', text)              # Markdown headers and backticks
-    text = re.sub(r'[*]', '', text)               # Asterisks
+    text = re.sub(r'\*\[.*?\]\*', '', text)       # Glitch markers: *[system_warning]* etc.
+    text = re.sub(r'[\[\]]', '', text)            # Leftover brackets
+    text = re.sub(r'[*]', '', text)               # Remaining asterisks
     
     # ── PAUSE HANDLING ──
     # Story separator (....): strip entirely — silence buffers between batches handle pauses.
