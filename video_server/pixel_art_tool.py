@@ -22,46 +22,58 @@ OUTPUT_DIR = Path(__file__).parent.parent / "output" / "images"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================================
-# PHASE 1: Model Re-integration - Pixel-Art Optimized Model Configuration
+# PRIMARY: fal-ai/flux/dev — high quality (~$0.025/img), 28 steps
+# FALLBACK: fal-ai/flux/schnell — cheapest (~$0.003/img), 4 steps
 # ============================================================================
 
-# Pixel-art optimized model endpoint (using existing FAL_KEY)
-# This replaces the complex LoRA training workflow with a purpose-built pixel-art model
-PIXEL_ART_MODEL = "fal-ai/flux-lora"  # LoRA-compatible model for true pixel art
-PIXEL_ART_MODEL_ENDPOINT = "https://fal.run/fal-ai/flux-lora"
+MAX_PIXELS = 1_000_000
 
-# Model-specific configuration for pixel-art generation with LoRA
+PIXEL_ART_ENFORCEMENT_PREFIX = (
+    "Clean 32-bit pixel art, high contrast news graphic, isometric style, "
+    "uniform grid-aligned pixels, no anti-aliasing, no color bleeding, "
+    "no soft gradients"
+)
+
+PIXEL_ART_STRICT_NEGATIVE = (
+    "anti-aliasing, soft edges, smooth gradients, color bleeding, "
+    "inconsistent pixel sizes, subpixel rendering, motion blur, "
+    "depth of field, photorealistic shading"
+)
+
+IMAGE_SIZE_MAP = {
+    "PinguPlay":  {"width": 512,  "height": 512},
+    "PinguQuest": {"width": 768,  "height": 768},
+    "PinguHero":  {"width": 1024, "height": 1024},
+    "Default":    {"width": 1280, "height": 720},
+}
+
+PIXEL_ART_MODEL = "fal-ai/flux/dev"
+PIXEL_ART_MODEL_ENDPOINT = "https://fal.run/fal-ai/flux/dev"
 PIXEL_ART_MODEL_CONFIG = {
-    "model": "fal-ai/flux-lora",
-    "api_endpoint": "https://fal.run/fal-ai/flux-lora",
-    "auth_type": "bearer",
+    "model": "fal-ai/flux/dev",
+    "api_endpoint": "https://fal.run/fal-ai/flux/dev",
+    "auth_type": "key",
     "content_type": "application/json",
     "optimized_for": ["pixel_art", "isometric", "16bit", "retro_style"],
-    "supports_reference": True,
+    "supports_reference": False,
     "default_params": {
-        "image_size": "custom",
-        "custom_width": 1088,
-        "custom_height": 1152,
-        "num_inference_steps": 20,
+        "num_inference_steps": 28,
         "guidance_scale": 3.5,
         "enable_safety_checker": False,
         "output_format": "png"
     }
 }
 
-# Per-model inference step counts — each model has its own optimal range
 MODEL_STEP_CONFIG = {
+    "fal-ai/flux/dev": 28,
+    "fal-ai/flux/schnell": 4,
     "fal-ai/flux-lora": 20,
-    "fal-ai/flux/schnell": 6,      # Schnell is architected for 4-8 steps
-    "fal-ai/flux/dev": 20,
     "fal-ai/flux-pro/v1.1-ultra": 28,
 }
 
-# LoRA scale — 0.75 activates pixel art style without over-applying (NES look)
 LORA_SCALE = 0.75
 
-# Fallback chain — cheaper models only
-FAL_MODEL = "fal-ai/flux-lora"
+FAL_MODEL = "fal-ai/flux/dev"
 FAL_FALLBACK_MODELS = ["fal-ai/flux/schnell"]
 
 # Prompt hash cache — avoids regenerating identical/near-identical scenes
@@ -87,31 +99,31 @@ def _upscale_pixel_art(input_path: str, render_size: tuple = None,
     """
     Upscale a small pixel-art image using nearest-neighbor interpolation.
     This preserves hard pixel edges — the key to TRUE pixel art vs blurry faux-pixel.
+    SKIPS upscale when the image is already at or above target resolution.
     """
-    # Resolve defaults at call time (RENDER_RESOLUTION defined later in module)
     if render_size is None:
         render_size = tuple(GENERATION_PARAMS.get('render_resolution', [256, 256]))
     if target_size is None:
         target_size = tuple(GENERATION_PARAMS.get('target_resolution', [1024, 1792]))
     img = Image.open(input_path)
+    img_w, img_h = img.size
+
+    if img_w >= target_size[0] and img_h >= target_size[1]:
+        img.close()
+        print(f"  [IMG] Skipping upscale — already at {img_w}x{img_h} >= {target_size[0]}x{target_size[1]}")
+        return input_path
+
     if img.size != render_size:
-        # Resize to expected render size first (in case model output differs)
         img = img.resize(render_size, Image.NEAREST)
-    # Nearest-neighbor upscale to target — keeps chunky pixels
     upscaled = img.resize(target_size, Image.NEAREST)
     upscaled.save(input_path, format='PNG')
-    print(f"  [IMG] Upscaled {render_size} → {target_size} (nearest-neighbor)")
+    print(f"  [IMG] Upscaled {render_size} -> {target_size} (nearest-neighbor)")
     return input_path
 
 
 def _get_pixel_art_model_headers() -> Dict[str, str]:
-    """
-    Generate authentication headers for pixel-art optimized model.
-    Uses existing FAL_KEY from environment.
-    """
     if not FAL_KEY:
         raise ValueError("FAL_KEY environment variable not set")
-    
     return {
         "Authorization": f"Key {FAL_KEY}",
         "Content-Type": "application/json"
@@ -1134,6 +1146,10 @@ def _inject_geopolitical_context(prompt: str, issues: list, script_text: str) ->
     return enriched
 
 
+def _resolve_size(target_app: str = "Default") -> Dict[str, int]:
+    return IMAGE_SIZE_MAP.get(target_app, IMAGE_SIZE_MAP["Default"])
+
+
 @server.tool()
 def generate_pixel_art(
     prompt: str, 
@@ -1280,30 +1296,26 @@ def generate_pixel_art(
 
             os.environ["FAL_KEY"] = FAL_KEY
 
-            # Determine model chain based on configuration
-            if use_pixel_art_model and PIXEL_ART_MODEL_CONFIG["supports_reference"] and reference_image_url:
-                # Use pixel-art optimized model with I2I
-                models_to_try = [PIXEL_ART_MODEL_CONFIG["model"]]
-                print(f"  [IMG] Using pixel-art optimized model with Image-to-Image: {PIXEL_ART_MODEL_CONFIG['model']}")
-            elif use_pixel_art_model:
-                # Use pixel-art optimized model (text-to-image)
-                models_to_try = [PIXEL_ART_MODEL_CONFIG["model"]] + [FAL_MODEL] + FAL_FALLBACK_MODELS
-                print(f"  [IMG] Using pixel-art optimized model (T2I): {PIXEL_ART_MODEL_CONFIG['model']}")
-            else:
-                # Legacy fallback chain
-                models_to_try = [FAL_MODEL] + FAL_FALLBACK_MODELS
-                
+            target_app = os.environ.get("TARGET_APP", "Default")
+            size = _resolve_size(target_app)
+
+            if size["width"] * size["height"] > MAX_PIXELS:
+                print(f"  [IMG] WARNING: {size['width']}x{size['height']} exceeds 1MP cost cap — clamping to 1024x768")
+                size = {"width": 1024, "height": 768}
+
+            print(f"  [IMG] FAL flux/dev | {size['width']}x{size['height']} | steps={MODEL_STEP_CONFIG['fal-ai/flux/dev']} | guidance=3.5 | app={target_app}")
+
+            models_to_try = [FAL_MODEL] + FAL_FALLBACK_MODELS
+
             result = None
             model_used = None
             last_error = None
-            
+
             for model in models_to_try:
                 try:
                     print(f"  [IMG] Trying model: {model}")
-                    
-                    # Build arguments based on model type and I2I status
+
                     if reference_image_url and i2i_params:
-                        # Image-to-Image generation (Phase 2 & 3)
                         arguments = _build_i2i_generation_args(
                             prompt=full_prompt,
                             reference_image_url=reference_image_url,
@@ -1315,51 +1327,34 @@ def generate_pixel_art(
                         )
                         print(f"  [IMG] I2I params: strength={i2i_params['strength']:.2f}, guidance={i2i_params['guidance_scale']:.1f}")
                     else:
-                        # Standard text-to-image generation
-                        _gp = GENERATION_PARAMS
-                        custom_w = _gp.get('custom_width', 1088)
-                        custom_h = _gp.get('custom_height', 1152)
+                        enforced_prompt = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {full_prompt}, vibrant colors, pixel-perfect"
                         base_args = {
-                            "prompt": full_prompt,
-                            "negative_prompt": NEGATIVE_PROMPT,
-                            "image_size": {"width": custom_w, "height": custom_h},
+                            "prompt": enforced_prompt,
+                            "image_size": {"width": size["width"], "height": size["height"]},
                             "num_images": 1,
-                            "num_inference_steps": _gp.get('num_inference_steps', 28),
-                            "guidance_scale": _gp.get('guidance_scale', 3.5),
-                            "enable_safety_checker": _gp.get('enable_safety_checker', False),
-                            "output_format": _gp.get('output_format', 'png'),
+                            "num_inference_steps": MODEL_STEP_CONFIG.get(model, 28),
+                            "guidance_scale": 3.5,
+                            "enable_safety_checker": False,
+                            "output_format": "png",
                         }
-                        print(f"  [IMG] Custom dimensions: {custom_w}×{custom_h}")
+                        print(f"  [IMG] Dimensions: {size['width']}x{size['height']}")
                         if seed is not None:
                             base_args["seed"] = seed
-                        
-                        if model == "fal-ai/flux-lora":
-                            lora_config = _select_style_lora(visual_type)
-                            arguments = {
-                                **base_args,
-                                "num_inference_steps": MODEL_STEP_CONFIG.get(model, 20),
-                                "loras": [{
-                                    "path": lora_config['path'],
-                                    "scale": LORA_SCALE
-                                }],
-                            }
-                        else:
-                            arguments = {k: v for k, v in base_args.items()
-                                         if k not in ('negative_prompt', 'loras')}
-                            arguments["num_inference_steps"] = MODEL_STEP_CONFIG.get(model, 20)
-                    
+
+                        arguments = base_args
+
                     result = fal_client.run(model, arguments=arguments)
                     model_used = model
-                    print(f"  [IMG] ✓ Success with {model}")
+                    print(f"  [IMG] Success with {model}")
                     break
-                    
+
                 except Exception as model_error:
                     last_error = str(model_error)
-                    print(f"  [IMG] ✗ {model} failed: {last_error[:100]}")
+                    print(f"  [IMG] {model} failed: {last_error[:100]}")
                     if model == models_to_try[-1]:
                         raise
                     continue
-            
+
             if not result:
                 raise Exception(f"All models failed. Last error: {last_error}")
 
@@ -1371,38 +1366,36 @@ def generate_pixel_art(
             with open(output_path, "wb") as f:
                 f.write(img_response.content)
 
-            # Upscale with nearest-neighbor for TRUE pixel art
             try:
                 _upscale_pixel_art(str(output_path))
             except Exception as upscale_err:
                 print(f"  [IMG] Warning: Upscale failed, using raw output: {upscale_err}")
 
-            # Cache the prompt→image mapping
             _store_prompt_cache(full_prompt, str(output_path))
 
             return {
                 "success": True,
                 "filename": filename,
                 "path": str(output_path),
-                "prompt_used": full_prompt,
-                "negative_prompt": NEGATIVE_PROMPT,
+                "prompt_used": enforced_prompt,
                 "specificity_score": specificity,
                 "visual_type": visual_type,
                 "source": model_used,
-                "lora_used": model_used == "fal-ai/flux-lora" and not reference_image_url,
-                "lora_config": _select_style_lora(visual_type) if model_used == "fal-ai/flux-lora" and not reference_image_url else None,
                 "image_url": image_url,
                 "output_directory": str(OUTPUT_DIR),
-                # NEW: I2I metadata
                 "i2i_used": reference_image_url is not None,
                 "i2i_params": i2i_params,
                 "reference_image_url": reference_image_url,
                 "pixel_art_model_used": use_pixel_art_model,
-                # NEW: Geopolitical accuracy metadata
                 "geopolitical_validation": final_geo_validation,
                 "accuracy_score": final_geo_validation['accuracy_score'],
                 "countries_detected": list(final_geo_validation['country_analysis'].keys()),
-                "equipment_validated": not any(analysis['issues'] for analysis in final_geo_validation['equipment_analysis'].values())
+                "equipment_validated": not any(analysis['issues'] for analysis in final_geo_validation['equipment_analysis'].values()),
+                "provider": "fal_ai",
+                "target_app": target_app,
+                "width": size["width"],
+                "height": size["height"],
+                "steps": MODEL_STEP_CONFIG.get(model_used, 28),
             }
 
         except Exception as e:
@@ -1411,57 +1404,50 @@ def generate_pixel_art(
                 'content', 'safety', 'policy', 'inappropriate', 'nsfw',
                 'sensitive', 'filtered', 'blocked', 'moderation', 'flagged'
             ])
-            
-            print(f"⚠️  FAL.ai generation failed: {error_msg[:120]}")
-            
-            # ── PROGRESSIVE CONTENT SCRUB RETRY ──
-            # If the error looks like a content policy rejection, try progressively
-            # scrubbing the prompt before giving up and using a placeholder
+
+            print(f"  FAL.ai generation failed: {error_msg[:120]}")
+
             if is_content_policy:
                 import time
                 for scrub_level in [1, 2, 3]:
-                    print(f"  [IMG] 🔄 Content policy detected — retrying with scrub level {scrub_level}/3...")
-                    
-                    # Get progressively scrubbed prompt
+                    print(f"  [IMG] Content policy detected — retrying with scrub level {scrub_level}/3...")
+
                     scrubbed = _progressive_content_scrub(
                         enriched_prompt, visual_type, level=scrub_level
                     )
-                    # Re-apply LoRA trigger and style suffix
                     scrubbed_enhanced = _enhance_prompt_with_lora_trigger(scrubbed, visual_type)
                     scrubbed_full = f"{scrubbed_enhanced}, {STYLE_SUFFIX}"
                     if COLOR_PALETTE_PROMPT:
                         scrubbed_full = f"{scrubbed_full}, {COLOR_PALETTE_PROMPT}"
-                    
+
                     try:
-                        # Try with flux/schnell (fastest, most permissive)
-                        _gp = GENERATION_PARAMS
+                        enforced_scrubbed = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {scrubbed_full}, vibrant colors, pixel-perfect"
                         retry_args = {
-                            "prompt": scrubbed_full,
-                            "image_size": {"width": _gp.get('custom_width', 1088), "height": _gp.get('custom_height', 1152)},
+                            "prompt": enforced_scrubbed,
+                            "image_size": {"width": size["width"], "height": size["height"]},
                             "num_images": 1,
-                            "num_inference_steps": MODEL_STEP_CONFIG.get("fal-ai/flux/schnell", 6),
-                            "guidance_scale": 3.0,
+                            "num_inference_steps": MODEL_STEP_CONFIG.get("fal-ai/flux/schnell", 4),
                             "enable_safety_checker": False,
                             "output_format": "png",
                         }
                         if seed is not None:
                             retry_args["seed"] = seed + scrub_level
-                        
+
                         retry_result = fal_client.run("fal-ai/flux/schnell", arguments=retry_args)
                         retry_image_url = retry_result["images"][0]["url"]
-                        
+
                         img_response = requests.get(retry_image_url, timeout=30)
                         img_response.raise_for_status()
-                        
+
                         with open(output_path, "wb") as f:
                             f.write(img_response.content)
-                        
+
                         try:
                             _upscale_pixel_art(str(output_path))
                         except Exception:
                             pass
-                        
-                        print(f"  [IMG] ✓ Scrub level {scrub_level} succeeded — image saved")
+
+                        print(f"  [IMG] Scrub level {scrub_level} succeeded — image saved")
                         return {
                             "success": True,
                             "filename": filename,
@@ -1472,21 +1458,24 @@ def generate_pixel_art(
                             "source": f"fal-ai/flux/schnell (scrub level {scrub_level})",
                             "scrub_level": scrub_level,
                             "note": f"Content policy retry succeeded at scrub level {scrub_level}",
-                            "size": "1024x1792",
                             "output_directory": str(OUTPUT_DIR),
                             "geopolitical_validation": final_geo_validation,
                             "i2i_used": False,
-                            "i2i_params": None
+                            "i2i_params": None,
+                            "provider": "fal_ai",
+                            "target_app": target_app,
+                            "width": size["width"],
+                            "height": size["height"],
                         }
-                    
+
                     except Exception as retry_err:
-                        print(f"  [IMG] ✗ Scrub level {scrub_level} also failed: {str(retry_err)[:80]}")
-                        time.sleep(1)  # Brief pause between retries
-                
-                print(f"  [IMG] ❌ All scrub levels failed — falling to placeholder")
+                        print(f"  [IMG] Scrub level {scrub_level} also failed: {str(retry_err)[:80]}")
+                        time.sleep(1)
+
+                print(f"  [IMG] All scrub levels failed — falling to placeholder")
             else:
                 print(f"   Non-content error — generating placeholder image as fallback.")
-            
+
             _generate_placeholder(prompt, output_path)
             return {
                 "success": True,
@@ -1496,11 +1485,11 @@ def generate_pixel_art(
                 "visual_type": visual_type,
                 "source": "placeholder",
                 "note": f"FAL.ai fallback: {error_msg[:80]}",
-                "size": "1024x1792",
                 "output_directory": str(OUTPUT_DIR),
                 "geopolitical_validation": final_geo_validation,
                 "i2i_used": reference_image_url is not None,
-                "i2i_params": i2i_params
+                "i2i_params": i2i_params,
+                "provider": "fal_ai",
             }
 
     else:
@@ -1515,7 +1504,6 @@ def generate_pixel_art(
                 "visual_type": visual_type,
                 "source": "placeholder",
                 "note": "FAL_KEY not set — placeholder image generated",
-                "size": "1024x1792",
                 "output_directory": str(OUTPUT_DIR),
                 "geopolitical_validation": final_geo_validation,
                 "i2i_used": False,
