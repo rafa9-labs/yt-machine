@@ -438,8 +438,10 @@ def _clean_script_for_subtitles(script_text: str) -> str:
     Removes TTS pause markers (...), stray quotes, and normalizes whitespace.
     Prevents phantom words and lonely single-character display issues.
     """
+    # Remove glitch/stage markers from old personality
+    text = re.sub(r'\*\[.*?\]\*', '', script_text)
     # Remove ellipsis pause markers injected by TTS
-    text = re.sub(r'\.{2,}', ' ', script_text)
+    text = re.sub(r'\.{2,}', ' ', text)
     # Remove stray double quotes (TTS injects ... "phrase" ... for dramatic timing)
     text = text.replace('"', '')
     # Remove stray smart quotes
@@ -615,20 +617,10 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
     # Filter out any words that render as empty after cleaning
     aligned_words = [w for w in aligned_words if _clean_display(w['word'])]
 
-    # Compute dynamic drift from whisper alignment
-    whisper_total = word_timestamps[-1]['end'] if word_timestamps else 1.0
-    whisper_cleaned = [w['word'].strip('.,;:!?—–').lower() for w in word_timestamps]
-    script_cleaned_list = [w.strip('.,;:!?—–').lower() for w in clean_script.split()] if clean_script else []
-    quick_anchors = []
-    wi = 0
-    for si, sword in enumerate(script_cleaned_list):
-        for twi in range(max(0, wi - 1), min(len(whisper_cleaned), wi + 4)):
-            if sword == whisper_cleaned[twi]:
-                quick_anchors.append((si, twi))
-                wi = twi + 1
-                break
-    drift = _compute_drift(quick_anchors, word_timestamps, len(script_cleaned_list), whisper_total)
-    print(f"  [SUB] Computed whisper drift: {drift*1000:.0f}ms ({len(quick_anchors)} anchors)")
+    # Compute dynamic drift from whisper alignment — DISABLED
+    # Drift compensation caused uniform subtitle offset. Using raw timestamps.
+    drift = 0.0
+    print(f"  [SUB] Drift compensation disabled — using raw whisper timestamps")
 
     phrases = _split_into_phrases(aligned_words, max_words=5)
     if not phrases:
@@ -638,8 +630,9 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
 
     clips = []
     for i, (start_idx, end_idx, phrase_start, phrase_end) in enumerate(phrases):
-        clip_start = max(0, phrase_start - lead_in) if i == 0 else max(phrases[i-1][3], phrase_start - lead_in)
-        clip_end = phrase_end
+        prev_clip_end = (phrases[i-1][3] + 0.15) if i > 0 else 0
+        clip_start = max(prev_clip_end, phrase_start - lead_in)
+        clip_end = phrase_end + 0.15
         duration = clip_end - clip_start
         
         if duration <= 0:
