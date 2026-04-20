@@ -20,16 +20,23 @@
   "color_palette_prompt": "color palette: dark navy blue (#0A1628), amber orange (#FFA500), cyan blue (#00D4FF), slate gray (#4A5568)",
 
   "generation_params": {
+    "provider": "fal_ai",
+    "model": "fal-ai/flux/dev",
+    "num_inference_steps": 28,
     "guidance_scale": 3.5,
-    "num_inference_steps": 20,
-    "image_size": "custom",
-    "custom_width": 1088,
-    "custom_height": 1152,
     "output_format": "png",
     "enable_safety_checker": false,
     "render_resolution": [272, 288],
-    "target_resolution": [1088, 1152],
-    "upscale_method": "nearest"
+    "target_resolution": [1280, 720],
+    "upscale_method": "nearest",
+    "max_pixels": 1000000,
+    "pixel_art_enforcement_prefix": "Clean 32-bit pixel art, high contrast news graphic, isometric style, uniform grid-aligned pixels, no anti-aliasing, no color bleeding, no soft gradients",
+    "size_map": {
+      "PinguPlay": { "width": 512, "height": 512 },
+      "PinguQuest": { "width": 768, "height": 768 },
+      "PinguHero": { "width": 1024, "height": 1024 },
+      "Default": { "width": 1280, "height": 720 }
+    }
   },
 
   "lora_defaults": {

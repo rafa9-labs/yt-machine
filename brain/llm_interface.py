@@ -37,25 +37,41 @@ class LLMInterface:
     
     @staticmethod
     def _strip_thinking_tokens(text: str) -> str:
-        """Strip Gemma 4 / Heretic thinking tokens from response.
+        """Strip thinking tokens from LLM response.
 
-        The abliterated model outputs various patterns:
-          <|channel>thought<channel|>...<|channel>output<channel|>
-          <|channel>thought\n<channel|>{json...}
+        Handles three model families:
+          Qwen3: <think...</think
+          Gemma 4 Heretic: <|channel>thought<channel|>...<|channel>output<channel|>
+          DeepSeek-R1: <think...</think
         These consume output budget and break JSON parsing.
         """
         import re
-        # Strategy: find <|channel>output<channel|> or first { after thought tokens
-        # If output marker exists, keep everything after it
+
+        # Qwen3 / DeepSeek-R1: <think...</think
+        # Some Qwen3 outputs use <think without closing >, or </think without >
+        think_match = re.search(r'<think\b', text)
+        if think_match:
+            close_match = re.search(r'</think\s*>?', text)
+            if close_match:
+                text = text[close_match.end():]
+            else:
+                json_start = re.search(r'[{]', text[think_match.start():])
+                if json_start:
+                    text = text[think_match.start() + json_start.start():]
+
+        # Gemma 4 Heretic: <|channel>output<channel|>
         output_match = re.search(r'<\|?channel\|?>output<\|?channel\|?>', text)
         if output_match:
             text = text[output_match.end():]
-        else:
-            # No output marker — strip everything before the first { or [
+
+        # If nothing matched but text starts with non-JSON, find first {
+        if not text.strip().startswith('{') and not text.strip().startswith('['):
             json_start = re.search(r'[{]', text)
             if json_start:
                 text = text[json_start.start():]
+
         # Clean remaining stray special tokens
+        text = re.sub(r'</?think[^>]*>?', '', text)
         text = re.sub(r'<\|?[^>]*\|?>', '', text)
         return text.strip()
 
@@ -69,58 +85,51 @@ class LLMInterface:
         response = re.sub(r'```json\s*', '', response)
         response = re.sub(r'```\s*', '', response)
         
-        # Find JSON boundaries
         json_start = response.find('{')
-        json_end = response.rfind('}') + 1
-        
-        if json_start == -1 or json_end <= json_start:
+        if json_start == -1:
             return None
-        
-        json_str = response[json_start:json_end]
-        
+
+        json_str = response[json_start:]
+
         # Remove trailing commas
         json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-        
+
         try:
             return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            # Try to extract just the outermost JSON object
-            try:
-                # Count braces to find complete JSON
-                brace_count = 0
-                start_idx = -1
-                for i, char in enumerate(response):
-                    if char == '{':
-                        if brace_count == 0:
-                            start_idx = i
-                        brace_count += 1
-                    elif char == '}':
-                        brace_count -= 1
-                        if brace_count == 0 and start_idx != -1:
-                            json_str = response[start_idx:i+1]
-                            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-                            return json.loads(json_str)
-            except:
-                pass
-            
-            # Last resort: Try to close incomplete JSON
-            try:
-                json_str = response[json_start:]
-                # Count open braces/brackets
-                open_braces = json_str.count('{') - json_str.count('}')
-                open_brackets = json_str.count('[') - json_str.count(']')
-                
-                # Add closing characters
-                json_str += '}' * open_braces
-                json_str += ']' * open_brackets
-                
-                # Remove trailing commas before closing
-                json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-                
-                return json.loads(json_str)
-            except:
-                pass
-            
+        except json.JSONDecodeError:
+            pass
+
+        # Try brace-counting to extract a complete JSON object
+        try:
+            brace_count = 0
+            start_idx = -1
+            for i, char in enumerate(response):
+                if char == '{':
+                    if brace_count == 0:
+                        start_idx = i
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0 and start_idx != -1:
+                        candidate = response[start_idx:i+1]
+                        candidate = re.sub(r',(\s*[}\]])', r'\1', candidate)
+                        return json.loads(candidate)
+        except:
+            pass
+
+        # Last resort: auto-close incomplete JSON by counting unclosed delimiters
+        try:
+            json_str = response[json_start:]
+            open_braces = json_str.count('{') - json_str.count('}')
+            open_brackets = json_str.count('[') - json_str.count(']')
+
+            json_str += ']' * max(0, open_brackets)
+            json_str += '}' * max(0, open_braces)
+
+            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+
+            return json.loads(json_str)
+        except:
             return None
     
     def _make_request(self, endpoint: str, payload: Dict[str, Any], attempt: int = 1) -> Optional[Dict[str, Any]]:
@@ -484,11 +493,11 @@ Synthesize into a compelling 60-80 second professional news narration script wit
     # ── SEGUE TEMPLATES: High-quality fallbacks when LLM generates weak segues ──
     _SEGUE_TEMPLATES = [
         "But wait... that's not even the craziest part.",
-        "And if you thought THAT was wild... hold on.",
-        "Now here's where it gets REALLY interesting.",
-        "But that's just the warmup. Brace yourselves.",
-        "Speaking of sneaky moves... check this next one out.",
-        "And now for the story that should REALLY keep you up at night.",
+        "Oh but we're just getting started.",
+        "And now for something that'll make your jaw drop.",
+        "You think that's wild? Just wait for this next one.",
+        "Hold onto your hats... this next one is absolutely insane.",
+        "And believe it or not, it gets even crazier.",
     ]
     
     def _ensure_greeting_in_fulltext(self, script: dict) -> dict:
@@ -542,7 +551,7 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             # Check if segue is valid: non-empty, 5+ words, creates anticipation
             words = segue.split()
             is_valid = len(words) >= 5 and any(
-                kw in segue.lower() for kw in ['but', 'and', 'now', 'wait', 'that', 'here', 'check', 'sneaky', 'wild', 'crazy', 'brace', 'hold']
+                kw in segue.lower() for kw in ['but', 'and', 'now', 'wait', 'that', 'here', 'check', 'sneaky', 'wild', 'crazy', 'insane', 'believe', 'next', 'last', "won't believe"]
             )
             
             if not is_valid:
@@ -555,7 +564,7 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         return script
     
     # Unified closing — the signature Masker farewell (Truman Show inspired)
-    UNIFIED_CLOSING = "... And these were the news for this afternoon. Subscribe, like, share. And in case I don't see you, good morning, good afternoon... and good night."
+    UNIFIED_CLOSING = "And these were the news for today. Subscribe, like, share. And in case I don't see you, good morning, good afternoon... and good night."
     
     def _validate_closing(self, full_text: str) -> str:
         """
@@ -566,8 +575,8 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             return full_text
         
         text_lower = full_text.lower()
-        has_subscribe = any(word in text_lower for word in ['subscribe', 'sub', 'like', 'follow'])
-        has_truman = 'good morning' in text_lower and 'good afternoon' in text_lower and 'good night' in text_lower
+        has_subscribe = any(word in text_lower for word in ['subscribe', 'like', 'share'])
+        has_truman = 'good morning' in text_lower and 'good afternoon' in text_lower
         
         if has_truman:
             return full_text  # Unified closing already present
@@ -576,8 +585,8 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         # Look for common closing patterns the LLM generates
         import re
         # Remove anything after the last story separator that looks like a closing
-        stripped = re.sub(r'\s*\.{3,4}\s*(?:And with that|Subscribe|That\'s all|So there you have|This is Masker|I\'m Masker|see you).*$',
-                         '', full_text, flags=re.IGNORECASE).rstrip()
+        stripped = re.sub(r'\s*\.{3,4}\s*(?:And with that|Subscribe|That\'s all|So there you have|This is Masker|I\'m Masker|see you|And these were).*$',
+                          '', full_text, flags=re.IGNORECASE).rstrip()
         
         result = stripped + ' .... ' + self.UNIFIED_CLOSING
         print(f"  [CLOSING] Injected unified closing (subscribe={has_subscribe}, truman={has_truman})")

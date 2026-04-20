@@ -1,75 +1,57 @@
-# YT-Machine — Current State (2026-04-16)
+# YT-Machine — Current State (2026-04-20)
 
-> **Purpose**: Snapshot of where the project is right now. Read this after AGENT_CONTEXT.md.
+> **Purpose**: Snapshot of where the project is right now. Read this after AGENTS.md.
 
 ---
 
-## Last Session: What Was Done (2026-04-16)
+## Last Session: What Was Done (2026-04-20)
 
-### 1. Vector Dedup Import Fix ✅
-- **Problem**: `generate_complete_video.py` imported `VideoTopicStore` and `TopicDeduplicator` — neither existed. Real names: `VectorStore`, `DeduplicationChecker`. This silently killed ALL semantic dedup for months.
-- **Fix**: Fixed both imports + method calls (`is_duplicate()` → `check_topic()`). Also fixed `AsyncRSScraper` → `AsyncScraper` and `fetch_all_feeds()` → `scrape_all()`.
-- **Impact**: Semantic dedup via pgvector now actually works. Ollama embeddings + cosine similarity prevent repeat stories across runs.
-- **Files**: `generate_complete_video.py` (lines 202, 278-279, 281, 284-297, 1052-1063)
+### 1. Image Generation: Switched to FAL Flux/Dev ✅
+- **Before**: `fal-ai/flux-lora` at $0.07/image — expensive for 6 images/run
+- **After**: `fal-ai/flux/dev` primary ($0.025/image), `fal-ai/flux/schnell` fallback. Pixel art prefix prepended to all prompts. 1MP cost cap. Skip destructive upscale when image >= target resolution.
+- **Files**: `video_server/pixel_art_tool.py`, `config/image_style.json`, `.env.example`
 
-### 2. PostgreSQL Save Fix ✅
-- **Problem**: `_save_to_postgres()` didn't include `topic` column → `null value in column "topic"` error on every run
-- **Fix**: Added optional `topic` parameter; on "completed" step, extracts topic from first news analysis and includes it in INSERT.
-- **Files**: `generate_complete_video.py` (lines 145-168, 1061)
+### 2. Personality Revert: Removed "Self-Aware Algorithm" ✅
+- **Problem**: A previous iteration introduced a "Masker v5 — Self-Aware Algorithm" personality with glitch markers (`*[stutter]*`, `*[system_warning]*`, `*[feed_interrupted]*`, `*[rebooting]*`, `*[signal_lost]*`) that bled into TTS, subtitles, and the final video.
+- **Fix**: Fully reverted to original Masker comedian personality across ALL layers:
+  - `brain/llm_interface.py` — greeting, segues, closing (Truman Show outro), intro_hook, synthesis prompt, segue validation keywords
+  - `config/system_prompts.json` — `multi_news_synthesizer` (back to "comedian who does the news"), `script_curator` (back to "Speech Coach for ElevenLabs"), `visual_prompt_generator` (removed glitch instruction)
+- **Files**: `brain/llm_interface.py`, `config/system_prompts.json`
 
-### 3. LangChain Curly Braces Fix ✅
-- **Problem**: 6 prompts in `system_prompts.json` had raw JSON examples with `{` and `}` — LangChain's `ChatPromptTemplate` interpreted them as template variables → KeyError
-- **Fix**: Escaped all literal braces: `{` → `{{`, `}` → `}}` in `news_processor`, `debate_skeptic`, `debate_explainer`, `visual_prompt_generator`, `salience_extractor`, and `multi_news_synthesizer`
-- **Files**: `config/system_prompts.json`
+### 3. Subtitle Fixes ✅
+- **Overlap fix**: Phrase clips extended +0.15s for last-word highlight caused visual overlap. `clip_start` now accounts for previous phrase's extension.
+- **Sync fix**: `_clean_script_for_subtitles()` now strips `*[marker]*` patterns before word alignment, preventing phantom words and timing drift.
+- **TTS cleaning**: `tts_tool.py` strips `*[marker]*` before sending to ElevenLabs.
+- **Files**: `video_server/subtitle_renderer.py`, `video_server/tts_tool.py`
 
-### 4. LLM-Based Intra-Batch Dedup ✅
-- **Problem**: Story selection used a weak 5-word frozenset overlap check — near-identical stories with different wording slipped through
-- **Fix**: Replaced with `_is_semantically_similar()` that uses the LLM to judge if two headlines cover the same story. Falls back to frozenset if LLM fails.
-- **Files**: `generate_complete_video.py` (lines 248-272)
-
-### 5. Subtitle Timing Overhaul ✅
-- **Problem**: Fixed 0.2s offset, low anchor matching (70% threshold), mismatched pre-roll (1.0s scene vs 0.3s subtitle)
-- **Fix**: 
-  - Dynamic drift calculation per video (median of anchor position differences)
-  - Phonetic matching for proper nouns (consonant skeleton comparison)
-  - Lowered fuzzy match threshold from 70% to 60%
-  - Unified pre-roll: scenes now use 0.3s (same as subtitle lead-in)
-- **Files**: `video_server/subtitle_renderer.py`, `generate_complete_video.py`, `rebuild_video.py`
-
-### 6. Image Motion Effects ✅
-- **Problem**: Images had only zoom/pan — needed more life within their confined space
-- **Fix**: Added 3 new ambient effects layered on top of motion effects:
-  - **Breathing pulse**: 1-2% scale oscillation (sin wave, 0.5Hz)
-  - **Pixel shimmer**: Random sparkle overlay (CRT/retro effect)
-  - **Vignette breath**: Edge brightness pulse (0.3Hz ambient lighting)
-  - Effects rotate across scenes (each scene gets a different motion + ambient combo)
+### 4. Image Zoom Effect Fix ✅
+- **Problem**: Zoom expressions were mathematically broken — ffmpeg's zoompan starts `zoom` at 1.0, but the expression tried to subtract from 1.0 and immediately hit the `max(1.0, ...)` floor. **Zero visible movement guaranteed.**
+- **Fix**: Replaced with frame-counter-based (`on`) alternating zoom — no panning:
+  - Even scenes (0,2,4): zoom OUT from 1.25→1.0 (starts cropped, reveals full image)
+  - Odd scenes (1,3,5): zoom IN from 1.0→1.25 (starts full, zooms into center)
+  - Pure center-based — no stretching, output frame size never changes, only crop region shifts
 - **Files**: `video_server/split_video_assembler.py`
+
+### 5. Closing Restored ✅
+- Reverted to Truman Show-inspired outro: `"And these were the news for today. Subscribe, like, share. And in case I don't see you, good morning, good afternoon... and good night."`
+- Old greeting restored: `"Good Morning/Afternoon/Evening! I'm Masker!"`
+- **Files**: `brain/llm_interface.py`
 
 ---
 
 ## Known Issues / Remaining
 
-### Non-Critical
-- **Zoom rendering slow**: ~15-20 min for a 76s video on CPU. Could use ffmpeg-native zoom filters instead of moviepy frame-by-frame processing.
-- **pgvector dependency**: Semantic dedup requires PostgreSQL with pgvector extension running + `topic_embeddings` table. If not available, dedup silently falls back to LLM-based intra-batch check.
+### Needs Verification
+- **Zoom effect**: Mathematically correct but needs a test run to confirm visible movement in output video
+- **Subtitle sync**: Overlap and drift fixes need end-to-end test
+- **Personality**: System prompts reverted but LLM may still occasionally use old patterns — monitor first few runs
 
 ### Not Yet Started
-- Wake-on-LAN + automated Telegram delivery (tools exist, automation script not written)
 - n8n/Docker scheduled publishing
 - YouTube/TikTok/Instagram API publishing
 - A/B testing hooks for retention
 - PDF/book input for video generation
 - Connected storytelling (narrative thread between 3 stories)
-
----
-
-## Pipeline Output
-Last successful run: `output/projects/video_1776278345/`
-- 3 stories: Iran/China satellite intel, US-Iran ceasefire, Strait of Hormuz threat
-- 6 pixel art images (1088×1152)
-- 76s voiceover (ElevenLabs, 204 word timestamps)
-- 14.6 MB video file
-- Telegram delivery: configured but needs verification
 
 ---
 
@@ -91,5 +73,3 @@ All 8 MCP servers from Cline are configured in `.opencode.json`:
 6. puppeteer (browser automation)
 7. postgres (forex_ml database)
 8. fetch (HTTP/YouTube transcripts)
-
-**Note**: Brave search requires `BRAVE_API_KEY` env var. Postgres connection string is in the config.
