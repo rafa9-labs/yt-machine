@@ -1,0 +1,33 @@
+{
+  "video": "output\\projects\\video_1775852604\\video_1775852604.mp4",
+  "timestamp": "2026-04-11T14:27:46.825980",
+  "results": [
+    {
+      "platform": "youtube",
+      "status": "dry_run",
+      "title": "Geopolitical Sentinel \u2014 Daily Intelligence Briefing"
+    },
+    {
+      "platform": "tiktok",
+      "status": "dry_run",
+      "title": "Geopolitical Sentinel \u2014 Daily Intelligence Briefing"
+    },
+    {
+      "platform": "instagram",
+      "status": "dry_run",
+      "title": "Geopolitical Sentinel \u2014 Daily Intelligence Briefing"
+    }
+  ],
+  "metadata": {
+    "title": "Geopolitical Sentinel \u2014 Daily Intelligence Briefing",
+    "description": "Geopolitical analysis with pixel art visuals. The angle mainstream media buries \u2014 every event connects to a pattern.\n\n#geopolitics #news #analysis #pixelart #intelligence",
+    "tags": [
+      "geopolitics",
+      "news",
+      "analysis",
+      "pixel art",
+      "intelligence",
+      "military"
+    ]
+  }
+}

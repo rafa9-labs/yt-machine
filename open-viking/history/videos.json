@@ -31,7 +31,11 @@
         "instagram"
       ],
       "status": "published",
+<<<<<<< HEAD
       "last_performance_update": "2026-03-20T15:08:59.857809"
+=======
+      "last_performance_update": "2026-03-19T18:13:01.629656"
+>>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
     },
     {
       "id": 2,
@@ -63,7 +67,11 @@
         "instagram"
       ],
       "status": "published",
+<<<<<<< HEAD
       "last_performance_update": "2026-03-20T15:08:59.865255"
+=======
+      "last_performance_update": "2026-03-19T18:13:01.639361"
+>>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
     },
     {
       "id": 3,
@@ -95,6 +103,7 @@
         "instagram"
       ],
       "status": "generated"
+<<<<<<< HEAD
     },
     {
       "id": 4,
@@ -253,6 +262,13 @@
   "metadata": {
     "total_count": 7,
     "last_updated": "2026-03-20T15:08:59.848410",
+=======
+    }
+  ],
+  "metadata": {
+    "total_count": 3,
+    "last_updated": "2026-03-19T18:13:01.620562",
+>>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
     "version": "1.0"
   }
 }

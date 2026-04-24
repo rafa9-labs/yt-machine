@@ -1,0 +1,632 @@
+[
+  {
+    "index": 1,
+    "filename": "image_001.png",
+    "caption": "F-35 stealth fighter jet flying over Persian Gulf at dusk, isometric pixel art",
+    "category": "military_air",
+    "prompt_used": "(F-35 stealth fighter:1.4), Persian Gulf, flying at dusk, contrail visible, dramatic orange sky, isometric aerial view",
+    "score": 60,
+    "generated_at": "2026-03-25T19:56:45.909539"
+  },
+  {
+    "index": 2,
+    "filename": "image_002.png",
+    "caption": "Israeli F-16I Sufa jet conducting airstrike, IDF insignia visible, pixel art",
+    "category": "military_air",
+    "prompt_used": "(F-16I Sufa:1.4), (IDF insignia:1.3), airstrike, smoke plume rising, desert terrain below, dramatic angle",
+    "score": 45,
+    "generated_at": "2026-03-25T19:56:59.200391"
+  },
+  {
+    "index": 3,
+    "filename": "image_003.png",
+    "caption": "Russian Su-35 intercepting drone over Black Sea, pixel art",
+    "category": "military_air",
+    "prompt_used": "(Su-35 Flanker-E:1.4), drone interception, Black Sea, dark overcast sky, tactical chase angle, (red star insignia:1.2)",
+    "score": 65,
+    "generated_at": "2026-03-25T19:59:13.160429"
+  },
+  {
+    "index": 4,
+    "filename": "image_004.png",
+    "caption": "US B-52 bomber flying over Pacific Ocean, strategic bombing run, pixel art",
+    "category": "military_air",
+    "prompt_used": "(B-52 Stratofortress:1.4), Pacific Ocean, long-range bombing run, high altitude, formation flight, dusk lighting",
+    "score": 10,
+    "generated_at": "2026-03-25T19:59:25.853990"
+  },
+  {
+    "index": 5,
+    "filename": "image_005.png",
+    "caption": "Chinese J-20 stealth fighter patrolling Taiwan Strait, pixel art",
+    "category": "military_air",
+    "prompt_used": "(J-20 stealth fighter:1.4), (PLA insignia:1.3), Taiwan Strait, low cloud cover, tense patrol angle, grey sky",
+    "score": 55,
+    "generated_at": "2026-03-25T20:01:48.434612"
+  },
+  {
+    "index": 6,
+    "filename": "image_006.png",
+    "caption": "Turkish Bayraktar TB2 drone flying over conflict zone, pixel art",
+    "category": "military_air",
+    "prompt_used": "(Bayraktar TB2 drone:1.4), conflict zone, surveillance flight, hilly terrain, golden hour lighting, (Turkish roundel:1.2)",
+    "score": 20,
+    "generated_at": "2026-03-25T20:02:02.636871"
+  },
+  {
+    "index": 7,
+    "filename": "image_007.png",
+    "caption": "US MQ-9 Reaper drone conducting surveillance over Middle East desert, pixel art",
+    "category": "military_air",
+    "prompt_used": "(MQ-9 Reaper drone:1.4), surveillance flight over desert, Middle East, (USAF roundel:1.2), high altitude, vast landscape below",
+    "score": 55,
+    "generated_at": "2026-03-25T20:02:24.349322"
+  },
+  {
+    "index": 8,
+    "filename": "image_008.png",
+    "caption": "Houthi ballistic missile launching from Yemen toward Red Sea, pixel art",
+    "category": "military_air",
+    "prompt_used": "(ballistic missile launch:1.4), Yemen coastline, rocket exhaust trail rising, Red Sea visible, night launch, dramatic fire glow",
+    "score": 65,
+    "generated_at": "2026-03-25T20:02:33.045000"
+  },
+  {
+    "index": 9,
+    "filename": "image_009.png",
+    "caption": "Israeli Iron Dome intercepting missiles over Tel Aviv at night, pixel art",
+    "category": "military_air",
+    "prompt_used": "(Iron Dome missile battery:1.4), (interception trails:1.3), Tel Aviv night skyline, explosions mid-air, searchlights",
+    "score": 65,
+    "generated_at": "2026-03-25T20:04:45.190456"
+  },
+  {
+    "index": 10,
+    "filename": "image_010.png",
+    "caption": "Pakistan JF-17 Thunder fighter jet on combat patrol, pixel art",
+    "category": "military_air",
+    "prompt_used": "(JF-17 Thunder:1.4), (PAF roundel:1.2), combat patrol, mountainous terrain, dawn lighting, dramatic angle",
+    "score": 45,
+    "generated_at": "2026-03-25T20:06:54.788950"
+  },
+  {
+    "index": 11,
+    "filename": "image_011.png",
+    "caption": "US aircraft carrier USS Nimitz sailing through Strait of Hormuz, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(USS Nimitz carrier:1.4), (Stars and Stripes:1.2), Strait of Hormuz, naval escort formation, blue waters, afternoon light",
+    "score": 40,
+    "generated_at": "2026-03-25T20:07:01.768104"
+  },
+  {
+    "index": 12,
+    "filename": "image_012.png",
+    "caption": "IRGC speedboats confronting tanker in Persian Gulf, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(IRGC patrol speedboats:1.4), (Iranian Revolutionary Guard:1.3), tanker vessel, Persian Gulf, tense confrontation, choppy waters",
+    "score": 70,
+    "generated_at": "2026-03-25T20:07:08.070845"
+  },
+  {
+    "index": 13,
+    "filename": "image_013.png",
+    "caption": "Russian guided missile cruiser Moskva sailing Black Sea, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(guided missile cruiser:1.4), (red star insignia:1.2), Black Sea, grey sky, wartime patrol, smoke from stacks",
+    "score": 65,
+    "generated_at": "2026-03-25T20:07:34.220140"
+  },
+  {
+    "index": 14,
+    "filename": "image_014.png",
+    "caption": "Chinese Type 055 destroyer leading naval formation in South China Sea, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(Type 055 destroyer:1.4), (PLA Navy insignia:1.3), South China Sea, carrier battle group, blue water, tactical formation",
+    "score": 55,
+    "generated_at": "2026-03-25T20:07:40.408690"
+  },
+  {
+    "index": 15,
+    "filename": "image_015.png",
+    "caption": "Naval blockade of Red Sea shipping lane, Houthi-controlled waters, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(naval blockade:1.4), Red Sea shipping lane, commercial tankers halted, military vessels, tense standoff, Bab-el-Mandeb Strait",
+    "score": 55,
+    "generated_at": "2026-03-25T20:07:51.254801"
+  },
+  {
+    "index": 16,
+    "filename": "image_016.png",
+    "caption": "US Arleigh Burke destroyer firing Tomahawk missile at night, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(Arleigh Burke destroyer:1.4), (Tomahawk missile launch:1.3), night firing, sea spray, missile exhaust trail, (US Navy ensign:1.2)",
+    "score": 65,
+    "generated_at": "2026-03-25T20:08:16.960308"
+  },
+  {
+    "index": 17,
+    "filename": "image_017.png",
+    "caption": "Iranian submarine surfacing in Persian Gulf, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(Iranian submarine:1.4), (Persian script insignia:1.2), Persian Gulf, surfacing at dawn, foam and wake, strategic positioning",
+    "score": 45,
+    "generated_at": "2026-03-25T20:10:26.560735"
+  },
+  {
+    "index": 18,
+    "filename": "image_018.png",
+    "caption": "Israeli Merkava tank advancing through Gaza urban terrain, pixel art",
+    "category": "military_ground",
+    "prompt_used": "(Merkava IV tank:1.4), (IDF insignia:1.3), urban combat zone, rubble and dust, dawn lighting, armoured column",
+    "score": 30,
+    "generated_at": "2026-03-25T20:10:33.187882"
+  },
+  {
+    "index": 19,
+    "filename": "image_019.png",
+    "caption": "Russian T-72 tank column advancing through Ukrainian countryside, pixel art",
+    "category": "military_ground",
+    "prompt_used": "(T-72 tank column:1.4), (red star insignia:1.2), Ukrainian farmland, snow and mud, overcast sky, armoured advance",
+    "score": 45,
+    "generated_at": "2026-03-25T20:10:40.560707"
+  },
+  {
+    "index": 20,
+    "filename": "image_020.png",
+    "caption": "US Army Abrams tank in desert formation, Middle East deployment, pixel art",
+    "category": "military_ground",
+    "prompt_used": "(M1A2 Abrams tank:1.4), (Stars and Stripes:1.2), desert terrain, sand dunes, tactical formation, harsh midday sun",
+    "score": 40,
+    "generated_at": "2026-03-25T20:11:10.880474"
+  },
+  {
+    "index": 21,
+    "filename": "image_021.png",
+    "caption": "Iranian IRGC troops patrolling mountain border with Iraq, pixel art",
+    "category": "military_ground",
+    "prompt_used": "(IRGC soldiers:1.4), (Iranian flag insignia:1.2), mountain border patrol, rocky terrain, Iran-Iraq border, dusk lighting",
+    "score": 60,
+    "generated_at": "2026-03-25T20:11:20.757797"
+  },
+  {
+    "index": 22,
+    "filename": "image_022.png",
+    "caption": "Saudi Arabian military convoy crossing Yemen border, pixel art",
+    "category": "military_ground",
+    "prompt_used": "(Saudi military convoy:1.4), (Saudi flag insignia:1.2), Yemen border crossing, armoured vehicles, desert dust, afternoon heat",
+    "score": 40,
+    "generated_at": "2026-03-25T20:11:29.669460"
+  },
+  {
+    "index": 23,
+    "filename": "image_023.png",
+    "caption": "Ukrainian troops defending Kyiv with S-300 missile system, pixel art",
+    "category": "military_ground",
+    "prompt_used": "(S-300 missile battery:1.4), (Ukrainian trident insignia:1.3), Kyiv defence, snow covered ground, winter sky, (blue and yellow:1.2)",
+    "score": 20,
+    "generated_at": "2026-03-25T20:11:48.468443"
+  },
+  {
+    "index": 24,
+    "filename": "image_024.png",
+    "caption": "Oil price surge display showing dollar per barrel, trading floor, pixel art",
+    "category": "economic",
+    "prompt_used": "(oil price display board:1.4), $120 per barrel, trading floor, price spike upward, urgent red indicators, financial data screens",
+    "score": 0,
+    "generated_at": "2026-03-25T20:11:59.837020"
+  },
+  {
+    "index": 25,
+    "filename": "image_025.png",
+    "caption": "Long queue of cars at gas station during fuel shortage, pixel art",
+    "category": "economic",
+    "prompt_used": "(long fuel queue:1.4), gas station, cars lined up stretching into distance, shortage signs, stressed civilians, ground-level view",
+    "score": 0,
+    "generated_at": "2026-03-25T20:13:15.132068"
+  },
+  {
+    "index": 26,
+    "filename": "image_026.png",
+    "caption": "Wall Street trading floor during market crash, red screens, pixel art",
+    "category": "economic",
+    "prompt_used": "(trading floor:1.4), red market crash indicators, traders in panic, multiple screens showing falling prices, harsh fluorescent lighting",
+    "score": 0,
+    "generated_at": "2026-03-25T20:13:25.737424"
+  },
+  {
+    "index": 27,
+    "filename": "image_027.png",
+    "caption": "Empty supermarket shelves during sanctions, civilians searching, pixel art",
+    "category": "economic",
+    "prompt_used": "(empty shelves:1.4), supermarket interior, sanctions impact, civilians looking for goods, sparse products, economic despair",
+    "score": 0,
+    "generated_at": "2026-03-25T20:14:15.223774"
+  },
+  {
+    "index": 28,
+    "filename": "image_028.png",
+    "caption": "Oil tanker passing through Strait of Hormuz, strategic chokepoint, pixel art",
+    "category": "economic",
+    "prompt_used": "(oil tanker:1.4), Strait of Hormuz, strategic shipping lane, blue waters, sunset horizon, commercial vessel passage",
+    "score": 40,
+    "generated_at": "2026-03-25T20:14:25.286179"
+  },
+  {
+    "index": 29,
+    "filename": "image_029.png",
+    "caption": "Stock market chart showing inflation spike and interest rate rise, pixel art",
+    "category": "economic",
+    "prompt_used": "(financial chart:1.4), inflation spike graph, interest rate indicators, dark screen glow, economic analysis display, abstract data",
+    "score": 0,
+    "generated_at": "2026-03-25T20:14:33.120715"
+  },
+  {
+    "index": 30,
+    "filename": "image_030.png",
+    "caption": "Sanctions impact on Iranian oil exports, tanker blocked at port, pixel art",
+    "category": "economic",
+    "prompt_used": "(blocked oil tanker:1.4), Iranian port, sanctions enforcement, naval vessel nearby, sunset, economic isolation imagery",
+    "score": 35,
+    "generated_at": "2026-03-25T20:14:42.107576"
+  },
+  {
+    "index": 31,
+    "filename": "image_031.png",
+    "caption": "OPEC meeting room with oil production charts and ministers, pixel art",
+    "category": "economic",
+    "prompt_used": "(OPEC meeting:1.4), ministerial conference room, oil production charts on wall, formal setting, diplomatic atmosphere",
+    "score": 0,
+    "generated_at": "2026-03-25T20:14:52.659793"
+  },
+  {
+    "index": 32,
+    "filename": "image_032.png",
+    "caption": "UN Security Council emergency meeting, world leaders at round table, pixel art",
+    "category": "diplomatic",
+    "prompt_used": "(UN Security Council chamber:1.4), round table, world leaders, (UN flag:1.2), emergency session, formal lighting, diplomatic tension",
+    "score": 0,
+    "generated_at": "2026-03-25T20:14:59.687680"
+  },
+  {
+    "index": 33,
+    "filename": "image_033.png",
+    "caption": "US Secretary of State meeting Iranian foreign minister in Geneva, pixel art",
+    "category": "diplomatic",
+    "prompt_used": "(diplomatic meeting:1.4), Geneva conference room, two delegations facing each other, (US and Iranian flags:1.2), formal suits, tense atmosphere",
+    "score": 15,
+    "generated_at": "2026-03-25T20:15:08.660782"
+  },
+  {
+    "index": 34,
+    "filename": "image_034.png",
+    "caption": "NATO summit with leaders signing defence agreement, pixel art",
+    "category": "diplomatic",
+    "prompt_used": "(NATO summit:1.4), (NATO emblem:1.3), world leaders signing agreement, formal hall, multiple national flags, press cameras",
+    "score": 15,
+    "generated_at": "2026-03-25T20:15:17.766670"
+  },
+  {
+    "index": 35,
+    "filename": "image_035.png",
+    "caption": "Abraham Accords signing ceremony, Middle East peace deal, pixel art",
+    "category": "diplomatic",
+    "prompt_used": "(peace agreement signing:1.4), (Israeli and Arab flags:1.2), formal ceremony, White House backdrop, multiple leaders, historic moment",
+    "score": 15,
+    "generated_at": "2026-03-25T20:15:26.437620"
+  },
+  {
+    "index": 36,
+    "filename": "image_036.png",
+    "caption": "G7 summit leaders meeting around conference table, global issues, pixel art",
+    "category": "diplomatic",
+    "prompt_used": "(G7 summit:1.4), conference hall, world leaders seated, national flags, formal attire, global policy discussion",
+    "score": 20,
+    "generated_at": "2026-03-25T20:15:37.310003"
+  },
+  {
+    "index": 37,
+    "filename": "image_037.png",
+    "caption": "Saudi Crown Prince meeting Chinese President, strategic partnership, pixel art",
+    "category": "diplomatic",
+    "prompt_used": "(bilateral summit:1.4), (Saudi and Chinese flags:1.2), formal handshake, conference hall, strategic partnership signing",
+    "score": 0,
+    "generated_at": "2026-03-25T20:18:38.620568"
+  },
+  {
+    "index": 38,
+    "filename": "image_038.png",
+    "caption": "Ceasefire negotiation between Israeli and Hamas representatives, pixel art",
+    "category": "diplomatic",
+    "prompt_used": "(ceasefire negotiation:1.4), neutral meeting room, two delegations, mediator at head of table, tense but formal atmosphere, documents",
+    "score": 10,
+    "generated_at": "2026-03-25T20:18:55.926960"
+  },
+  {
+    "index": 39,
+    "filename": "image_039.png",
+    "caption": "Strategic map of Middle East with conflict zones highlighted, pixel art",
+    "category": "geographic",
+    "prompt_used": "(strategic map overlay:1.4), Middle East region, conflict zones marked, naval routes, color-coded territories, birds-eye map view",
+    "score": 0,
+    "generated_at": "2026-03-25T20:19:07.369329"
+  },
+  {
+    "index": 40,
+    "filename": "image_040.png",
+    "caption": "Satellite view of Strait of Hormuz with tanker traffic, pixel art",
+    "category": "geographic",
+    "prompt_used": "(Strait of Hormuz aerial:1.4), oil tankers in shipping lane, Iran and Oman coastlines visible, strategic chokepoint, birds-eye view",
+    "score": 55,
+    "generated_at": "2026-03-25T20:22:01.496661"
+  },
+  {
+    "index": 41,
+    "filename": "image_041.png",
+    "caption": "Taiwan Strait showing military positions across water, pixel art",
+    "category": "geographic",
+    "prompt_used": "(Taiwan Strait map:1.4), Taiwan island, mainland China coast, military positions marked, contested waters, strategic overview",
+    "score": 35,
+    "generated_at": "2026-03-25T20:22:08.153671"
+  },
+  {
+    "index": 42,
+    "filename": "image_042.png",
+    "caption": "Red Sea and Bab-el-Mandeb Strait with Houthi-controlled areas marked, pixel art",
+    "category": "geographic",
+    "prompt_used": "(Red Sea strategic map:1.4), Bab-el-Mandeb Strait, Yemen coastline, Houthi territory marked, shipping disruption zones, naval routes",
+    "score": 35,
+    "generated_at": "2026-03-25T20:22:16.766625"
+  },
+  {
+    "index": 43,
+    "filename": "image_043.png",
+    "caption": "Eastern Europe map showing Ukraine frontlines and NATO borders, pixel art",
+    "category": "geographic",
+    "prompt_used": "(Eastern Europe map:1.4), Ukraine frontlines marked, NATO territory, Russian advance arrows, conflict zone overlay, strategic depth view",
+    "score": 30,
+    "generated_at": "2026-03-25T20:22:23.360329"
+  },
+  {
+    "index": 44,
+    "filename": "image_044.png",
+    "caption": "South China Sea disputed islands with competing territorial claims, pixel art",
+    "category": "geographic",
+    "prompt_used": "(South China Sea map:1.4), disputed islands, overlapping territorial claims, naval patrol zones, strategic island chains, military installations",
+    "score": 50,
+    "generated_at": "2026-03-25T20:22:29.820497"
+  },
+  {
+    "index": 45,
+    "filename": "image_045.png",
+    "caption": "Palestinian civilians evacuating Gaza on foot, column of refugees, pixel art",
+    "category": "human_impact",
+    "prompt_used": "(civilian evacuation column:1.4), Gaza street, families carrying belongings, long line of people, dust and smoke, ground-level perspective",
+    "score": 10,
+    "generated_at": "2026-03-25T20:22:36.516407"
+  },
+  {
+    "index": 46,
+    "filename": "image_046.png",
+    "caption": "Anti-government protest in Tehran with crowds holding signs, pixel art",
+    "category": "human_impact",
+    "prompt_used": "(mass protest crowd:1.4), Tehran city square, protesters, signs and banners, night demonstration, police presence, emotional atmosphere",
+    "score": 30,
+    "generated_at": "2026-03-25T20:22:45.788442"
+  },
+  {
+    "index": 47,
+    "filename": "image_047.png",
+    "caption": "Ukrainian family sheltering in Kyiv metro station during air raid, pixel art",
+    "category": "human_impact",
+    "prompt_used": "(metro station shelter:1.4), Kyiv underground, families huddled, air raid lighting, (Ukrainian flag:1.2), children and elderly, fear and resilience",
+    "score": 0,
+    "generated_at": "2026-03-25T20:22:52.384504"
+  },
+  {
+    "index": 48,
+    "filename": "image_048.png",
+    "caption": "Humanitarian aid convoy delivering food to Gaza civilians, pixel art",
+    "category": "human_impact",
+    "prompt_used": "(humanitarian convoy:1.4), aid trucks, UN markings, Gaza checkpoint, civilians waiting, (UN flag:1.2), relief distribution",
+    "score": 20,
+    "generated_at": "2026-03-25T20:22:58.940556"
+  },
+  {
+    "index": 49,
+    "filename": "image_049.png",
+    "caption": "Families fleeing conflict zone across border on foot at night, pixel art",
+    "category": "human_impact",
+    "prompt_used": "(refugee column:1.4), border crossing at night, families with children, carrying luggage, searchlights, (UNHCR flag:1.2), dramatic night scene",
+    "score": 30,
+    "generated_at": "2026-03-25T20:23:07.467404"
+  },
+  {
+    "index": 50,
+    "filename": "image_050.png",
+    "caption": "Citizens queuing for water after infrastructure attack, pixel art",
+    "category": "human_impact",
+    "prompt_used": "(civilian water queue:1.4), destroyed infrastructure, urban street, people with containers, aftermath of conflict, morning light, devastation",
+    "score": 0,
+    "generated_at": "2026-03-25T20:23:16.712382"
+  },
+  {
+    "index": 51,
+    "filename": "image_051.png",
+    "caption": "Anti-war protest in European capital city, large crowd, pixel art",
+    "category": "human_impact",
+    "prompt_used": "(European anti-war protest:1.4), city square, thousands of protesters, peace signs, national flags, daytime, democratic expression",
+    "score": 35,
+    "generated_at": "2026-03-25T20:23:23.713495"
+  },
+  {
+    "index": 52,
+    "filename": "image_052.png",
+    "caption": "1973 Yom Kippur War tank battle in Sinai Desert, historical pixel art",
+    "category": "historical",
+    "prompt_used": "(1973 tank battle:1.4), Sinai Desert, Cold War era tanks, sepia-amber tone, vintage military, historical conflict, dust clouds, archival feel",
+    "score": 40,
+    "generated_at": "2026-03-25T20:23:36.160893"
+  },
+  {
+    "index": 53,
+    "filename": "image_053.png",
+    "caption": "1979 Iranian Revolution street scenes, historical pixel art",
+    "category": "historical",
+    "prompt_used": "(1979 Iran Revolution:1.4), Tehran street scene, revolutionary crowds, (Iranian flag:1.2), historical sepia tone, vintage photography feel",
+    "score": 15,
+    "generated_at": "2026-03-25T20:23:43.944315"
+  },
+  {
+    "index": 54,
+    "filename": "image_054.png",
+    "caption": "1991 Gulf War coalition forces advancing into Kuwait, historical pixel art",
+    "category": "historical",
+    "prompt_used": "(Gulf War 1991:1.4), coalition military advance, Kuwait desert, M1 Abrams tanks, historical warm palette, period-accurate equipment, archival feel",
+    "score": 55,
+    "generated_at": "2026-03-25T20:23:51.335436"
+  },
+  {
+    "index": 55,
+    "filename": "image_055.png",
+    "caption": "Cold War era US-Soviet nuclear standoff, missiles ready, historical pixel art",
+    "category": "historical",
+    "prompt_used": "(Cold War nuclear standoff:1.4), US and Soviet missiles, tense strategic positioning, 1960s colour palette, historical drama, competing superpowers",
+    "score": 20,
+    "generated_at": "2026-03-25T20:23:59.578759"
+  },
+  {
+    "index": 56,
+    "filename": "image_056.png",
+    "caption": "2003 Iraq War US forces entering Baghdad, historical pixel art",
+    "category": "historical",
+    "prompt_used": "(Iraq War 2003:1.4), US forces, Baghdad urban advance, (Stars and Stripes:1.2), early 2000s military equipment, historical accuracy, dust and smoke",
+    "score": 25,
+    "generated_at": "2026-03-25T20:24:08.275501"
+  },
+  {
+    "index": 57,
+    "filename": "image_057.png",
+    "caption": "2011 Arab Spring protests in Cairo's Tahrir Square, historical pixel art",
+    "category": "historical",
+    "prompt_used": "(Arab Spring 2011:1.4), Tahrir Square Cairo, massive protest crowd, Egyptian flags, night scene, historical significance, emotional crowd",
+    "score": 10,
+    "generated_at": "2026-03-25T20:24:16.788668"
+  },
+  {
+    "index": 58,
+    "filename": "image_058.png",
+    "caption": "Oil refinery with flames and industrial complex, Persian Gulf, pixel art",
+    "category": "energy",
+    "prompt_used": "(oil refinery complex:1.4), Persian Gulf coast, industrial towers, fire stacks burning, night industrial glow, strategic infrastructure",
+    "score": 30,
+    "generated_at": "2026-03-25T20:24:23.353440"
+  },
+  {
+    "index": 59,
+    "filename": "image_059.png",
+    "caption": "Natural gas pipeline network across European map, strategic energy, pixel art",
+    "category": "energy",
+    "prompt_used": "(gas pipeline map:1.4), European energy network, pipeline routes marked, supply flow lines, strategic energy infrastructure, birds-eye overview",
+    "score": 0,
+    "generated_at": "2026-03-25T20:24:51.493439"
+  },
+  {
+    "index": 60,
+    "filename": "image_060.png",
+    "caption": "Saudi Aramco oil facility ablaze after drone strike, pixel art",
+    "category": "energy",
+    "prompt_used": "(oil facility on fire:1.4), Saudi Arabia, drone strike aftermath, smoke plumes rising, night glow from fires, strategic energy attack",
+    "score": 45,
+    "generated_at": "2026-03-25T20:25:40.281725"
+  },
+  {
+    "index": 61,
+    "filename": "image_061.png",
+    "caption": "Nuclear power plant with cooling towers, Iran's Bushehr facility, pixel art",
+    "category": "energy",
+    "prompt_used": "(nuclear power plant:1.4), Bushehr Iran, cooling towers, coastal location, Persian Gulf visible, strategic significance, dawn lighting",
+    "score": 45,
+    "generated_at": "2026-03-25T20:25:47.412085"
+  },
+  {
+    "index": 62,
+    "filename": "image_062.png",
+    "caption": "Taiwan Strait showing military positions across water, pixel art",
+    "category": "geographic",
+    "prompt_used": "(Taiwan Strait map:1.4), Taiwan island, mainland China coast, military positions marked, contested waters, strategic overview",
+    "score": 35,
+    "generated_at": "2026-03-25T20:27:30.116428"
+  },
+  {
+    "index": 63,
+    "filename": "image_063.png",
+    "caption": "Houthi ballistic missile launching from Yemen toward Red Sea, pixel art",
+    "category": "military_air",
+    "prompt_used": "(ballistic missile launch:1.4), Yemen coastline, rocket exhaust trail rising, Red Sea visible, night launch, dramatic fire glow",
+    "score": 65,
+    "generated_at": "2026-03-25T20:28:17.483855"
+  },
+  {
+    "index": 64,
+    "filename": "image_064.png",
+    "caption": "Israeli F-16I Sufa jet conducting airstrike, IDF insignia visible, pixel art",
+    "category": "military_air",
+    "prompt_used": "(F-16I Sufa:1.4), (IDF insignia:1.3), airstrike, smoke plume rising, desert terrain below, dramatic angle",
+    "score": 45,
+    "generated_at": "2026-03-25T20:28:24.773986"
+  },
+  {
+    "index": 65,
+    "filename": "image_065.png",
+    "caption": "Humanitarian aid convoy delivering food to Gaza civilians, pixel art",
+    "category": "human_impact",
+    "prompt_used": "(humanitarian convoy:1.4), aid trucks, UN markings, Gaza checkpoint, civilians waiting, (UN flag:1.2), relief distribution",
+    "score": 20,
+    "generated_at": "2026-03-25T20:28:31.611097"
+  },
+  {
+    "index": 66,
+    "filename": "image_066.png",
+    "caption": "Israeli Merkava tank advancing through Gaza urban terrain, pixel art",
+    "category": "military_ground",
+    "prompt_used": "(Merkava IV tank:1.4), (IDF insignia:1.3), urban combat zone, rubble and dust, dawn lighting, armoured column",
+    "score": 30,
+    "generated_at": "2026-03-25T20:28:38.773988"
+  },
+  {
+    "index": 67,
+    "filename": "image_067.png",
+    "caption": "US Arleigh Burke destroyer firing Tomahawk missile at night, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(Arleigh Burke destroyer:1.4), (Tomahawk missile launch:1.3), night firing, sea spray, missile exhaust trail, (US Navy ensign:1.2)",
+    "score": 65,
+    "generated_at": "2026-03-25T20:28:47.216909"
+  },
+  {
+    "index": 68,
+    "filename": "image_068.png",
+    "caption": "Naval blockade of Red Sea shipping lane, Houthi-controlled waters, pixel art",
+    "category": "military_naval",
+    "prompt_used": "(naval blockade:1.4), Red Sea shipping lane, commercial tankers halted, military vessels, tense standoff, Bab-el-Mandeb Strait",
+    "score": 55,
+    "generated_at": "2026-03-25T20:28:55.985255"
+  },
+  {
+    "index": 69,
+    "filename": "image_069.png",
+    "caption": "Israeli Iron Dome intercepting missiles over Tel Aviv at night, pixel art",
+    "category": "military_air",
+    "prompt_used": "(Iron Dome missile battery:1.4), (interception trails:1.3), Tel Aviv night skyline, explosions mid-air, searchlights",
+    "score": 65,
+    "generated_at": "2026-03-25T20:29:41.000412"
+  },
+  {
+    "index": 70,
+    "filename": "image_070.png",
+    "caption": "Oil refinery with flames and industrial complex, Persian Gulf, pixel art",
+    "category": "energy",
+    "prompt_used": "(oil refinery complex:1.4), Persian Gulf coast, industrial towers, fire stacks burning, night industrial glow, strategic infrastructure",
+    "score": 30,
+    "generated_at": "2026-03-25T20:29:49.065805"
+  }
+]
