@@ -5,6 +5,7 @@ moviepy==1.0.3
 Pillow==10.2.0
 pexels-api==1.0.1
 python-dotenv==1.0.0
+<<<<<<< HEAD
 openai>=1.14.0
 fastmcp>=0.1.0
 opencv-python>=4.9.0
@@ -12,3 +13,5 @@ numpy>=1.26.0
 fal-client>=0.4.0
 spacy>=3.7.0
 trafilatura>=1.6.0
+=======
+>>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)

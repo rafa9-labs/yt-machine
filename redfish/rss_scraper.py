@@ -154,6 +154,7 @@ class RSScraper:
     def get_article_text(self, article: Dict[str, Any]) -> str:
         text = f"{article['title']}\n\n{article.get('summary', '')}"
         return text.strip()
+<<<<<<< HEAD
 
     def get_full_article_text(self, article: Dict[str, Any]) -> str:
         """
@@ -183,3 +184,5 @@ class RSScraper:
                 print(f"  Full scrape failed for {url[:60]}...: {e}")
         
         return self.get_article_text(article)
+=======
+>>>>>>> 54a25d2 (Initial commit: Add all agents and core modules)
