@@ -13,9 +13,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-sys.path.insert(0, ".")
-from video_server.tts_tool import generate_voiceover
-from video_server.split_video_assembler import build_split_video
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.video.tts_tool import generate_voiceover
+from src.video.split_video_assembler import build_split_video
 
 SOURCE_PROJECT = sys.argv[1] if len(sys.argv) > 1 else "output/projects/video_1776830311"
 source = Path(SOURCE_PROJECT)

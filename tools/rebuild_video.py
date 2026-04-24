@@ -46,7 +46,7 @@ if manifest_wt:
 # 2. Generate from audio + script using calibrated estimation
 if not word_timestamps and script_text and os.path.exists(voiceover):
     print("Generating word timestamps from audio file...")
-    from video_server.tts_tool import _get_faster_whisper_timestamps
+    from src.video.tts_tool import _get_faster_whisper_timestamps
     word_timestamps = _get_faster_whisper_timestamps(voiceover, script_text)
     if word_timestamps:
         print(f"Generated {len(word_timestamps)} word timestamps")
@@ -219,7 +219,8 @@ try:
 except:
     pass
 
-from video_server.split_video_assembler import build_split_video
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src.video.split_video_assembler import build_split_video
 
 project_id = os.path.basename(project_dir).replace("video_", "")
 result = build_split_video(

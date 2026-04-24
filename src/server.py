@@ -68,11 +68,11 @@ load_dotenv()
 # WHY? Replaces logging.basicConfig() with structlog configuration.
 # If structlog is installed → JSON-capable, leveled, timestamped logs.
 # If not → falls back to standard logging transparently.
-from brain.log import get_logger
+from src.brain.log import get_logger
 logger = get_logger("pipeline-api")
 
 # ── Import our Pydantic models from Phase 1 ──
-from models.schemas import (
+from src.models.schemas import (
     GenerateRequest,
     GenerateResponse,
     VideoStatus,
