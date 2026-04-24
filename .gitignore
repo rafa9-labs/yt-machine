@@ -17,8 +17,16 @@ ENV/
 
 # Environment variables
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa*
+.opencode.json
+opencode.json
+credentials/
 
 # Output (generated videos, images, audio, manifests)
 output/
@@ -48,3 +56,10 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# MoviePy temp artifacts
+*TEMP_MPY_*.mp4
+
+# Deprecated dirs
+open-viking/
+archive/
