@@ -46,7 +46,8 @@ load_dotenv()
 # STRUCTURED LOGGING — replaces old _TeeWriter + print() hack
 # Falls back to standard logging if structlog not available.
 # ══════════════════════════════════════════════════════════════════════════
-from brain.log import get_logger
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src.brain.log import get_logger
 log = get_logger("pipeline")
 
 # ── CONFIGURATION ──
@@ -100,7 +101,7 @@ from pipeline_utils import bridge_timestamp_gaps, build_fallback_prompt as _buil
 _USE_LANGCHAIN = True
 
 try:
-    from brain.langchain_interface import LangChainInterface
+    from src.brain.langchain_interface import LangChainInterface
     _langchain = LangChainInterface()
     log.info("llm.langchain.loaded")
 except Exception as e:
@@ -108,15 +109,15 @@ except Exception as e:
     _USE_LANGCHAIN = False
 
 # Always load raw interface as fallback — it handles complex methods
-from brain.llm_interface import LLMInterface
+from src.brain.llm_interface import LLMInterface
 llm = LLMInterface()
 log.info("llm.raw.loaded")
 
 # Video server components
-from video_server.pixel_art_tool import generate_pixel_art
-from video_server.pexels_tool import fetch_vertical_footage
-from video_server.tts_tool import generate_voiceover
-from video_server.split_video_assembler import build_split_video
+from src.video.pixel_art_tool import generate_pixel_art
+from src.video.pexels_tool import fetch_vertical_footage
+from src.video.tts_tool import generate_voiceover
+from src.video.split_video_assembler import build_split_video
 
 
 # ── CHECKPOINT HELPER ──
@@ -159,7 +160,7 @@ _STATUS_MAP = {
 def _save_to_postgres(step_name: str, project_id: int, data: dict, topic: str = None):
     """Save pipeline step results to PostgreSQL. Errors logged, never raised."""
     try:
-        from db.connection import get_connection
+        from src.db.connection import get_connection
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -214,7 +215,7 @@ viral_articles = []
 
 try:
     # ── Try async scraper first (parallel fetching + JS rendering) ──
-    from redfish.async_scraper import AsyncScraper
+    from src.collector.async_scraper import AsyncScraper
 
     async def _fetch_articles():
         async_scraper = AsyncScraper()
@@ -227,7 +228,7 @@ try:
     log.info("scraper.async.success", articles=len(all_articles))
 
     # Use sync scraper for ranking (filter_viral_potential)
-    from redfish.rss_scraper import RSScraper
+    from src.collector.rss_scraper import RSScraper
     ranker = RSScraper()
     viral_articles = ranker.filter_viral_potential(all_articles, top_n=10)
 
@@ -239,7 +240,7 @@ try:
 except Exception as e:
     log.warning("scraper.async.failed", error=str(e), fallback="sync_scraper")
     try:
-        from redfish.rss_scraper import RSScraper
+        from src.collector.rss_scraper import RSScraper
         scraper = RSScraper()
         all_articles = scraper.scrape_all(max_age_hours=24)
         viral_articles = scraper.filter_viral_potential(all_articles, top_n=10)
@@ -307,8 +308,8 @@ log.info("step.start", step="vector_dedup")
 _step_start = time.time()
 
 try:
-    from brain.memory.vector_store import VectorStore
-    from brain.memory.deduplication import DeduplicationChecker
+    from src.brain.memory.vector_store import VectorStore
+    from src.brain.memory.deduplication import DeduplicationChecker
 
     dedup = DeduplicationChecker(threshold=0.35)
     log.info("dedup.loaded", backend="pgvector")
@@ -351,7 +352,7 @@ for i, article in enumerate(articles, 1):
     try:
         # Get full article text
         try:
-            from redfish.rss_scraper import RSScraper
+            from src.collector.rss_scraper import RSScraper
             text_scraper = RSScraper()
             article_text = text_scraper.get_full_article_text(article)
         except:
@@ -364,7 +365,7 @@ for i, article in enumerate(articles, 1):
         # ── Try LangChain structured chain first ──
         if _USE_LANGCHAIN:
             try:
-                from models.schemas import NewsAnalysis as NewsAnalysisModel
+                from src.models.schemas import NewsAnalysis as NewsAnalysisModel
                 chain = _langchain.build_structured_chain(NewsAnalysisModel, "news_processor")
                 result = chain.invoke({"input_text": f"Analyze this news article:\n\n{article_text}"})
                 analysis = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
@@ -424,7 +425,7 @@ _step_start = time.time()
 
 trending_context = {}
 try:
-    from redfish.trending_analyzer import TrendingAnalyzer
+    from src.collector.trending_analyzer import TrendingAnalyzer
     trending_analyzer = TrendingAnalyzer()
     trending_context = trending_analyzer.analyze(all_articles, top_n=40)
     log.info("trending.complete", terms=len(trending_context))
@@ -549,7 +550,7 @@ try:
     # ── Try LangChain curation chain first ──
     if _USE_LANGCHAIN:
         try:
-            from brain.chains.curation import create_curation_chain
+            from src.brain.chains.curation import create_curation_chain
             curation_chain = create_curation_chain()
             story_bodies = []
             for story in script.get('stories', []):
@@ -997,7 +998,7 @@ _step_start = time.time()
 
 platform_metadata = {}
 try:
-    from redfish.platform_metadata_generator import PlatformMetadataGenerator
+    from src.collector.platform_metadata_generator import PlatformMetadataGenerator
     metadata_gen = PlatformMetadataGenerator()
     platform_metadata = metadata_gen.generate_all_metadata(
         script, news_analyses[0] if news_analyses else {}, None
@@ -1061,7 +1062,7 @@ log.info("manifest.saved", path=str(manifest_path))
 
 # ── Category tracking ──
 try:
-    from redfish.category_rotation import CategoryRotation
+    from src.collector.category_rotation import CategoryRotation
     rotation = CategoryRotation()
     for idx, article in enumerate(articles):
         matched_categories = rotation.detect_article_categories(article)
@@ -1084,7 +1085,7 @@ _save_to_postgres("completed", project_id, {"manifest_path": str(manifest_path)}
 
 # ── Store topic vectors for future dedup ──
 try:
-    from brain.memory.vector_store import VectorStore
+    from src.brain.memory.vector_store import VectorStore
     store = VectorStore()
     for i, analysis in enumerate(news_analyses):
         topic = analysis.get('topic', '')
