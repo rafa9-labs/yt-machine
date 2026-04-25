@@ -11,14 +11,14 @@ from src.collector.geopolitical_validator import GeopoliticalValidator
 load_dotenv()
 
 # Load image style config — single source of truth
-_STYLE_CONFIG_PATH = Path(__file__).parent.parent / "config" / "image_style.json"
+_STYLE_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "image_style.json"
 with open(_STYLE_CONFIG_PATH, 'r', encoding='utf-8') as _f:
     IMAGE_STYLE_CONFIG = json.load(_f)
 
 server = FastMCP("pixel-art-tool")
 
 FAL_KEY = os.getenv("FAL_KEY")
-OUTPUT_DIR = Path(__file__).parent.parent / "output" / "images"
+OUTPUT_DIR = Path(__file__).parent.parent.parent / "output" / "images"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================================
@@ -130,7 +130,7 @@ def _get_pixel_art_model_headers() -> Dict[str, str]:
     }
 
 # LoRA configuration — loaded from config, with custom LoRA override support
-_CUSTOM_LORA_PATH = Path(__file__).parent.parent / "config" / "custom_lora.json"
+_CUSTOM_LORA_PATH = Path(__file__).parent.parent.parent / "config" / "custom_lora.json"
 _custom_lora = None
 if _CUSTOM_LORA_PATH.exists():
     with open(_CUSTOM_LORA_PATH, 'r', encoding='utf-8') as _f:

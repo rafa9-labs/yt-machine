@@ -12,8 +12,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 server = FastMCP("assembler-tool")
 
-OUTPUT_DIR = Path(__file__).parent.parent / "output" / "videos"
-TEMP_DIR   = Path(__file__).parent.parent / "output" / "_tmp"
+OUTPUT_DIR = Path(__file__).parent.parent.parent / "output" / "videos"
+TEMP_DIR   = Path(__file__).parent.parent.parent / "output" / "_tmp"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 

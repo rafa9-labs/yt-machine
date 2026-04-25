@@ -116,7 +116,7 @@ def _run_generation(job_id: str):
             capture_output=True,
             text=True,
             timeout=600,  # 10 minute timeout
-            cwd=str(Path(__file__).parent),
+            cwd=str(Path(__file__).parent.parent),
         )
         
         if result.returncode == 0:

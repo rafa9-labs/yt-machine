@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 import importlib.util
 
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.brain.llm_interface import LLMInterface
@@ -120,8 +120,8 @@ class DebateEngine:
     
     def save_results(self, results: List[Dict[str, Any]], output_path: str = None):
         if output_path is None:
-            base_dir = Path(__file__).parent.parent
-            output_path = base_dir / "open-viking" / "resources" / "generated_scripts.json"
+            base_dir = Path(__file__).parent.parent.parent
+            output_path = base_dir / "output" / "debate_results.json"
         
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)

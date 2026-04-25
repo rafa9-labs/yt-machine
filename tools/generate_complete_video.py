@@ -92,7 +92,7 @@ def _extract_segment_text(segment_data) -> str:
     return str(segment_data) if segment_data else ''
 
 
-from pipeline_utils import bridge_timestamp_gaps, build_fallback_prompt as _build_fallback_prompt
+from src.pipeline_utils import bridge_timestamp_gaps, build_fallback_prompt as _build_fallback_prompt
 
 
 # ══════════════════════════════════════════════════════════════════════════

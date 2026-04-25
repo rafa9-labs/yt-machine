@@ -29,10 +29,10 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).parent.parent / ".env")
 
-PROJECT_ROOT = Path(__file__).parent.resolve()
-PIPELINE_SCRIPT = PROJECT_ROOT / "generate_complete_video.py"
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+PIPELINE_SCRIPT = PROJECT_ROOT / "tools" / "generate_complete_video.py"
 LOG_DIR = PROJECT_ROOT / "output" / "logs"
 
 WOL_WAIT_SECONDS = int(os.getenv("WOL_WAIT_SECONDS", "120"))

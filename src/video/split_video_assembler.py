@@ -41,8 +41,8 @@ TOP_H = 1152
 BOTTOM_H = 768
 FPS = 30
 
-AVATAR_PATH = Path(__file__).parent.parent / "assets" / "avatar" / "avatar_loop.mp4"
-MUSIC_PATH = Path(__file__).parent.parent / "assets" / "avatar" / "music" / "news-yt.mp3"
+AVATAR_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "avatar_loop.mp4"
+MUSIC_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "music" / "news-yt.mp3"
 
 
 def _find_ffmpeg() -> str:
@@ -565,7 +565,7 @@ def build_split_video(
 
         # ── EXPORT ──
         if not output_path:
-            output_dir = Path(__file__).parent.parent / "output" / "videos"
+            output_dir = Path(__file__).parent.parent.parent / "output" / "videos"
             output_dir.mkdir(parents=True, exist_ok=True)
             output_path = str(output_dir / f"split_{int(total_dur)}s.mp4")
 

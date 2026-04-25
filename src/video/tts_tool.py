@@ -29,7 +29,7 @@ except ImportError:
 
 server = FastMCP("tts-tool")
 
-OUTPUT_DIR = Path(__file__).parent.parent / "output" / "audio"
+OUTPUT_DIR = Path(__file__).parent.parent.parent / "output" / "audio"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ElevenLabs TTS — primary engine (highest quality natural voice)
