@@ -1,8 +1,8 @@
 {
   "current_cycle": {
-    "day_index": 4,
-    "category": "technology_disruption",
-    "date": "2026-04-20"
+    "day_index": 5,
+    "category": "climate_geopolitics",
+    "date": "2026-04-25"
   },
   "history": [
     {
@@ -100,6 +100,10 @@
     {
       "date": "2026-04-19",
       "category": "technology_disruption"
+    },
+    {
+      "date": "2026-04-20",
+      "category": "climate_geopolitics"
     }
   ]
 }

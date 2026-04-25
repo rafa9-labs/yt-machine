@@ -10,6 +10,21 @@ from moviepy.editor import (
 )
 from PIL import Image, ImageDraw, ImageFont
 
+# Windows fix: moviepy's FFMPEG_VideoReader.__del__ calls proc.terminate()
+# on already-closed handles, raising OSError [WinError 6]. Suppress it.
+try:
+    from moviepy.video.io.ffmpeg_reader import FFMPEG_VideoReader
+    _orig_close = FFMPEG_VideoReader.close
+    def _safe_close(self):
+        try:
+            _orig_close(self)
+        except (OSError, AttributeError):
+            pass
+    FFMPEG_VideoReader.close = _safe_close
+    FFMPEG_VideoReader.__del__ = lambda self: None
+except (ImportError, AttributeError):
+    pass
+
 server = FastMCP("assembler-tool")
 
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "output" / "videos"

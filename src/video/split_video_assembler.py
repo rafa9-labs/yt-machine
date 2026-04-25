@@ -35,6 +35,21 @@ except ImportError:
 
 from .subtitle_renderer import create_subtitle_clips, create_title_clip
 
+# Windows fix: moviepy's FFMPEG_VideoReader.__del__ calls proc.terminate()
+# on already-closed handles, raising OSError [WinError 6]. Suppress it.
+try:
+    from moviepy.video.io.ffmpeg_reader import FFMPEG_VideoReader
+    _orig_close = FFMPEG_VideoReader.close
+    def _safe_close(self):
+        try:
+            _orig_close(self)
+        except (OSError, AttributeError):
+            pass
+    FFMPEG_VideoReader.close = _safe_close
+    FFMPEG_VideoReader.__del__ = lambda self: None
+except (ImportError, AttributeError):
+    pass
+
 VIDEO_W = 1080
 VIDEO_H = 1920
 TOP_H = 1152

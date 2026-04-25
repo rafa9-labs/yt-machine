@@ -1,30 +1,6 @@
 {
   "videos": [
     {
-      "project_id": 1776345196,
-      "topic": "Lebanese-Israeli Rapprochement: The Return of the 'Pro-Israel' Executive Class",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "War on Iran: How the West is shaping a dystopian era",
-      "created_at": "2026-04-16 14:13:16"
-    },
-    {
-      "project_id": 1776345196,
-      "topic": "The Invisible Inflation of Humanitarian Logistics via the Iran-US-Israel Conflict",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Why do Lebanese leaders keep courting Israel?",
-      "created_at": "2026-04-16 14:13:16"
-    },
-    {
-      "project_id": 1776354344,
-      "topic": "The New Lebanese-Israeli Convergence: A Century of Strategic Alignment",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Why do Lebanese leaders keep courting Israel?",
-      "created_at": "2026-04-16 16:45:44"
-    },
-    {
       "project_id": 1776354344,
       "topic": "The Invisible Inflation of Humanitarian Logistics in the Iran-US-Israel War",
       "category": "middle_east_conflict",
@@ -159,7 +135,31 @@
       "region": "other",
       "article_title": "French commercial vessel in Strait of Hormuz fired at, says report",
       "created_at": "2026-04-20 04:41:33"
+    },
+    {
+      "project_id": 1777126030,
+      "topic": "Somalia Faces Growing Human Displacement in Worsening Drought Crisis",
+      "category": "technology_disruption",
+      "region": "other",
+      "article_title": "Somalia: Somalia Faces Growing Human Displacement in Worsening Drought Crisis",
+      "created_at": "2026-04-25 15:07:10"
+    },
+    {
+      "project_id": 1777126030,
+      "topic": "War on Iran reshapes Gulf trade routes through Saudi-Qatari corridors",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "How the war on Iran is rewriting regional trade routes",
+      "created_at": "2026-04-25 15:07:10"
+    },
+    {
+      "project_id": 1777126030,
+      "topic": "Turkey's Strategic Leverage Over Israel in Escalating Rivalry",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "What levers can Turkey use against Israel if their war of words escalates?",
+      "created_at": "2026-04-25 15:07:10"
     }
   ],
-  "last_updated": "2026-04-20 04:41:33"
+  "last_updated": "2026-04-25 15:07:10"
 }
