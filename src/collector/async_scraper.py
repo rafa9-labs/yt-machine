@@ -109,7 +109,7 @@ class AsyncScraper:
     def __init__(self, config_path: str = None):
         # ── Load RSS feed configuration ──
         if config_path is None:
-            base_dir = Path(__file__).parent.parent
+            base_dir = Path(__file__).parent.parent.parent
             config_path = base_dir / "config" / "rss_feeds.json"
 
         self.config_path = Path(config_path)

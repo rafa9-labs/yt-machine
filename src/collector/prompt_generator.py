@@ -16,7 +16,7 @@ from .script_parser import ScriptParser
 from .geopolitical_accuracy import get_country_visual_spec, validate_country_equipment_combination
 
 # Load image style config — single source of truth (shared with pixel_art_tool.py)
-_STYLE_CONFIG_PATH = Path(__file__).parent.parent / "config" / "image_style.json"
+_STYLE_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "image_style.json"
 with open(_STYLE_CONFIG_PATH, 'r', encoding='utf-8') as _f:
     _IMAGE_STYLE_CONFIG = json.load(_f)
 

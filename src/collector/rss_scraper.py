@@ -36,7 +36,7 @@ def _strip_html(text: str) -> str:
 class RSScraper:
     def __init__(self, config_path: str = None):
         if config_path is None:
-            base_dir = Path(__file__).parent.parent
+            base_dir = Path(__file__).parent.parent.parent
             config_path = base_dir / "config" / "rss_feeds.json"
         
         self.config_path = Path(config_path)

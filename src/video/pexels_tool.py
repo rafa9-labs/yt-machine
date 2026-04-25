@@ -9,7 +9,7 @@ server = FastMCP("pexels-tool")
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 PEXELS_API_URL = "https://api.pexels.com/videos/search"
-OUTPUT_DIR = Path(__file__).parent.parent / "output" / "footage"
+OUTPUT_DIR = Path(__file__).parent.parent.parent / "output" / "footage"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

@@ -210,7 +210,7 @@ def _send_to_telegram(job_id: str, stdout: str) -> dict:
         from tools.telegram_sender import send_video_to_telegram
 
         # Find the video file for this job
-        project_dir = Path(__file__).parent / "output" / "projects" / job_id
+        project_dir = Path(__file__).parent.parent / "output" / "projects" / job_id
         if not project_dir.exists():
             # Fallback: find latest video
             from publish_video import find_latest_video
@@ -264,7 +264,7 @@ async def _run_generation(job_id: str):
             capture_output=True,
             text=True,
             timeout=600,  # 10 minute timeout
-            cwd=str(Path(__file__).parent),
+            cwd=str(Path(__file__).parent.parent),
         )
 
     try:
