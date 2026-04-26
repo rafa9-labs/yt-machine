@@ -25,7 +25,7 @@ import requests
 
 # ── Configuration ──
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
-OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:12b")
+OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4")
 
 # Fallback: ZhipuAI cloud (used only if Ollama is unavailable)
 ZHIPUAI_API_KEY = os.environ.get("ZHIPUAI_API_KEY", "").strip()
