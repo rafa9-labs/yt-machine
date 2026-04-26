@@ -537,7 +537,14 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
                     parts.append(silence)
             
             full_audio = np.concatenate(parts, axis=0)
-            sf.write(str(filepath), full_audio, sr)
+            wav_path = filepath.with_suffix('.wav')
+            sf.write(str(wav_path), full_audio, sr)
+            
+            from moviepy.audio.io.AudioFileClip import AudioFileClip as _AC
+            wav_clip = _AC(str(wav_path))
+            wav_clip.write_audiofile(str(filepath), verbose=False, logger=None)
+            wav_clip.close()
+            wav_path.unlink(missing_ok=True)
             
             print(f"  [ELEVENLABS] Added {silence_duration}s silence x {len(batches)-1} between batches")
             
