@@ -1,5 +1,5 @@
 """
-Image Curator — validates generated pixel art images using GLM-4V vision model.
+Image Curator — validates generated pixel art images using local Ollama vision model.
 
 Evaluates images across 5 dimensions:
   1. Topic Relevance — key subjects present
@@ -9,6 +9,9 @@ Evaluates images across 5 dimensions:
   5. Visual Completeness — full frame utilized
 
 Pass threshold: average >= 6.5, no single dimension < 5.0
+
+Uses a local Ollama vision model (default: gemma4:12b) instead of cloud APIs.
+Falls back to ZhipuAI GLM-4V if OLLAMA_HOST is unset and ZHIPUAI_API_KEY is set.
 """
 
 import base64
@@ -20,9 +23,14 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
+# ── Configuration ──
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:12b")
+
+# Fallback: ZhipuAI cloud (used only if Ollama is unavailable)
 ZHIPUAI_API_KEY = os.environ.get("ZHIPUAI_API_KEY", "").strip()
 ZHIPUAI_VISION_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-VISION_MODEL = "glm-4v-flash"
+ZHIPUAI_VISION_MODEL = "glm-4v-flash"
 
 CURATOR_CONFIG_PATH = Path(__file__).parent.parent / "config" / "system_prompts.json"
 
@@ -42,9 +50,59 @@ def _encode_image_base64(image_path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def _call_glm4v(system_prompt: str, image_base64: str, visual_prompt: str) -> Optional[str]:
+def _call_ollama_vision(system_prompt: str, image_base64: str, visual_prompt: str) -> Optional[str]:
+    if not OLLAMA_HOST:
+        print("  [CURATOR] No OLLAMA_HOST configured — skipping Ollama evaluation")
+        return None
+
+    url = f"{OLLAMA_HOST}/api/chat"
+
+    payload = {
+        "model": OLLAMA_VISION_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": f"VISUAL PROMPT this image was generated from:\n{visual_prompt}\n\nEvaluate this pixel art image against the prompt above.",
+                "images": [image_base64]
+            }
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.3
+        }
+    }
+
+    try:
+        resp = requests.post(url, json=payload, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("message", {}).get("content", "")
+        if content:
+            print(f"  [CURATOR] Ollama ({OLLAMA_VISION_MODEL}) evaluation complete")
+            return content
+        print("  [CURATOR] Ollama returned empty content")
+        return None
+    except requests.exceptions.ConnectionError:
+        print(f"  [CURATOR] Ollama not running at {OLLAMA_HOST} — trying ZhipuAI fallback")
+        return None
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            print(f"  [CURATOR] Model '{OLLAMA_VISION_MODEL}' not found in Ollama — run: ollama pull {OLLAMA_VISION_MODEL}")
+        else:
+            print(f"  [CURATOR] Ollama API error: {e}")
+        return None
+    except Exception as e:
+        print(f"  [CURATOR] Ollama call failed: {e}")
+        return None
+
+
+def _call_zhipuai(system_prompt: str, image_base64: str, visual_prompt: str) -> Optional[str]:
     if not ZHIPUAI_API_KEY:
-        print("  [CURATOR] No ZHIPUAI_API_KEY set — skipping image evaluation")
+        print("  [CURATOR] No ZHIPUAI_API_KEY set — skipping cloud evaluation")
         return None
 
     messages = [
@@ -66,7 +124,7 @@ def _call_glm4v(system_prompt: str, image_base64: str, visual_prompt: str) -> Op
     ]
 
     payload = {
-        "model": VISION_MODEL,
+        "model": ZHIPUAI_VISION_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             *messages
@@ -85,13 +143,23 @@ def _call_glm4v(system_prompt: str, image_base64: str, visual_prompt: str) -> Op
         resp.raise_for_status()
         data = resp.json()
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        return content if content else None
+        if content:
+            print(f"  [CURATOR] ZhipuAI ({ZHIPUAI_VISION_MODEL}) evaluation complete")
+            return content
+        return None
     except requests.exceptions.HTTPError as e:
-        print(f"  [CURATOR] GLM-4V API error: {e}")
+        print(f"  [CURATOR] ZhipuAI API error: {e}")
         return None
     except Exception as e:
-        print(f"  [CURATOR] GLM-4V call failed: {e}")
+        print(f"  [CURATOR] ZhipuAI call failed: {e}")
         return None
+
+
+def _call_vision_model(system_prompt: str, image_base64: str, visual_prompt: str) -> Optional[str]:
+    result = _call_ollama_vision(system_prompt, image_base64, visual_prompt)
+    if result:
+        return result
+    return _call_zhipuai(system_prompt, image_base64, visual_prompt)
 
 
 def _parse_evaluation(raw_response: str) -> Optional[dict]:
@@ -142,7 +210,7 @@ def evaluate_image(image_path: str, visual_prompt: str) -> Optional[dict]:
     image_b64 = _encode_image_base64(image_path)
 
     print(f"  [CURATOR] Evaluating {Path(image_path).name}...")
-    raw = _call_glm4v(config["system_prompt"], image_b64, visual_prompt)
+    raw = _call_vision_model(config["system_prompt"], image_b64, visual_prompt)
 
     if not raw:
         return None

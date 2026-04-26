@@ -33,7 +33,7 @@ OUTPUT_DIR = Path(__file__).parent.parent.parent / "output" / "audio"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ElevenLabs TTS — primary engine (highest quality natural voice)
-ELEVENLABS_VOICE_ID = "G2BYBzpEHIacF1Bva0XL"
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "G2BYBzpEHIacF1Bva0XL")
 ELEVENLABS_MODEL = "eleven_multilingual_v2"
 ELEVENLABS_SETTINGS = {
     "stability": 0.45,
