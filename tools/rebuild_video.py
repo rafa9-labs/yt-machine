@@ -1,5 +1,5 @@
 """Rebuild video from existing project assets (latest project)."""
-import json, os, glob
+import json, os, sys, glob
 from pathlib import Path
 
 # Find latest project
