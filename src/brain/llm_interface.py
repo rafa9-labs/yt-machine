@@ -480,24 +480,24 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         return script
     
     def _get_time_greeting(self) -> str:
-        """Get time-of-day greeting for Masker personality — short & punchy."""
+        """Get time-of-day greeting for The Mask persona — explosive entrance."""
         from datetime import datetime
         hour = datetime.now().hour
         if hour < 12:
-            return "Good Morning! I'm Masker!"
+            return "Ssssmokin'! Good morning, folks! It's SHOWTIME!"
         elif hour < 18:
-            return "Good Afternoon! I'm Masker!"
+            return "Ssssmokin'! Good afternoon, baby! It's SHOWTIME!"
         else:
-            return "Good Evening! I'm Masker!"
+            return "Ssssmokin'! Good evening, folks! It's SHOWTIME!"
     
-    # ── SEGUE TEMPLATES: High-quality fallbacks when LLM generates weak segues ──
+    # ── SEGUE TEMPLATES: The Mask-style frantic cartoonish bridges ──
     _SEGUE_TEMPLATES = [
-        "But wait... that's not even the craziest part.",
-        "Oh but we're just getting started.",
-        "And now for something that'll make your jaw drop.",
-        "You think that's wild? Just wait for this next one.",
-        "Hold onto your hats... this next one is absolutely insane.",
-        "And believe it or not, it gets even crazier.",
+        "But WAIT—hold onto your lobsters! That's not even the CRAZIEST part!",
+        "Oh we are JUST getting started, baby!",
+        "And if you thought THAT was wild... just WAIT!",
+        "You think that's something? You ain't seen NOTHING yet!",
+        "But here's where it gets REALLY interesting, folks!",
+        "And believe it or not, it gets even CRAZIER.",
     ]
     
     def _ensure_greeting_in_fulltext(self, script: dict) -> dict:
@@ -551,7 +551,7 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             # Check if segue is valid: non-empty, 5+ words, creates anticipation
             words = segue.split()
             is_valid = len(words) >= 5 and any(
-                kw in segue.lower() for kw in ['but', 'and', 'now', 'wait', 'that', 'here', 'check', 'sneaky', 'wild', 'crazy', 'insane', 'believe', 'next', 'last', "won't believe"]
+                kw in segue.lower() for kw in ['but', 'and', 'now', 'wait', 'that', 'here', 'check', 'sneaky', 'wild', 'crazy', 'insane', 'believe', 'next', 'last', "won't believe", 'lobsters', 'baby', 'folks', 'showtime', 'hold']
             )
             
             if not is_valid:
@@ -563,33 +563,91 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         
         return script
     
-    # Unified closing — the signature Masker farewell (Truman Show inspired)
-    UNIFIED_CLOSING = "Stay behind the curtain. Subscribe, like. And if I don't see you. Good morning. Good afternoon. And good night."
+    # Unified closing — The Mask persona (Truman Show inspired)
+    UNIFIED_CLOSING = "Like and share and if I don't see you. Good morning. Good afternoon. And goodnight."
     
+    @staticmethod
+    def _scrub_cta_from_field(text: str) -> str:
+        """Remove CTA/sign-off phrases from a single story field."""
+        import re
+        if not text:
+            return text
+        cta_patterns = re.compile(
+            r'(?:Subscribe\s*(?:and\s+)?(?:like|share|comment|follow)[\s,.]*)'
+            r'|(?:Like\s+and\s+share[\s,.]*)'
+            r'|(?:follow\s+(?:for\s+more|us)[\s,.]*)'
+            r'|(?:don\'t\s+forget\s+to\s+(?:like|share|subscribe)[\s,.]*)'
+            r'|(?:thanks\s+for\s+watching[\s,.]*)'
+            r'|(?:see\s+you\s+(?:next\s+time|soon|later)[\s,.]*)'
+            r'|(?:that\'s\s+all\s+for\s+today[\s,.]*)'
+            r'|(?:wrapping\s+(?:up|this\s+up)[\s,.]*)'
+            r'|(?:stay\s+tuned[\s,.]*)',
+            re.IGNORECASE
+        )
+        cleaned = cta_patterns.sub('', text)
+        cleaned = re.sub(r'  +', ' ', cleaned).strip()
+        return cleaned
+
+    def _scrub_closing_from_stories(self, script: dict) -> dict:
+        """
+        Scrub CTA/sign-off text from ALL story narration fields.
+        The LAST story is the highest risk — its real_talk and part_2_narration
+        often absorb CTA that duplicates the canonical closing.
+        """
+        stories = script.get('stories', [])
+        for i, story in enumerate(stories):
+            for field in ('part_1_narration', 'part_2_narration', 'real_talk', 'segue'):
+                original = story.get(field, '')
+                cleaned = self._scrub_cta_from_field(original)
+                if cleaned != original:
+                    print(f"  [CTA-SCRUB] Story {i+1} {field}: removed CTA fragment")
+                    story[field] = cleaned
+        script['stories'] = stories
+        return script
+
     def _validate_closing(self, full_text: str) -> str:
         """
-        Ensure the script ends with the UNIFIED Masker closing/CTA.
+        Ensure the script ends with the UNIFIED The Mask closing/CTA.
         ALWAYS replaces or appends the canonical closing — never trusts LLM output.
+        Also scrubs stray CTA phrases from mid-string to prevent duplication.
         """
         if not full_text:
             return full_text
         
-        text_lower = full_text.lower()
-        has_truman = 'good morning' in text_lower and 'good afternoon' in text_lower
+        import re
+
+        # Scrub stray CTA phrases anywhere in the text (not just at end)
+        # LLMs sometimes inject "subscribe and like" mid-narration despite instructions
+        cta_mid = re.compile(
+            r'(?:Subscribe\s*(?:and\s+)?(?:like|share|comment|follow)[\s,.]*)'
+            r'|(?:Like\s+and\s+share[\s,.]*)'
+            r'|(?:follow\s+(?:for\s+more|us)[\s,.]*)'
+            r'|(?:don\'t\s+forget\s+to\s+(?:like|share|subscribe)[\s,.]*)'
+            r'|(?:thanks\s+for\s+watching[\s,.]*)'
+            r'|(?:see\s+you\s+(?:next\s+time|soon|later)[\s,.]*)'
+            r'|(?:that\'s\s+all\s+for\s+today[\s,.]*)'
+            r'|(?:wrapping\s+(?:up|this\s+up)[\s,.]*)'
+            r'|(?:stay\s+tuned[\s,.]*)',
+            re.IGNORECASE
+        )
+        cleaned = cta_mid.sub('', full_text)
+        cleaned = re.sub(r'  +', ' ', cleaned).strip()
+        
+        text_lower = cleaned.lower()
+        has_truman = 'good morning' in text_lower and 'good afternoon' in text_lower and 'goodnight' in text_lower
         
         if has_truman:
-            return full_text
+            return cleaned
         
         # Strip any existing LLM-generated closing to avoid duplication
-        import re
         stripped = re.sub(
-            r'\s*\.{3,4}\s*(?:And with that|Subscribe|That\'s all|So there you have|This is Masker|I\'m Masker|see you|And these were|These were|Stay tuned|See you next|Thanks for|follow for|Stay behind|The walls).*$',
-            '', full_text, flags=re.IGNORECASE
+            r'\s*\.{3,4}\s*(?:And with that|Subscribe|That\'s all|So there you have|This is Masker|I\'m Masker|see you|And these were|These were|Stay tuned|See you next|Thanks for|follow for|Stay behind|The walls|Like and share|Ssssmokin).*$',
+            '', cleaned, flags=re.IGNORECASE
         ).rstrip()
         
         # Second pass: strip any trailing subscribe/like/CTA patterns
         stripped = re.sub(
-            r'\s*(?:Subscribe|subscribe)[,.\s]*(?:like|and\s+like|hit\s+like)?[,.\s]*(?:share|comment|follow)?\s*.*$',
+            r'\s*(?:Subscribe|subscribe|Like and share|like and share)[,.\s]*(?:and\s+)?(?:share|like|comment|follow)?\s*.*$',
             '', stripped, flags=re.IGNORECASE
         ).rstrip()
         
@@ -621,7 +679,7 @@ NEWS STORY {i}:
 - Second-order consequence: {analysis.get('second_order_consequence', 'N/A')}
 """
         
-        prompt = f"""Create a Masker script — 3 stories, theatrical reveal structure.
+        prompt = f"""Create a Mask script — 3 stories, Infotainment Satire structure (The Cartoonish Truth).
 
 GREETING TO USE: "{greeting}"
 
@@ -630,14 +688,16 @@ GREETING TO USE: "{greeting}"
 CRITICAL RULES:
 - Output ONLY the JSON object. NO explanatory text before or after. NO markdown.
 - The greeting field must be EXACTLY: {greeting}
-- Each story: part_1 = THE EFFECT (jaw-drop), part_2 = THE MECHANISM (hidden hand revealed)
-- Use theater metaphors: "shadow play", "behind the curtain", "the board", "backstage"
-- Make the viewer feel like they just saw behind the curtain of a magic show
-- Playful mischief energy — cheeky, clever, theatrical. NOT bleak or cynical.
-- Target: 220-280 words total for ~90 seconds.
-- ALL 3 stories must be roughly equal word count (50-60 words each). Max 10 words difference.
-- Each non-last story must have a "segue" field with a curiosity-gap transition (8-15 words).
-- NEVER include subscribe, like, sign-off, closing, or CTA text in any field."""
+- Each story: part_1 = THE HOOK (cartoonish entrance), part_2 = THE PAYOFF (speed-talk facts), real_talk = SERIOUS drop-the-act moment
+- Use Looney Tunes metaphors: "dance floor on fire", "old switcheroo", "crashing the party", "erase like a bad drawing"
+- Make the viewer feel like a cartoon character just pulled back the curtain on reality
+- Manic, chaotic, fast-talking energy — but the facts are REAL and DENSE
+- The real_talk field is where The Mask drops the act — NO caps, NO exclamations, just flat truth
+- Target: 200-260 words total for ~80 seconds.
+- ALL 3 stories must be roughly equal word count (35-55 words each). Max 10 words difference.
+- Each non-last story must have a "segue" field with a frantic cartoonish transition (8-15 words).
+- GEOGRAPHIC ANCHOR: On first mention, every country or nation MUST carry a brief regional descriptor giving viewers spatial grounding. Examples: "the Gulf kingdom of Bahrain", "Iran, the Middle Eastern power", "Ukraine, in Eastern Europe", "the United Kingdom", "Russia, the Eurasian giant". No bare country names on first mention.
+- CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing ("thanks for watching", "don't forget to like", "see you next time", "that's all for today", "wrapping up") in part_1_narration, part_2_narration, real_talk, or segue is FORBIDDEN. The last story MUST end with real_talk as a flat fact — NOT a conclusion, summary, or sign-off."""
         
         # ── OPENAI CLOUD FIRST, LOCAL FALLBACK ──
         response = None
@@ -681,12 +741,176 @@ CRITICAL RULES:
         
         # Ensure intro_hook exists
         if not script.get('intro_hook'):
-            script['intro_hook'] = "Three stories today — and trust me, you'll want to hear the last one."
+            script['intro_hook'] = "Hold onto your lobsters, folks! We've got THREE stories and the dance floor is on FIRE!"
         
         # Ensure stories exist
         if 'stories' not in script or not script.get('stories'):
             print(f"  [MULTI-NEWS] No stories in response — falling back")
             return None
+        
+        # ══════════════════════════════════════════════════════════════
+        # VALIDATION 1: Ensure exactly 3 stories with non-empty required fields
+        # ══════════════════════════════════════════════════════════════
+        stories = script.get('stories', [])
+        
+        # Retry synthesis if fewer than 3 stories (max 3 attempts)
+        if len(stories) < 3:
+            print(f"  [VALIDATE] Only {len(stories)} stories — need 3. Re-synthesizing...")
+            for retry_attempt in range(3):
+                retry_prompt = (
+                    f"The previous script only had {len(stories)} stories. "
+                    f"You MUST produce exactly 3 stories. Each story needs part_1_narration, "
+                    f"part_2_narration, real_talk, and segue fields.\n\n"
+                    f"{news_block}\n\n"
+                    f"CRITICAL: Output ONLY valid JSON with exactly 3 stories.\n"
+                    f"Target: 240-280 words total."
+                )
+                retry_response = self.generate(
+                    prompt=retry_prompt,
+                    model=self.task_models.get("multi_news_synthesizer", self.default_model),
+                    system_prompt=prompt_config["system_prompt"],
+                    temperature=prompt_config["temperature"],
+                    max_tokens=prompt_config["max_tokens"]
+                )
+                if retry_response:
+                    retry_script = self._extract_json(retry_response)
+                    if retry_script and isinstance(retry_script, dict):
+                        retry_stories = retry_script.get('stories', [])
+                        if len(retry_stories) >= 3:
+                            script = retry_script
+                            script['greeting'] = greeting
+                            stories = script.get('stories', [])
+                            print(f"  [VALIDATE] Retry {retry_attempt+1} success — got {len(stories)} stories")
+                            break
+                print(f"  [VALIDATE] Retry {retry_attempt+1} still insufficient")
+            
+            if len(stories) < 3:
+                print(f"  [VALIDATE] Failed to get 3 stories after 3 retries — aborting")
+                return None
+        
+        # ══════════════════════════════════════════════════════════════
+        # VALIDATION 2: Per-field repair for empty part_1/part_2/real_talk
+        # ══════════════════════════════════════════════════════════════
+        for i, story in enumerate(stories):
+            fields_to_check = ['part_1_narration', 'part_2_narration']
+            for field in fields_to_check:
+                val = story.get(field, '').strip()
+                if len(val.split()) < 5:
+                    print(f"  [VALIDATE] Story {i+1} '{field}' is empty/weak ({len(val.split())} words) — repairing")
+                    repair_prompt = (
+                        f"Story {i+1} in a 3-story news script is missing its {field}.\n"
+                        f"Context — part_1: {story.get('part_1_narration', 'N/A')[:100]}\n"
+                        f"Context — part_2: {story.get('part_2_narration', 'N/A')[:100]}\n"
+                        f"News topic: {news_analyses[min(i, len(news_analyses)-1)].get('topic', 'N/A') if news_analyses else 'geopolitics'}\n"
+                        f"Key facts: {', '.join(news_analyses[min(i, len(news_analyses)-1)].get('key_facts', [])) if news_analyses else ''}\n\n"
+                        f"Generate ONLY the {field} for this story. The Mask persona: chaotic, cartoony, "
+                        f"Looney Tunes metaphors. Target: 35-45 words. Dense with facts.\n"
+                        f"Return ONLY a JSON object with one key: \"{field}\""
+                    )
+                    repaired = False
+                    for repair_attempt in range(2):
+                        repair_response = self.generate(
+                            prompt=repair_prompt,
+                            temperature=0.8,
+                            max_tokens=300
+                        )
+                        if repair_response:
+                            repair_data = self._extract_json(repair_response)
+                            if repair_data and field in repair_data:
+                                new_val = repair_data[field].strip()
+                                if len(new_val.split()) >= 10:
+                                    stories[i][field] = new_val
+                                    script['stories'][i][field] = new_val
+                                    print(f"  [VALIDATE] Repaired story {i+1} '{field}' ({len(new_val.split())} words)")
+                                    repaired = True
+                                    break
+                    if not repaired:
+                        fallback = f"The developments in this situation continue to unfold with significant regional and global implications that demand close attention."
+                        stories[i][field] = fallback
+                        script['stories'][i][field] = fallback
+                        print(f"  [VALIDATE] Repair failed — using fallback for story {i+1} '{field}'")
+            
+            # real_talk — less critical, use generic fallback if missing
+            rt = story.get('real_talk', '').strip()
+            if len(rt.split()) < 5:
+                fallback_rt = "But here is the thing. The stakes are real. And the credits are not rolling yet."
+                stories[i]['real_talk'] = fallback_rt
+                script['stories'][i]['real_talk'] = fallback_rt
+                print(f"  [VALIDATE] Story {i+1} real_talk fallback injected")
+        
+        # ══════════════════════════════════════════════════════════════
+        # VALIDATION 3: Word count enforcement (240-280 words)
+        # ══════════════════════════════════════════════════════════════
+        MIN_WORDS = 240
+        
+        # Build a preliminary full_text to count words
+        _prelim_parts = []
+        _prelim_parts.append(script.get('greeting', greeting))
+        _prelim_parts.append(script.get('intro_hook', ''))
+        for s in stories:
+            _prelim_parts.append(s.get('part_1_narration', ''))
+            _prelim_parts.append(s.get('part_2_narration', ''))
+            _prelim_parts.append(s.get('real_talk', ''))
+            _prelim_parts.append(s.get('segue', ''))
+        _prelim_text = ' '.join(filter(None, _prelim_parts))
+        _prelim_words = len(_prelim_text.split())
+        
+        if _prelim_words < MIN_WORDS:
+            print(f"  [VALIDATE] Script too short: {_prelim_words} words (min {MIN_WORDS}) — requesting expansion")
+            
+            for retry_attempt in range(3):
+                expand_prompt = (
+                    f"The script you generated is only {_prelim_words} words. "
+                    f"It MUST be 240-280 words total. Currently it is TOO SHORT.\n\n"
+                    f"Current script JSON:\n{json.dumps(script, indent=2, ensure_ascii=False)[:3000]}\n\n"
+                    f"EXPAND each story's part_1_narration and part_2_narration to 25-35 words each. "
+                    f"EXPAND each real_talk to 10-15 words. "
+                    f"Add MORE specific facts, names, numbers, and Looney Tunes metaphors.\n"
+                    f"Keep the SAME story topics and angles — just make them LONGER and MORE DETAILED.\n"
+                    f"Target: 240-280 words total. Currently: {_prelim_words} words. Need at least {MIN_WORDS - _prelim_words} more.\n\n"
+                    f"Return ONLY the corrected JSON with all 3 stories expanded."
+                )
+                expand_response = self.generate(
+                    prompt=expand_prompt,
+                    model=self.task_models.get("multi_news_synthesizer", self.default_model),
+                    system_prompt=prompt_config["system_prompt"],
+                    temperature=prompt_config["temperature"],
+                    max_tokens=prompt_config["max_tokens"]
+                )
+                if expand_response:
+                    expand_script = self._extract_json(expand_response)
+                    if expand_script and isinstance(expand_script, dict):
+                        expand_stories = expand_script.get('stories', [])
+                        if len(expand_stories) >= 3:
+                            # Count expanded words
+                            _exp_parts = [expand_script.get('greeting', ''), expand_script.get('intro_hook', '')]
+                            for s in expand_stories:
+                                _exp_parts.append(s.get('part_1_narration', ''))
+                                _exp_parts.append(s.get('part_2_narration', ''))
+                                _exp_parts.append(s.get('real_talk', ''))
+                                _exp_parts.append(s.get('segue', ''))
+                            _exp_words = len(' '.join(filter(None, _exp_parts)).split())
+                            
+                            if _exp_words >= MIN_WORDS:
+                                script = expand_script
+                                script['greeting'] = greeting
+                                stories = script.get('stories', [])
+                                print(f"  [VALIDATE] Expansion retry {retry_attempt+1} success — {_exp_words} words")
+                                break
+                            else:
+                                print(f"  [VALIDATE] Expansion retry {retry_attempt+1}: {_exp_words} words — still short")
+                                # Keep trying with updated count
+                                _prelim_words = _exp_words
+                
+            # Final word count after retries
+            _final_parts = [script.get('greeting', ''), script.get('intro_hook', '')]
+            for s in script.get('stories', []):
+                _final_parts.append(s.get('part_1_narration', ''))
+                _final_parts.append(s.get('part_2_narration', ''))
+                _final_parts.append(s.get('real_talk', ''))
+                _final_parts.append(s.get('segue', ''))
+            _final_words = len(' '.join(filter(None, _final_parts)).split())
+            print(f"  [VALIDATE] Final word count: {_final_words} words (target: {MIN_WORDS}-280)")
         
         # ── Build segment timeline from part_1/part_2 format ──
         # Each segment maps to an image: [segment_text, image_index]
@@ -729,7 +953,16 @@ CRITICAL RULES:
                     'label': f'story_{i+1}_part2'
                 })
             
-            # SEGUE → witty transition to next story (keep same image as part 2)
+            # Real Talk → serious drop-the-act moment (keep same image as part_2)
+            real_talk = story.get('real_talk', '')
+            if real_talk:
+                segment_timeline.append({
+                    'text': real_talk,
+                    'image_idx': img_base + 1,
+                    'label': f'story_{i+1}_real_talk'
+                })
+            
+            # SEGUE → frantic cartoonish transition to next story (keep same image as part_2)
             segue = story.get('segue', story.get('transition', ''))
             if segue and i < len(script['stories']) - 1:
                 segment_timeline.append({
@@ -747,17 +980,9 @@ CRITICAL RULES:
                     'is_separator': True
                 })
         
-        # PAUSE after last story — let the final punchline land before closing
-        last_story_idx = len(script['stories']) - 1
-        segment_timeline.append({
-            'text': '...',
-            'image_idx': last_story_idx * 2 + 1,
-            'label': 'pre_closing_pause',
-            'is_separator': True
-        })
-        
         # Closing → ALWAYS use unified closing (never trust LLM output for this)
         closing = self.UNIFIED_CLOSING
+        script['closing'] = closing
         segment_timeline.append({
             'text': closing,
             'image_idx': (len(script['stories']) - 1) * 2 + 1,
@@ -805,6 +1030,14 @@ CRITICAL RULES:
         
         # GUARANTEE GREETING: full_text MUST start with greeting
         script = self._ensure_greeting_in_fulltext(script)
+        
+        # SCRUB CTA FROM STORY FIELDS: prevent duplicate CTA before closing injection
+        script = self._scrub_closing_from_stories(script)
+        
+        # Rebuild full_text after field scrubbing (story fields may have changed)
+        full_parts = [seg['text'] for seg in segment_timeline]
+        full_text = ' '.join(filter(None, full_parts))
+        script['full_text'] = full_text
         
         # VALIDATE CLOSING: Ensure full_text ends with subscribe/CTA
         script['full_text'] = self._validate_closing(script['full_text'])
@@ -908,7 +1141,8 @@ CRITICAL RULES:
         for i, story in enumerate(script.get('stories', [])):
             p1 = story.get('part_1_narration', '')
             p2 = story.get('part_2_narration', '')
-            body = f"{p1} {p2}".strip()
+            rt = story.get('real_talk', '')
+            body = f"{p1} {p2} {rt}".strip()
             story_bodies.append(body)
         
         if len(story_bodies) < 2:
@@ -920,7 +1154,7 @@ CRITICAL RULES:
             f"[STORY {i+1}]\n{body}" for i, body in enumerate(story_bodies)
         )
         
-        prompt = f"""Transform these 3 story narrations from written text into natural, human-sounding spoken language.
+        prompt = f"""Transform these 3 story narrations from written text into The Mask's manic spoken language.
 
 You receive ONLY the story narration bodies — no greeting, no segues, no closing.
 Your job is ONLY to improve the rhythm and naturalness of each story's narration.
@@ -928,18 +1162,24 @@ Your job is ONLY to improve the rhythm and naturalness of each story's narration
 RULES:
 - NEVER change facts, numbers, or country names
 - NEVER add or remove information
-- Break long sentences into short punchy ones
+- Break long sentences into short punchy ones — The Mask speaks in rapid-fire BURSTS
 - Use PERIODS for dramatic pauses before punchlines
   Example: 'Classic leverage play. Disguised as safety.' NOT 'Classic leverage play... disguised as safety.'
-- Use '—' for abrupt contrasts
+- Use em-dash for abrupt cartoon contrasts
 - Move key numbers to end of sentences (punch position)
 - Use contractions ALWAYS (it's, they're, won't)
 - Create rhythm: alternate short punchy + longer explanatory sentences
 - Before every punchline/reveal, end previous sentence with a PERIOD, start punchline as new sentence
 - After rhetorical questions, use a period before the answer
-- Balance all 3 stories to roughly equal word count (40-55 words each)
+- Balance all 3 stories to roughly equal word count (35-55 words each)
 - Keep the [STORY N] markers exactly as they are
 - Output all 3 stories, one after another, separated by --- lines
+
+THE MASK VOICE:
+- ALL CAPS on 5-8 KEY WORDS per story — The Mask is LOUD
+- Exclamation marks (!) after cartoon reveals
+- Phonetic emphasis: Ssssmokin', Rrrroww
+- Real Talk moments: NO caps, NO exclamations, just flat truth with periods
 
 ORIGINAL STORY NARRATIONS:
 {body_text}
@@ -1052,14 +1292,28 @@ Output the 3 curated stories as plain text. Keep [STORY N] markers. Separate sto
         if intro_hook:
             parts.append(intro_hook)
         
-        # Stories with segues
+        # Stories with real_talk and segues
         stories = script.get('stories', [])
         for i in range(len(story_bodies)):
-            parts.append(story_bodies[i])
+            # Split curated body back into part_1/part_2/real_talk sections
+            body = story_bodies[i]
+            
+            # Try to extract real_talk from the original story structure
+            story = stories[i] if i < len(stories) else {}
+            original_rt = story.get('real_talk', '')
+            
+            if original_rt and original_rt.strip() in body:
+                # Real talk is in the body — use as-is
+                parts.append(body)
+            elif original_rt:
+                # Real talk wasn't in the curated body — append it
+                parts.append(body)
+                parts.append(original_rt)
+            else:
+                parts.append(body)
             
             # Add segue + separator after non-last stories
             if i < len(story_bodies) - 1:
-                story = stories[i] if i < len(stories) else {}
                 segue = story.get('segue', '')
                 if segue:
                     parts.append(segue)

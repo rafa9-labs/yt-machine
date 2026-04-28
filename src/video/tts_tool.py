@@ -36,9 +36,9 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "G2BYBzpEHIacF1Bva0XL")
 ELEVENLABS_MODEL = "eleven_multilingual_v2"
 ELEVENLABS_SETTINGS = {
-    "stability": 0.45,
+    "stability": 0.35,
     "similarity_boost": 0.70,
-    "style_exaggeration": 0.45,
+    "style_exaggeration": 0.65,
     "use_speaker_boost": True,
 }
 

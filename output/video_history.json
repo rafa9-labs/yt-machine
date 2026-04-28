@@ -1,102 +1,6 @@
 {
   "videos": [
     {
-      "project_id": 1776354344,
-      "topic": "The Invisible Inflation of Humanitarian Logistics in the Iran-US-Israel War",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Iran war: What has the war done to the cost of humanitarian aid?",
-      "created_at": "2026-04-16 16:45:44"
-    },
-    {
-      "project_id": 1776354344,
-      "topic": "Lebanese Presidential Rejection of Netanyahu Call Amid Infrastructure Decapitation",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Lebanon's Aoun rejects call with Netanyahu as Israel severs last bridge to the south",
-      "created_at": "2026-04-16 16:45:44"
-    },
-    {
-      "project_id": 1776489447,
-      "topic": "Japan and Australia Deepen Rare Earths Collaboration to Counter Geopolitical Risks",
-      "category": "technology_disruption",
-      "region": "other",
-      "article_title": "Japan\u2019s Takaichi to Forge Closer Cooperation With Australia in Rare Earths",
-      "created_at": "2026-04-18 06:17:27"
-    },
-    {
-      "project_id": 1776489447,
-      "topic": "Liberia's Economic Resilience Under Oil Price Volatility",
-      "category": "economic_warfare",
-      "region": "economic",
-      "article_title": "Liberia: World Bank, Liberia Assess Economic Stability Under Oil Pressure",
-      "created_at": "2026-04-18 06:17:27"
-    },
-    {
-      "project_id": 1776489447,
-      "topic": "Iran war: Strait of Hormuz open amid Israel-Lebanon truce",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Iran war: Strait of Hormuz open amid Israel-Lebanon truce",
-      "created_at": "2026-04-18 06:17:27"
-    },
-    {
-      "project_id": 1776613724,
-      "topic": "War on Iran: Why Israel and the US are the ultimate losers",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "War on Iran: Why Israel and the US are the ultimate losers",
-      "created_at": "2026-04-19 16:48:44"
-    },
-    {
-      "project_id": 1776613724,
-      "topic": "India's harvest festivals under climate strain",
-      "category": "technology_disruption",
-      "region": "regional",
-      "article_title": "India\u2019s harvest festivals under climate strain",
-      "created_at": "2026-04-19 16:48:44"
-    },
-    {
-      "project_id": 1776613724,
-      "topic": "North Korea's missile tests signal regional escalation",
-      "category": "regional_flashpoints",
-      "region": "regional",
-      "article_title": "North Korea launches ballistic missiles toward sea",
-      "created_at": "2026-04-19 16:48:44"
-    },
-    {
-      "project_id": 1776627190,
-      "topic": "Iran-US ceasefire talks stall as Strait of Hormuz tensions resurface",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "War on Iran: Mediators push ceasefire extension as deal hopes fade",
-      "created_at": "2026-04-19 20:33:10"
-    },
-    {
-      "project_id": 1776627190,
-      "topic": "Ethiopia's 'Singapore' dream: A continent's new authoritarian model",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "From Sudan to Gaza, becoming 'Singapore' means choosing to comply",
-      "created_at": "2026-04-19 20:33:10"
-    },
-    {
-      "project_id": 1776627190,
-      "topic": "North Korea's missile tests intensify regional tensions",
-      "category": "regional_flashpoints",
-      "region": "regional",
-      "article_title": "North Korea launches ballistic missiles toward sea",
-      "created_at": "2026-04-19 20:33:10"
-    },
-    {
-      "project_id": 1776631035,
-      "topic": "Iran-US ceasefire talks stall as uranium dispute and allied forces remain contentious",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "War on Iran: Mediators push ceasefire extension as deal hopes fade",
-      "created_at": "2026-04-19 21:37:15"
-    },
-    {
       "project_id": 1776631035,
       "topic": "North Korea's missile tests signal regional tension",
       "category": "regional_flashpoints",
@@ -159,7 +63,103 @@
       "region": "middle_east",
       "article_title": "What levers can Turkey use against Israel if their war of words escalates?",
       "created_at": "2026-04-25 15:07:10"
+    },
+    {
+      "project_id": 1777240879,
+      "topic": "Iran-Russia diplomatic dialogue on ceasefire and regional stability",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Iran FM to visit Moscow for talks on ceasefire and negotiations",
+      "created_at": "2026-04-26 23:01:19"
+    },
+    {
+      "project_id": 1777240879,
+      "topic": "Russia confirms Iran foreign minister to visit for talks",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Russia confirms Iran foreign minister to visit for talks",
+      "created_at": "2026-04-26 23:01:19"
+    },
+    {
+      "project_id": 1777240879,
+      "topic": "Jordan's King Warns Against Israeli Escalation in Gaza, West Bank",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Jordan\u2019s king warns against Israeli escalation in Gaza, West Bank",
+      "created_at": "2026-04-26 23:01:19"
+    },
+    {
+      "project_id": 1777258962,
+      "topic": "Jordan's King Warns Against Israeli Escalation in Gaza, West Bank",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Jordan\u2019s king warns against Israeli escalation in Gaza, West Bank",
+      "created_at": "2026-04-27 04:02:42"
+    },
+    {
+      "project_id": 1777258962,
+      "topic": "Hezbollah Strikes Israeli Forces in Lebanon with Drones and Missiles",
+      "category": "middle_east_conflict",
+      "region": "other",
+      "article_title": "Hezbollah says it targeted troops, tank with drones and missile",
+      "created_at": "2026-04-27 04:02:42"
+    },
+    {
+      "project_id": 1777258962,
+      "topic": "Russia-North Korea Military Pact Entrenches Eastern Front Strategy",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Russia, North Korea agree 'long-term' military cooperation",
+      "created_at": "2026-04-27 04:02:42"
+    },
+    {
+      "project_id": 1777296610,
+      "topic": "Israel-UAE Defense Pact Unveils Iron Dome in Gulf War",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Israel sent air defence system and troops to UAE during Iran war, report says",
+      "created_at": "2026-04-27 14:30:10"
+    },
+    {
+      "project_id": 1777296610,
+      "topic": "Ukraine's drone commander targets Russian oil, troops, and morale",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine's drone commander has Russian oil, troops and morale in his sights",
+      "created_at": "2026-04-27 14:30:10"
+    },
+    {
+      "project_id": 1777296610,
+      "topic": "Mali's defense minister killed as armed groups launch countrywide offensive",
+      "category": "technology_disruption",
+      "region": "other",
+      "article_title": "Mali's defence minister killed as armed groups launch countrywide offensive",
+      "created_at": "2026-04-27 14:30:10"
+    },
+    {
+      "project_id": 1777316205,
+      "topic": "Bahrain revokes citizenship of 69 people linked to Iran war",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Bahrain revokes citizenship of 69 people in connection with Iran war",
+      "created_at": "2026-04-27 19:56:45"
+    },
+    {
+      "project_id": 1777316205,
+      "topic": "Oil and gas companies raking in $30m/hour from Iran war, as UK energy bills soar",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "The oil, gas and arms companies profiting from the war on Iran",
+      "created_at": "2026-04-27 19:56:45"
+    },
+    {
+      "project_id": 1777316205,
+      "topic": "Ukraine's drone commander targets Russian oil, troops and morale",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine's drone commander has Russian oil, troops and morale in his sights",
+      "created_at": "2026-04-27 19:56:45"
     }
   ],
-  "last_updated": "2026-04-25 15:07:10"
+  "last_updated": "2026-04-27 19:56:45"
 }

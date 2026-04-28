@@ -26,7 +26,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # FALLBACK: fal-ai/flux/schnell — cheapest (~$0.003/img), 4 steps
 # ============================================================================
 
-MAX_PIXELS = 1_000_000
+MAX_PIXELS = 1_300_000
 
 PIXEL_ART_ENFORCEMENT_PREFIX = (
     "Clean 32-bit pixel art, high contrast news graphic, isometric style, "
@@ -44,7 +44,7 @@ IMAGE_SIZE_MAP = {
     "PinguPlay":  {"width": 512,  "height": 512},
     "PinguQuest": {"width": 768,  "height": 768},
     "PinguHero":  {"width": 1024, "height": 1024},
-    "Default":    {"width": 1280, "height": 720},
+    "Default":    {"width": 1088, "height": 1152},
 }
 
 PIXEL_ART_MODEL = "fal-ai/flux/dev"

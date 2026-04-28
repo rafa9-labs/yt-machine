@@ -1,4 +1,5 @@
 import os
+import math
 import time
 import numpy as np
 from pathlib import Path
@@ -48,8 +49,8 @@ CAMERA_PATTERNS = {
 
 def _apply_camera_movement(clip: ImageClip, movement_type: str, duration: float) -> ImageClip:
     """
-    Apply a Ken Burns zoom effect to a still ImageClip.
-    Uses moviepy's .fl() image transform to animate zoom while preserving duration.
+    Apply a smooth Ken Burns zoom effect to a still ImageClip.
+    Uses moviepy's .fl() transform with cosine easing for jitter-free zoom.
     
     Args:
         clip: ImageClip to animate (should be pre-resized to target dimensions)
@@ -57,41 +58,38 @@ def _apply_camera_movement(clip: ImageClip, movement_type: str, duration: float)
         duration: Duration of the clip
     
     Returns:
-        Clip with zoom animation, duration preserved
+        Clip with smooth zoom animation, duration preserved
     """
     if movement_type not in ('zoom_in', 'zoom_out'):
         return clip
     
-    # Ensure clip has a duration
     if not clip.duration or clip.duration <= 0:
         clip = clip.set_duration(duration)
     
     safe_dur = max(clip.duration, 0.1)
+    pattern = CAMERA_PATTERNS[movement_type]
+    start_scale = pattern['start_scale']
+    end_scale = pattern['end_scale']
     
-    # Use .fl_image() which transforms each frame independently
-    # This preserves clip duration, size, and all other properties
-    def zoom_transform(pic):
-        """Apply zoom by cropping into the center of the image."""
-        h, w = pic.shape[:2]
-        if movement_type == 'zoom_in':
-            # Crop 10% from each edge (zoom into center)
-            crop_h = int(h * 0.05)
-            crop_w = int(w * 0.05)
-        else:
-            # Slightly less crop for zoom out start
-            crop_h = int(h * 0.02)
-            crop_w = int(w * 0.02)
+    def smooth_zoom(get_frame, t):
+        progress = max(0.0, min(1.0, t / safe_dur))
+        factor = 0.5 * (1.0 - math.cos(progress * math.pi))
+        scale = start_scale + (end_scale - start_scale) * factor
         
-        top = crop_h
-        left = crop_w
-        bottom = h - crop_h
-        right = w - crop_w
+        frame = get_frame(t)
+        h, w = frame.shape[:2]
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
         
-        cropped = pic[top:bottom, left:right]
-        pil = Image.fromarray(cropped).resize((w, h), Image.LANCZOS)
-        return np.array(pil)
+        pil = Image.fromarray(frame).resize((new_w, new_h), Image.LANCZOS)
+        arr = np.array(pil)
+        
+        crop_x = max(0, (new_w - w) // 2)
+        crop_y = max(0, (new_h - h) // 2)
+        cropped = arr[crop_y:crop_y + h, crop_x:crop_x + w]
+        return cropped
     
-    return clip.fl_image(zoom_transform)
+    return clip.fl(smooth_zoom)
 
 
 def _create_segment_captions(script_text: str, duration: float, width: int, height: int) -> List:

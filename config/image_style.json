@@ -27,7 +27,7 @@
     "output_format": "png",
     "enable_safety_checker": false,
     "render_resolution": [272, 288],
-    "target_resolution": [1280, 720],
+    "target_resolution": [1088, 1152],
     "upscale_method": "nearest",
     "max_pixels": 1000000,
     "pixel_art_enforcement_prefix": "Clean 32-bit pixel art, high contrast news graphic, isometric style, uniform grid-aligned pixels, no anti-aliasing, no color bleeding, no soft gradients",
@@ -35,7 +35,7 @@
       "PinguPlay": { "width": 512, "height": 512 },
       "PinguQuest": { "width": 768, "height": 768 },
       "PinguHero": { "width": 1024, "height": 1024 },
-      "Default": { "width": 1280, "height": 720 }
+      "Default": { "width": 1088, "height": 1152 }
     }
   },
 

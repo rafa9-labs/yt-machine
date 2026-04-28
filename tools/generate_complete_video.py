@@ -550,19 +550,20 @@ try:
     # ── Try LangChain curation chain first ──
     if _USE_LANGCHAIN:
         try:
-            from src.brain.chains.curation import create_curation_chain
-            curation_chain = create_curation_chain()
+            from src.brain.chains.curation import CurationChain
+            curation_chain_obj = CurationChain()
             story_bodies = []
             for story in script.get('stories', []):
                 p1 = story.get('part_1_narration', '')
                 p2 = story.get('part_2_narration', '')
-                story_bodies.append(f"{p1} {p2}".strip())
+                rt = story.get('real_talk', '')
+                story_bodies.append(f"{p1} {p2} {rt}".strip())
 
             body_text = "\n\n---\n\n".join(
                 f"[STORY {i+1}]\n{body}" for i, body in enumerate(story_bodies)
             )
 
-            chain_result = curation_chain.invoke({"input_text": body_text})
+            chain_result = curation_chain_obj.curate_stories(story_bodies)
             if chain_result and isinstance(chain_result, str):
                 curated_text = chain_result
                 log.info("curation.langchain.success")
@@ -668,6 +669,9 @@ try:
                 story = script['stories'][story_idx]
                 part_key = 'part_1_narration' if scene_idx % 2 == 0 else 'part_2_narration'
                 story_text = story.get(part_key, '')
+                rt = story.get('real_talk', '')
+                if scene_idx % 2 == 1 and rt:
+                    story_text = f"{story_text} {rt}".strip()
 
             scene_seed = base_seed + scene_idx
             art_result = generate_pixel_art(full_prompt, script_text=story_text, seed=scene_seed)
@@ -1105,7 +1109,7 @@ if final_video_path and not args.no_telegram:
     try:
         from tools.telegram_sender import send_video_to_telegram
         today_str = datetime.now().strftime('%b %d, %Y')
-        caption = f"📹 Masker Daily News — {today_str}"
+        caption = f"📹 The Mask Daily News — {today_str}"
         result = send_video_to_telegram(video_path=final_video_path, caption=caption)
         success = result.get("success", False)
         if success:

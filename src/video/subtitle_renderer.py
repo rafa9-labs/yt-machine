@@ -440,6 +440,8 @@ def _clean_script_for_subtitles(script_text: str) -> str:
     """
     # Remove glitch/stage markers from old personality
     text = re.sub(r'\*\[.*?\]\*', '', script_text)
+    # Remove [STORY N] markers from curated text
+    text = re.sub(r'\[STORY\s*\d+\]\s*', '', text)
     # Remove ellipsis pause markers injected by TTS
     text = re.sub(r'\.{2,}', ' ', text)
     # Remove stray double quotes (TTS injects ... "phrase" ... for dramatic timing)
@@ -452,14 +454,16 @@ def _clean_script_for_subtitles(script_text: str) -> str:
 
 
 def _clean_display(word: str) -> str:
-    """Clean word for display: strip punctuation, quotes, and uppercase."""
-    # Strip all common punctuation and quote characters
-    strip_chars = '.,;:!?-\u2014\u2013\u201c\u201d\u2018\u2019"\''
-    cleaned = word.strip(strip_chars).upper()
-    # Filter out bare quotes or empty results
-    if not cleaned or cleaned in ('"', "'", '\u201c', '\u201d', '\u2018', '\u2019'):
+    """Clean word for display: keep sentence punctuation (., !, ,), strip other noise, uppercase."""
+    strip_chars = ';:—–""""\''
+    cleaned = word.strip(strip_chars)
+    if cleaned.startswith('-'):
+        cleaned = cleaned[1:]
+    if cleaned.endswith('-'):
+        cleaned = cleaned[:-1]
+    if not cleaned or cleaned in ('"', "'", '"', '"', ''', ''', '-'):
         return ''
-    return cleaned
+    return cleaned.upper()
 def _render_phrase_frame(words: List[Dict], phrase_start_idx: int, phrase_end_idx: int,
                       time: float, width: int, band_h: int, font, style,
                       drift: float = 0.0) -> np.ndarray:
@@ -588,6 +592,241 @@ def _render_title_frame(title_text: str, width: int, font, style, alpha: float =
     return np.array(img)  # Keep RGBA for transparency
 
 
+def _parse_ass_time(time_str: str) -> float:
+    """Parse ASS timestamp H:MM:SS.CC to seconds."""
+    parts = time_str.strip().split(':')
+    h = int(parts[0])
+    m = int(parts[1])
+    s_parts = parts[2].split('.')
+    s_val = int(s_parts[0])
+    cs = int(s_parts[1]) if len(s_parts) > 1 else 0
+    return h * 3600 + m * 60 + s_val + cs / 100.0
+
+
+def _clamp_ass_overlaps(lines: List[str]) -> List[str]:
+    """
+    Post-process ASS Dialogue lines to eliminate centisecond rounding overlaps.
+
+    ASS timestamps have centisecond (0.01s) precision. When whisper word gaps
+    are < 10ms, rounding can cause adjacent events to share the same centisecond
+    boundary, making the renderer show both simultaneously for that frame.
+
+    This function parses all Dialogue events, sorts by start time, and clamps
+    each event's end time to be strictly less than the next event's start time.
+    """
+    import re
+    dialogue_re = re.compile(
+        r'^(Dialogue:\s*\d+),(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),(.*)$'
+    )
+    parsed = []
+    non_dialogue = []
+    for line in lines:
+        m = dialogue_re.match(line)
+        if m:
+            prefix = m.group(1)
+            start_ts = m.group(2)
+            end_ts = m.group(3)
+            rest = m.group(4)
+            start_s = _parse_ass_time(start_ts)
+            end_s = _parse_ass_time(end_ts)
+            parsed.append((start_s, end_s, prefix, start_ts, end_ts, rest))
+        else:
+            non_dialogue.append(line)
+
+    if not parsed:
+        return lines
+
+    parsed.sort(key=lambda x: (x[0], x[1]))
+
+    clamped = []
+    for i in range(len(parsed)):
+        start_s, end_s, prefix, start_ts, end_ts, rest = parsed[i]
+        if i < len(parsed) - 1:
+            next_start = parsed[i + 1][0]
+            if end_s >= next_start:
+                end_s = next_start - 0.01
+                if end_s <= start_s:
+                    end_s = start_s + 0.01
+        if end_s <= start_s:
+            end_s = start_s + 0.01
+        h = int(end_s // 3600)
+        m = int((end_s % 3600) // 60)
+        s_val = int(end_s % 60)
+        cs = int((end_s % 1) * 100)
+        clamped_end = f"{h}:{m:02d}:{s_val:02d}.{cs:02d}"
+        clamped.append(f"{prefix},{start_ts},{clamped_end},{rest}")
+
+    return non_dialogue + clamped
+
+
+def generate_ass_subtitles(
+    script_text: str,
+    word_timestamps: List[Dict],
+    video_width: int,
+    video_height: int,
+    band_y_position: int,
+    style: dict = None,
+    hook_text: str = None,
+) -> str:
+    """
+    Generate ASS (Advanced SubStation Alpha) subtitle content for ffmpeg burn-in.
+    
+    Uses karaoke \\k tags for word-by-word highlight effect:
+    - Current word: highlighted in gold
+    - Previous/upcoming words: lighter colors
+    
+    This avoids the slow moviepy per-frame Python rendering entirely.
+    """
+    import re
+
+    s = {**SUBTITLE_STYLE, **(style or {})}
+    
+    if not word_timestamps:
+        return ""
+
+    SUBTITLE_DELAY = 0.25
+    delayed_ts = [{'word': w['word'], 'start': w['start'] + SUBTITLE_DELAY, 'end': w['end'] + SUBTITLE_DELAY}
+                  for w in word_timestamps]
+
+    clean_script = _clean_script_for_subtitles(script_text) if script_text else script_text
+
+    if clean_script and clean_script.strip():
+        aligned_words = align_whisper_to_script(delayed_ts, clean_script)
+    else:
+        aligned_words = delayed_ts
+
+    aligned_words = [w for w in aligned_words if _clean_display(w['word'])]
+
+    if not aligned_words:
+        return ""
+
+    phrases = _split_into_phrases(aligned_words, max_words=5)
+    if not phrases:
+        return ""
+
+    highlight_color = s.get('highlight_color', (255, 215, 0))
+    previous_color = s.get('previous_color', (255, 255, 255))
+    upcoming_color = s.get('upcoming_color', (180, 180, 180))
+    outline_color = s.get('outline_color', (0, 0, 0))
+    outline_width = s.get('outline_width', 5)
+    font_size = s.get('font_size', 64)
+    font_name = s.get('font_name', 'Arial-Bold')
+
+    def _ass_color(rgb):
+        return f"&H{rgb[2]:02X}{rgb[1]:02X}{rgb[0]:02X}"
+
+    def _format_time(seconds):
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s_val = int(seconds % 60)
+        cs = int((seconds % 1) * 100)
+        return f"{h}:{m:02d}:{s_val:02d}.{cs:02d}"
+
+    hi_ass = _ass_color(highlight_color)
+    prev_ass = _ass_color(previous_color)
+    upc_ass = _ass_color(upcoming_color)
+    ol_ass = _ass_color(outline_color)
+
+    ass_font = "Arial"
+    if "bold" in font_name.lower() or "Bold" in font_name:
+        ass_font = "Arial"
+
+    sub_y = band_y_position + 10
+
+    lines = [
+        "[Script Info]",
+        "Title: The Mask Daily News",
+        "ScriptType: v4.00+",
+        f"PlayResX: {video_width}",
+        f"PlayResY: {video_height}",
+        "WrapStyle: 0",
+        "ScaledBorderAndShadow: yes",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        f"Style: Default,{ass_font},{font_size},{prev_ass},{prev_ass},{ol_ass},&H80000000,-1,0,0,0,100,100,0,0,1,{outline_width},2,2,30,30,10,1",
+        f"Style: Title,{ass_font},48,{hi_ass},{hi_ass},{ol_ass},&H80000000,-1,0,0,0,100,100,0,0,1,3,2,8,30,30,10,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+
+    if hook_text and hook_text.strip():
+        title_words = hook_text.strip().split()
+        if len(title_words) > 10:
+            title_display = " ".join(title_words[:10])
+        else:
+            title_display = " ".join(title_words)
+        title_y = 20
+        lines.append(
+            f"Dialogue: 0,0:00:00.00,9:59:59.99,Title,,0,0,0,,"
+            f"{{\\an8}}{{\\pos({video_width // 2},{title_y})}}{title_display}"
+        )
+
+    TAIL_PAD = 0.01
+
+    for phrase_idx, (start_idx, end_idx, phrase_start, phrase_end) in enumerate(phrases):
+        lead_in = s.get('lead_in_seconds', 0.3)
+        prev_phrase_end = (phrases[phrase_idx - 1][3] + TAIL_PAD + 0.01) if phrase_idx > 0 else 0
+        sub_start = max(prev_phrase_end, phrase_start - lead_in)
+        sub_end = phrase_end + TAIL_PAD
+
+        if sub_end <= sub_start:
+            continue
+
+        displayable_indices = []
+        for i in range(start_idx, end_idx):
+            if _clean_display(aligned_words[i]['word']):
+                displayable_indices.append(i)
+
+        if not displayable_indices:
+            continue
+
+        def build_single_highlight_text(active_abs_idx):
+            parts = []
+            for i in range(start_idx, end_idx):
+                word = _clean_display(aligned_words[i]['word'])
+                if not word:
+                    continue
+                if i == active_abs_idx:
+                    parts.append(f"{{\\c{hi_ass}\\1c{hi_ass}}}{word}")
+                else:
+                    parts.append(f"{{\\c{prev_ass}\\1c{prev_ass}}}{word}")
+            return " ".join(parts)
+
+        first_word_abs = displayable_indices[0]
+        if first_word_abs > sub_start + 0.05:
+            ass_text = build_single_highlight_text(-1)
+            first_start = aligned_words[first_word_abs]['start']
+            if ass_text.strip() and first_start > sub_start:
+                lines.append(
+                    f"Dialogue: 0,{_format_time(sub_start)},{_format_time(first_start)},Default,,0,0,0,,"
+                    f"{{\\an8}}{{\\pos({video_width // 2},{sub_y})}}{ass_text}"
+                )
+
+        for di, word_abs in enumerate(displayable_indices):
+            w_start = aligned_words[word_abs]['start']
+
+            if di < len(displayable_indices) - 1:
+                next_abs = displayable_indices[di + 1]
+                w_end = aligned_words[next_abs]['start']
+            else:
+                w_end = sub_end
+
+            if w_end <= w_start:
+                w_end = w_start + 0.15
+
+            ass_text = build_single_highlight_text(word_abs)
+            if ass_text.strip():
+                lines.append(
+                    f"Dialogue: 0,{_format_time(w_start)},{_format_time(w_end)},Default,,0,0,0,,"
+                    f"{{\\an8}}{{\\pos({video_width // 2},{sub_y})}}{ass_text}"
+                )
+
+    lines = _clamp_ass_overlaps(lines)
+    return "\n".join(lines)
+
+
 def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
                        video_width: int, video_height: int,
                        band_y_position: int,
@@ -635,9 +874,9 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
 
     clips = []
     for i, (start_idx, end_idx, phrase_start, phrase_end) in enumerate(phrases):
-        prev_clip_end = (phrases[i-1][3] + 0.15) if i > 0 else 0
+        prev_clip_end = (phrases[i-1][3] + 0.01) if i > 0 else 0
         clip_start = max(prev_clip_end, phrase_start - lead_in)
-        clip_end = phrase_end + 0.15
+        clip_end = phrase_end + 0.01
         duration = clip_end - clip_start
         
         if duration <= 0:
