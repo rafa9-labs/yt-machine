@@ -337,13 +337,14 @@ def _add_natural_pacing(text: str, engine: str = "kokoro") -> str:
     text = re.sub(r'[*]', '', text)               # Remaining asterisks
     
     # ── PAUSE HANDLING ──
-    # Story separator (....): strip entirely — silence buffers between batches handle pauses.
-    # Avoids ElevenLabs interpreting comma chains as vocalized "CHET" sounds.
-    text = re.sub(r'\.{4,}\s*', '.  ', text)
+    # Story separator (....): stripped entirely — structural splitting in generate_voiceover()
+    # handles inter-story pauses (0.8s silence). This avoids ElevenLabs interpreting
+    # dot chains as vocalized "CHET" sounds or arbitrary batch-boundary pauses.
+    text = re.sub(r'\.{4,}\s*', '. ', text)
     
-    # Dramatic pause (...): convert to period + double space for natural sentence break.
-    # Double space causes a natural TTS pause without vocalized artifacts.
-    text = re.sub(r'\.{3}\s*', '.  ', text)
+    # Dramatic pause (...): convert to period for natural sentence break.
+    # TTS engines naturally pause at periods; no special silence injection needed.
+    text = re.sub(r'\.{3}\s*', '. ', text)
     
     # Em-dash (—): convert to comma pause (all TTS engines respect commas)
     text = text.replace('—', ', ')
@@ -446,10 +447,22 @@ def _generate_edge_tts(clean_text: str, voice_tone: str, filepath: Path) -> Opti
         return None
 
 
-def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -> Optional[dict]:
+def _generate_elevenlabs_tts(structural_chunks: list, voice_tone: str, filepath: Path) -> Optional[dict]:
     """
     Generate speech using ElevenLabs API (highest quality natural voice).
-    Uses batch generation (1-3 sentences per call) for natural variation.
+    
+    Uses two-phase batch splitting:
+      1. Text is pre-split into structural chunks at story separator boundaries (....)
+      2. Each chunk is batched normally (1-3 sentences per API call)
+    
+    Audio assembly uses two silence tiers:
+      - 0.80s between structural chunks (story transitions)
+      - 0.06s between intra-chunk batches (imperceptible micro-breath)
+    
+    Args:
+        structural_chunks: List of cleaned text chunks, split at story boundaries
+        voice_tone: Voice style string
+        filepath: Output path for the final MP3
     """
     api_key = os.environ.get("ELEVEN_LABS_KEY", "").strip()
     if not api_key:
@@ -464,29 +477,44 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
             "Accept": "audio/mpeg",
         }
         
-        sentences = re.split(r'(?<=[.!?])\s+', clean_text)
-        sentences = [s.strip() for s in sentences if s.strip()]
+        all_batches = []
+        chunk_boundaries = []
         
-        batches = []
-        current_batch = []
-        current_words = 0
-        
-        for sentence in sentences:
-            words = len(sentence.split())
-            if current_batch and (len(current_batch) >= 3 or current_words + words > 35):
+        for chunk_idx, chunk_text in enumerate(structural_chunks):
+            if not chunk_text or not chunk_text.strip():
+                continue
+            
+            sentences = re.split(r'(?<=[.!?])\s+', chunk_text)
+            sentences = [s.strip() for s in sentences if s.strip()]
+            
+            batches = []
+            current_batch = []
+            current_words = 0
+            
+            for sentence in sentences:
+                words = len(sentence.split())
+                if current_batch and (len(current_batch) >= 3 or current_words + words > 35):
+                    batches.append(' '.join(current_batch))
+                    current_batch = []
+                    current_words = 0
+                current_batch.append(sentence)
+                current_words += words
+            
+            if current_batch:
                 batches.append(' '.join(current_batch))
-                current_batch = []
-                current_words = 0
-            current_batch.append(sentence)
-            current_words += words
+            
+            start_idx = len(all_batches)
+            all_batches.extend(batches)
+            end_idx = len(all_batches)
+            chunk_boundaries.append((start_idx, end_idx))
         
-        if current_batch:
-            batches.append(' '.join(current_batch))
+        if not all_batches:
+            return None
         
-        print(f"  [ELEVENLABS] Generating in {len(batches)} batches (voice: {voice_id[:8]}...)")
+        print(f"  [ELEVENLABS] Generating in {len(all_batches)} batches across {len(chunk_boundaries)} structural chunks (voice: {voice_id[:8]}...)")
         
         audio_segments = []
-        for i, batch_text in enumerate(batches):
+        for i, batch_text in enumerate(all_batches):
             payload = {
                 "text": batch_text,
                 "model_id": ELEVENLABS_MODEL,
@@ -496,7 +524,7 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
             resp = http_requests.post(url, json=payload, headers=headers, timeout=60)
             
             if resp.status_code != 200:
-                print(f"  [ELEVENLABS] Batch {i+1}/{len(batches)} failed: HTTP {resp.status_code}")
+                print(f"  [ELEVENLABS] Batch {i+1}/{len(all_batches)} failed: HTTP {resp.status_code}")
                 return None
             
             temp_path = filepath.with_suffix(f'.batch_{i}.mp3')
@@ -505,6 +533,14 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
         
         if not audio_segments:
             return None
+        
+        structural_after_indices = set()
+        for chunk_idx, (start_idx, end_idx) in enumerate(chunk_boundaries):
+            if chunk_idx < len(chunk_boundaries) - 1:
+                structural_after_indices.add(end_idx - 1)
+        
+        STRUCTURAL_SILENCE = 0.80
+        MICRO_BREATH = 0.06
         
         if len(audio_segments) == 1:
             Path(audio_segments[0]).rename(filepath)
@@ -515,27 +551,36 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
                 arr, sr = sf.read(str(p))
                 batch_arrays.append(arr)
             
-            silence_duration = 0.30
-            silence_samples = int(sr * silence_duration)
-            fade_len = min(50, silence_samples // 2)
-            fade_in = np.linspace(0, 1, fade_len, dtype=np.float32)
-            fade_out = np.linspace(1, 0, fade_len, dtype=np.float32)
+            def _make_silence(duration_samples, sr, n_channels):
+                fade_len = min(50, duration_samples // 2)
+                fade_in = np.linspace(0, 1, fade_len, dtype=np.float32)
+                fade_out = np.linspace(1, 0, fade_len, dtype=np.float32)
+                if n_channels == 1:
+                    sil = np.zeros(duration_samples, dtype=np.float32)
+                    sil[:fade_len] *= fade_in
+                    sil[-fade_len:] *= fade_out
+                else:
+                    sil = np.zeros((duration_samples, n_channels), dtype=np.float32)
+                    sil[:fade_len] *= fade_in[:, None]
+                    sil[-fade_len:] *= fade_out[:, None]
+                return sil
             
-            if batch_arrays[0].ndim == 1:
-                silence = np.zeros(silence_samples, dtype=np.float32)
-                silence[:fade_len] *= fade_in
-                silence[-fade_len:] *= fade_out
-            else:
-                n_ch = batch_arrays[0].shape[1]
-                silence = np.zeros((silence_samples, n_ch), dtype=np.float32)
-                silence[:fade_len] *= fade_in[:, None]
-                silence[-fade_len:] *= fade_out[:, None]
+            n_ch = 1 if batch_arrays[0].ndim == 1 else batch_arrays[0].shape[1]
+            structural_sil = _make_silence(int(sr * STRUCTURAL_SILENCE), sr, n_ch)
+            micro_sil = _make_silence(int(sr * MICRO_BREATH), sr, n_ch)
             
             parts = []
+            struct_count = 0
+            micro_count = 0
             for i, arr in enumerate(batch_arrays):
                 parts.append(arr)
                 if i < len(batch_arrays) - 1:
-                    parts.append(silence)
+                    if i in structural_after_indices:
+                        parts.append(structural_sil)
+                        struct_count += 1
+                    else:
+                        parts.append(micro_sil)
+                        micro_count += 1
             
             full_audio = np.concatenate(parts, axis=0)
             wav_path = filepath.with_suffix('.wav')
@@ -547,7 +592,7 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
             wav_clip.close()
             wav_path.unlink(missing_ok=True)
             
-            print(f"  [ELEVENLABS] Added {silence_duration}s silence x {len(batches)-1} between batches")
+            print(f"  [ELEVENLABS] Silences: {struct_count}x{STRUCTURAL_SILENCE}s (story) + {micro_count}x{MICRO_BREATH}s (breath)")
             
             for p in audio_segments:
                 Path(p).unlink(missing_ok=True)
@@ -558,9 +603,10 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
         clip.close()
         
         file_size = filepath.stat().st_size
-        word_count = len(clean_text.split())
+        full_clean_text = ' '.join(c for c in structural_chunks if c and c.strip())
+        word_count = len(full_clean_text.split())
         
-        print(f"  [ELEVENLABS] Generated {duration:.1f}s of natural speech ({len(batches)} batches)")
+        print(f"  [ELEVENLABS] Generated {duration:.1f}s of natural speech ({len(all_batches)} batches, {len(chunk_boundaries)} chunks)")
         
         return {
             "success": True,
@@ -568,7 +614,7 @@ def _generate_elevenlabs_tts(clean_text: str, voice_tone: str, filepath: Path) -
             "path": str(filepath),
             "voice": f"elevenlabs_{voice_id[:8]}",
             "voice_tone": voice_tone,
-            "text_length": len(clean_text),
+            "text_length": len(full_clean_text),
             "word_count": word_count,
             "file_size_bytes": file_size,
             "estimated_duration_seconds": round(duration, 2),
@@ -611,14 +657,23 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     # Determine target engine
     target_engine = "elevenlabs"
     
-    # Clean the text — light formatting cleanup, keep punctuation intact
-    clean_text = _add_natural_pacing(text, engine=target_engine)
+    # Split raw text at story separator boundaries (....) before text cleaning.
+    # This identifies structural pauses that need longer silence (0.8s)
+    # vs intra-story batch boundaries that only need a micro-breath (0.06s).
+    raw_chunks = re.split(r'\.{4,}', text)
+    raw_chunks = [c.strip() for c in raw_chunks if c.strip()]
+    
+    # Apply text cleaning to each structural chunk independently
+    structural_chunks = [_add_natural_pacing(c, engine=target_engine) for c in raw_chunks]
+    
+    # Full clean text for word timestamp alignment
+    clean_text = ' '.join(c for c in structural_chunks if c)
     
     filename = f"voiceover_{voice_tone}_{hash(text) % 10000}.mp3"
     filepath = OUTPUT_DIR / filename
     
     # === PRIMARY: ElevenLabs (highest quality natural voice) ===
-    result = _generate_elevenlabs_tts(clean_text, voice_tone, filepath)
+    result = _generate_elevenlabs_tts(structural_chunks, voice_tone, filepath)
     
     if result and result.get('success'):
         mastered = _apply_audio_mastering(Path(result['path']))
