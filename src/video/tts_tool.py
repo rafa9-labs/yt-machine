@@ -74,6 +74,30 @@ CONTENT_VOICE_MAP = {
     "collapse": "authoritative",
 }
 
+# Kokoro TTS — local free engine (runs on GPU/CPU)
+KOKORO_VOICE_MAP = {
+    "authoritative": "am_adam",
+    "professional": "af_breeze",
+    "energetic": "af_heart",
+    "calm": "af_sky",
+    "deep": "am_michael",
+    "female_professional": "af_breeze",
+    "female_energetic": "af_nova",
+    "male_casual": "am_adam",
+}
+KOKORO_SPEED_MAP = {
+    "authoritative": 1.0,
+    "professional": 1.0,
+    "energetic": 1.1,
+    "calm": 0.95,
+    "deep": 0.9,
+    "female_professional": 1.0,
+    "female_energetic": 1.1,
+    "male_casual": 1.05,
+}
+USE_KOKORO = os.getenv("USE_KOKORO", "auto").lower() in ("true", "1", "yes", "auto")
+_kokoro_pipeline = None
+
 
 def select_voice_for_content(script_text: str, default_tone: str = "authoritative") -> str:
     """
@@ -388,6 +412,135 @@ def _get_voice_parameters(voice_tone: str) -> dict:
     }
     return prosody_settings.get(voice_tone, {"rate": "+0%", "pitch": "+0Hz"})
 
+
+def _generate_kokoro_tts(structural_chunks: list, voice_tone: str, filepath: Path) -> Optional[dict]:
+    """
+    Generate speech using Kokoro TTS (local, free, GPU-accelerated).
+    
+    Uses structural chunk splitting for proper pause handling:
+      - 0.80s silence between structural chunks (story transitions)
+      - No batching needed within chunks — Kokoro handles full text natively
+    
+    Args:
+        structural_chunks: List of cleaned text chunks, split at story boundaries
+        voice_tone: Voice style string
+        filepath: Output path for the final MP3
+    """
+    global _kokoro_pipeline
+    
+    try:
+        from kokoro import KPipeline, KModel
+        import torch
+        import soundfile as sf
+    except ImportError:
+        print("  [KOKORO] kokoro or soundfile not installed — skipping")
+        return None
+    
+    if not USE_KOKORO:
+        return None
+    
+    try:
+        voice_name = KOKORO_VOICE_MAP.get(voice_tone, "am_adam")
+        speed = KOKORO_SPEED_MAP.get(voice_tone, 1.0)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        if _kokoro_pipeline is None:
+            print(f"  [KOKORO] Loading pipeline (device={device})...")
+            model = KModel()
+            _kokoro_pipeline = KPipeline(lang_code='a', model=model, device=device)
+            print("  [KOKORO] Pipeline ready")
+        
+        audio_per_chunk = []
+        sr = None
+        
+        for i, chunk_text in enumerate(structural_chunks):
+            if not chunk_text or not chunk_text.strip():
+                audio_per_chunk.append(None)
+                continue
+            
+            chunk_label = f"chunk {i+1}/{len(structural_chunks)}"
+            print(f"  [KOKORO] Generating {chunk_label} ({len(chunk_text.split())} words)...")
+            
+            chunk_segments = []
+            for _, _, audio in _kokoro_pipeline(chunk_text, voice=voice_name, speed=speed):
+                if audio is not None:
+                    chunk_segments.append(np.array(audio, dtype=np.float32))
+            
+            if sr is None and hasattr(_kokoro_pipeline, 'model') and hasattr(_kokoro_pipeline.model, 'sample_rate'):
+                sr = _kokoro_pipeline.model.sample_rate
+            elif sr is None:
+                sr = 24000
+            
+            audio_per_chunk.append(chunk_segments if chunk_segments else None)
+            print(f"  [KOKORO] {chunk_label}: {len(chunk_segments)} segments generated")
+        
+        valid_chunks = [c for c in audio_per_chunk if c is not None]
+        if not valid_chunks:
+            print("  [KOKORO] No audio produced")
+            return None
+        
+        STRUCTURAL_SILENCE = 0.80
+        silence_samples = int(sr * STRUCTURAL_SILENCE)
+        fade_len = min(50, silence_samples // 2)
+        structural_silence = np.zeros(silence_samples, dtype=np.float32)
+        fade_in = np.linspace(0, 1, fade_len, dtype=np.float32)
+        fade_out = np.linspace(1, 0, fade_len, dtype=np.float32)
+        structural_silence[:fade_len] *= fade_in
+        structural_silence[-fade_len:] *= fade_out
+        
+        assembled_parts = []
+        for i, chunk_segments in enumerate(audio_per_chunk):
+            if chunk_segments is None:
+                continue
+            for seg in chunk_segments:
+                assembled_parts.append(seg)
+            if i < len(audio_per_chunk) - 1:
+                assembled_parts.append(structural_silence)
+        
+        assembled = np.concatenate(assembled_parts, axis=0)
+        
+        wav_path = filepath.with_suffix('.wav')
+        sf.write(str(wav_path), assembled, sr)
+        
+        from moviepy.audio.io.AudioFileClip import AudioFileClip
+        wav_clip = AudioFileClip(str(wav_path))
+        wav_clip.write_audiofile(str(filepath), verbose=False, logger=None)
+        wav_clip.close()
+        wav_path.unlink(missing_ok=True)
+        
+        clip = AudioFileClip(str(filepath))
+        duration = clip.duration
+        clip.close()
+        
+        full_clean_text = ' '.join(c for c in structural_chunks if c and c.strip())
+        word_count = len(full_clean_text.split())
+        file_size = filepath.stat().st_size
+        
+        print(f"  [KOKORO] Generated {duration:.1f}s of speech ({len(structural_chunks)} chunks)")
+        
+        return {
+            "success": True,
+            "filename": filepath.name,
+            "path": str(filepath),
+            "voice": f"kokoro_{voice_name}",
+            "voice_tone": voice_tone,
+            "text_length": len(full_clean_text),
+            "word_count": word_count,
+            "file_size_bytes": file_size,
+            "estimated_duration_seconds": round(duration, 2),
+            "audio_mastered": False,
+            "output_directory": str(OUTPUT_DIR),
+            "engine": "kokoro",
+        }
+    
+    except Exception as e:
+        print(f"  [KOKORO] Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        _kokoro_pipeline = None
+        return None
+
+
 def _generate_edge_tts(clean_text: str, voice_tone: str, filepath: Path) -> Optional[dict]:
     """
     Generate speech using Edge TTS (fallback engine).
@@ -672,7 +825,21 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     filename = f"voiceover_{voice_tone}_{hash(text) % 10000}.mp3"
     filepath = OUTPUT_DIR / filename
     
-    # === PRIMARY: ElevenLabs (highest quality natural voice) ===
+    # === PRIMARY: Kokoro (local, free, GPU-accelerated) ===
+    result = _generate_kokoro_tts(structural_chunks, voice_tone, filepath)
+    
+    if result and result.get('success'):
+        mastered = _apply_audio_mastering(Path(result['path']))
+        if mastered:
+            print(f"  [TTS] Audio mastering applied (EQ + compression)")
+            result['audio_mastered'] = True
+            result['file_size_bytes'] = Path(result['path']).stat().st_size
+        
+        result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)
+        return result
+    
+    # === PREMIUM: ElevenLabs (cloud, highest quality) ===
+    print(f"  [TTS] Kokoro unavailable, trying ElevenLabs...")
     result = _generate_elevenlabs_tts(structural_chunks, voice_tone, filepath)
     
     if result and result.get('success'):
@@ -685,7 +852,7 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
         result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)
         return result
     
-    # === FALLBACK: Edge TTS ===
+    # === FALLBACK: Edge TTS (cloud, free) ===
     print(f"  [TTS] ElevenLabs unavailable, trying Edge TTS fallback...")
     result = _generate_edge_tts(clean_text, voice_tone, filepath)
     
