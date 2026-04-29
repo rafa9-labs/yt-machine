@@ -486,3 +486,11 @@ def _rebuild_timeline(script: dict) -> None:
             'description': story.get('part_2_visual', story.get('body', ''))
         })
     script['all_visual_scenes'] = visual_scenes
+
+    full_parts = []
+    for seg in timeline:
+        if seg.get('is_separator'):
+            full_parts.append(seg['text'])
+        elif seg.get('text'):
+            full_parts.append(seg['text'])
+    script['full_text'] = ' '.join(filter(None, full_parts))

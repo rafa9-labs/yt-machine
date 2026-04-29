@@ -118,6 +118,7 @@ from src.video.pixel_art_tool import generate_pixel_art
 from src.video.pexels_tool import fetch_vertical_footage
 from src.video.tts_tool import generate_voiceover
 from src.video.split_video_assembler import build_split_video
+from src.video.visual_qa import validate_image, adjust_prompt_for_retry
 
 
 # ── CHECKPOINT HELPER ──
@@ -150,6 +151,7 @@ _STATUS_MAP = {
     'trending_context': 'analyzed',
     'script_synthesis': 'scripted',
     'script_curation': 'scripted',
+    'script_evaluation': 'scripted',
     'tts': 'voiceover_generated',
     'image_generation': 'assembled',
     'video_assembly': 'assembled',
@@ -182,6 +184,19 @@ def _save_to_postgres(step_name: str, project_id: int, data: dict, topic: str = 
         log.debug("postgres.saved", step=step_name, status=_status, project_id=project_id)
     except Exception as e:
         log.warning("postgres.save_failed", step=step_name, error=str(e))
+
+
+def _get_adjacent_fallback(scene_idx, generated_images, image_folder, scene_name, PILImage):
+    """Use an adjacent story image instead of a blank placeholder."""
+    if generated_images:
+        if scene_idx % 2 == 1:
+            return Path(generated_images[-1])
+        elif len(generated_images) > 0:
+            return Path(generated_images[-1])
+    placeholder = PILImage.new('RGB', (1088, 1152), (10, 5, 25))
+    placeholder_path = image_folder / f"{scene_name}_placeholder.png"
+    placeholder.save(str(placeholder_path))
+    return placeholder_path
 
 
 # Create unique project folder (or reuse from resume)
@@ -575,10 +590,18 @@ try:
         curated_text = llm.curate_script(script)
 
     if curated_text and curated_text != original_text:
-        script['full_text'] = curated_text
-        full_script = curated_text
-        script['word_count'] = len(curated_text.split())
-        script['estimated_duration'] = int(len(curated_text.split()) / 2.5)
+        # Reassemble full script with structural elements (segues, closing)
+        # that curation strips out. This prevents losing segues/outro.
+        curated_bodies = llm._parse_curated_stories(curated_text, len(script.get('stories', [])))
+        if curated_bodies:
+            reassembled = llm._reassemble_script(script, curated_bodies)
+            script['full_text'] = reassembled
+            full_script = reassembled
+        else:
+            script['full_text'] = curated_text
+            full_script = curated_text
+        script['word_count'] = len(full_script.split())
+        script['estimated_duration'] = int(len(full_script.split()) / 2.5)
 
         curated_file = project_folder / "script_curated.txt"
         curated_file.write_text(curated_text, encoding='utf-8')
@@ -594,6 +617,38 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_curation", duration_s=round(_step_duration, 2))
+
+# ══════════════════════════════════════════════════════════════════════════
+# STEP 4.8: SCRIPT EVALUATION — Semantic Dedup + Continuity Critic
+# ══════════════════════════════════════════════════════════════════════════
+log.info("step.start", step="script_evaluation")
+_step_start = time.time()
+
+try:
+    from src.brain.script_evaluator import run_script_evaluation
+
+    script = run_script_evaluation(
+        script=script,
+        news_analyses=news_analyses,
+        llm_interface=llm,
+        similarity_threshold=0.90,
+    )
+
+    full_script = script.get('full_text', full_script)
+    script_file = project_folder / "script.txt"
+    script_file.write_text(full_script, encoding='utf-8')
+
+    segments_file = project_folder / "script_segments.json"
+    segments_file.write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding='utf-8')
+
+    _save_checkpoint("script_evaluation", project_folder,
+                     {"stories": len(script.get('stories', []))})
+
+except Exception as e:
+    log.warning("script_evaluation.failed", error=str(e))
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="script_evaluation", duration_s=round(_step_duration, 2))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -658,10 +713,9 @@ try:
             scene_data = all_visual_scenes[scene_idx]
             prompt = scene_data.get('description', '')
 
-            style_suffix = ('Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), '
-                            'isometric perspective, (hard pixel edges:1.2), limited color palette, '
-                            'detailed proportions, flat colors, dramatic lighting')
-            full_prompt = f"{prompt}, {style_suffix}" if prompt else style_suffix
+            # Pass only the raw scene description to generate_pixel_art.
+            # Style suffix (from config/image_style.json) is applied internally by pixel_art_tool.
+            full_prompt = prompt if prompt else ""
 
             story_idx = scene_idx // 2
             story_text = ''
@@ -673,36 +727,64 @@ try:
                 if scene_idx % 2 == 1 and rt:
                     story_text = f"{story_text} {rt}".strip()
 
-            scene_seed = base_seed + scene_idx
-            art_result = generate_pixel_art(full_prompt, script_text=story_text, seed=scene_seed)
+            fallback_desc = _build_fallback_prompt(
+                story_text, story_idx, scene_idx % 2, news_analyses
+            )
 
-            if art_result.get('success'):
+            current_prompt = full_prompt
+            accepted = False
+            qa_attempts = []
+
+            for attempt in range(3):
+                seed = base_seed + scene_idx + (attempt * 100)
+                log.debug("pixel_art.attempt", scene=scene_name, attempt=attempt + 1)
+                art_result = generate_pixel_art(current_prompt, script_text=story_text, seed=seed)
+
+                if not art_result.get('success'):
+                    log.warning("pixel_art.gen_failed", scene=scene_name, attempt=attempt + 1)
+                    if attempt < 2:
+                        adjusted = adjust_prompt_for_retry(full_prompt, 'api_failure', attempt + 1)
+                        if adjusted == full_prompt and fallback_desc:
+                            adjusted = fallback_desc
+                        current_prompt = adjusted
+                        continue
+                    else:
+                        break
+
                 src_path = Path(art_result.get('path'))
                 dst_filename = f"{scene_name}_{src_path.name}"
                 dst_path = image_folder / dst_filename
                 shutil.copy2(src_path, dst_path)
-                generated_images.append(str(dst_path))
-                log.debug("pixel_art.success", file=dst_filename)
-            else:
-                log.warning("pixel_art.primary_failed", scene=scene_name, action="retry")
-                fallback_desc = _build_fallback_prompt(story_text, story_idx, scene_idx % 2, news_analyses)
-                fallback_prompt = f"{fallback_desc}, {style_suffix}"
-                retry_seed = base_seed + scene_idx + 100
-                art_result = generate_pixel_art(fallback_prompt, script_text=story_text, seed=retry_seed)
 
-                if art_result.get('success'):
-                    src_path = Path(art_result.get('path'))
-                    dst_filename = f"{scene_name}_{src_path.name}"
-                    dst_path = image_folder / dst_filename
-                    shutil.copy2(src_path, dst_path)
+                qa_result = validate_image(
+                    str(dst_path), current_prompt,
+                    skip_vlm=True,
+                )
+                qa_attempts.append(qa_result)
+
+                if qa_result['pass']:
                     generated_images.append(str(dst_path))
-                    log.debug("pixel_art.retry_success", file=dst_filename)
+                    log.info("pixel_art.accepted", scene=scene_name, attempt=attempt + 1,
+                             reason=qa_result.get('reason', 'pass'))
+                    accepted = True
+                    break
                 else:
-                    placeholder = PILImage.new('RGB', (1088, 1152), (10, 5, 25))
-                    placeholder_path = image_folder / f"{scene_name}_placeholder.png"
-                    placeholder.save(str(placeholder_path))
-                    generated_images.append(str(placeholder_path))
-                    log.warning("pixel_art.placeholder", scene=scene_name)
+                    log.warning("pixel_art.qa_failed", scene=scene_name,
+                                reason=qa_result.get('reason', 'unknown'), attempt=attempt + 1)
+                    dst_path.unlink(missing_ok=True)
+                    if attempt < 2:
+                        adjusted = adjust_prompt_for_retry(full_prompt, qa_result.get('reason', ''), attempt + 1)
+                        if adjusted == full_prompt and fallback_desc:
+                            adjusted = fallback_desc
+                        current_prompt = adjusted
+
+            if not accepted:
+                fallback_path = _get_adjacent_fallback(
+                    scene_idx, generated_images, image_folder, scene_name, PILImage
+                )
+                generated_images.append(str(fallback_path))
+                log.warning("pixel_art.fallback", scene=scene_name,
+                            source="adjacent_image" if 'placeholder' not in str(fallback_path) else "placeholder")
 
         # Final validation: ensure exactly 6 images
         if len(generated_images) < 6:

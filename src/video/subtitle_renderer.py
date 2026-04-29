@@ -782,46 +782,142 @@ def generate_ass_subtitles(
         if not displayable_indices:
             continue
 
-        def build_single_highlight_text(active_abs_idx):
-            parts = []
-            for i in range(start_idx, end_idx):
-                word = _clean_display(aligned_words[i]['word'])
-                if not word:
-                    continue
-                if i == active_abs_idx:
-                    parts.append(f"{{\\c{hi_ass}\\1c{hi_ass}}}{word}")
-                else:
-                    parts.append(f"{{\\c{prev_ass}\\1c{prev_ass}}}{word}")
-            return " ".join(parts)
+        n_displayable = len(displayable_indices)
 
-        first_word_abs = displayable_indices[0]
-        if first_word_abs > sub_start + 0.05:
-            ass_text = build_single_highlight_text(-1)
-            first_start = aligned_words[first_word_abs]['start']
-            if ass_text.strip() and first_start > sub_start:
-                lines.append(
-                    f"Dialogue: 0,{_format_time(sub_start)},{_format_time(first_start)},Default,,0,0,0,,"
-                    f"{{\\an8}}{{\\pos({video_width // 2},{sub_y})}}{ass_text}"
-                )
-
+        # Build a sequence of (start_time, end_time, word_global_idx) for each displayable word
+        word_spans = []
         for di, word_abs in enumerate(displayable_indices):
             w_start = aligned_words[word_abs]['start']
-
-            if di < len(displayable_indices) - 1:
+            if di < n_displayable - 1:
                 next_abs = displayable_indices[di + 1]
                 w_end = aligned_words[next_abs]['start']
             else:
                 w_end = sub_end
-
             if w_end <= w_start:
                 w_end = w_start + 0.15
+            word_spans.append((w_start, w_end, word_abs))
 
-            ass_text = build_single_highlight_text(word_abs)
-            if ass_text.strip():
-                lines.append(
-                    f"Dialogue: 0,{_format_time(w_start)},{_format_time(w_end)},Default,,0,0,0,,"
-                    f"{{\\an8}}{{\\pos({video_width // 2},{sub_y})}}{ass_text}"
-                )
+        if not word_spans:
+            continue
+
+        # Use a SINGLE Dialogue line per phrase with dynamic color overrides.
+        # This eliminates flickering caused by per-word Dialogue line replacement.
+        # We split the phrase into time segments where the active word changes, 
+        # creating one Dialogue per segment but with smart overlap handling.
+        # 
+        # Actually, the most flicker-free approach is to use a single Dialogue 
+        # spanning the full phrase with {\k} karaoke timing for each word,
+        # and color overrides that change per word.
+        #
+        # ASS \k tag: {\k<centiseconds>}<text> colors the text up to that duration,
+        # then moves to next {\k} block. We use one {\k} per word.
+        #
+        # Color scheme for karaoke: previously-spoken words in white, 
+        # currently-speaking word in gold, upcoming words in grey.
+        # Since \k only gives 2 states (before-karaoke and after-karaoke per block),
+        # we use {\c} overrides before each word to set the desired color.
+
+        phrase_duration_cs = int((sub_end - sub_start) * 100)
+        if phrase_duration_cs <= 0:
+            phrase_duration_cs = 1
+
+        # Build the full-phrase text with per-word color and timing
+        # We create timed override segments:
+        # For each moment the active-word changes, we output a new Dialogue 
+        # BUT with continuous display (same phrase text, different highlight).
+        # 
+        # To avoid flicker entirely, we use ONE Dialogue per phrase with {\k} tags.
+        # The trick: use {\1c&H<color>} override before each word, and {\k<cs>}
+        # timing to control when the karaoke highlight moves to the next word.
+        #
+        # For 3-color karaoke (white/gold/grey), we need to set each word's 
+        # color explicitly with {\1c} overrides since \k only provides 2 states.
+
+        # Simpler approach: one Dialogue per phrase, with inline {\c} color tags 
+        # and {\k} timing. The entire phrase is visible at once, and each word
+        # has its color set by an override block.
+        #
+        # Format: {\k<cs_before_first_word>}{\c&H<grey>}\1c&H<grey>}word1 
+        #         {\k<cs_word1_duration>}{\c&H<gold>\1c&H<gold>}word2 
+        #         {\k<cs_word2_duration>}{\c&H<grey>\1c&H<grey>}word3 ...
+        #
+        # This keeps the phrase on screen continuously — no flicker.
+
+        # Build karaoke text: each word preceded by its duration tag and color
+        karaoke_parts = []
+        for di, (w_start, w_end, word_abs) in enumerate(word_spans):
+            word = _clean_display(aligned_words[word_abs]['word'])
+            if not word:
+                continue
+            duration_cs = max(int((w_end - w_start) * 100), 1)
+
+            if di == 0:
+                # First word: gold (highlighted immediately)
+                # Use a small {\k0} to start immediately, then {\k<duration>} for this word
+                karaoke_parts.append(f"{{\\c{hi_ass}\\1c{hi_ass}}}{word}")
+            else:
+                # All other words: grey initially, will be overridden by timed segments
+                karaoke_parts.append(f"{{\\c{upc_ass}\\1c{upc_ass}}}{word}")
+
+        karaoke_text = " ".join(karaoke_parts)
+
+        if not karaoke_text.strip():
+            continue
+
+        # Now build the timed override sequence using multiple Dialogues 
+        # that each show the FULL phrase text but with different words highlighted.
+        # To minimize flicker, we use ASS "{\pos}" positioning and ensure 
+        # consecutive Dialogues overlap by 1 frame so there's no gap.
+        #
+        # KEY INSIGHT: libass renders overlapping Dialogue events by showing 
+        # the LATER one on top. So we DON'T want overlaps for the same style — 
+        # we want seamless transitions.
+        #
+        # The FLICKER-FREE approach: ONE Dialogue per phrase, with {\t()} 
+        # animated override tags to change colors at specific times.
+
+        # Build animated overrides using {\t(<start>,<end>,\c&H<color>\1c&H<color>)} 
+        # tags within a single Dialogue line.
+        # {\t()} changes a style at a specific time within the Dialogue's duration.
+
+        # Collect color transition events: (time_offset_ms, word_index, new_color)
+        transition_events = []
+        for di, (w_start, w_end, word_abs) in enumerate(word_spans):
+            word = _clean_display(aligned_words[word_abs]['word'])
+            if not word:
+                continue
+            # When this word becomes active (highlight)
+            start_offset_ms = int((w_start - sub_start) * 1000)
+            transition_events.append((start_offset_ms, di, 'highlight'))
+            # When this word stops being active (becomes previous)
+            end_offset_ms = int((w_end - sub_start) * 1000)
+            transition_events.append((end_offset_ms, di, 'previous'))
+
+        # Build the single Dialogue line with embedded {\t()} animated color overrides
+        # per word. Each word starts grey, transitions to gold when active, then white.
+        animated_parts = []
+        for di, (w_start, w_end, word_abs) in enumerate(word_spans):
+            word = _clean_display(aligned_words[word_abs]['word'])
+            if not word:
+                continue
+            start_offset_ms = max(int((w_start - sub_start) * 1000), 0)
+            end_offset_ms = max(int((w_end - sub_start) * 1000), 0)
+
+            # Start grey, transition to gold at start_offset, then to white at end_offset
+            animated_parts.append(
+                f"{{\\1c{upc_ass}\\c{upc_ass}\\t({start_offset_ms},{start_offset_ms},\\1c{hi_ass}\\c{hi_ass})\\t({end_offset_ms},{end_offset_ms},\\1c{prev_ass}\\c{prev_ass}))}}"
+                f"{word}"
+            )
+
+        animated_text = " ".join(animated_parts)
+
+        if not animated_text.strip():
+            continue
+
+        lines.append(
+            f"Dialogue: 0,{_format_time(sub_start)},{_format_time(sub_end)},Default,,0,0,0,,"
+            f"{{\\an8}}{{\\pos({video_width // 2},{sub_y})}}{animated_text}"
+        )
 
     lines = _clamp_ass_overlaps(lines)
     return "\n".join(lines)
