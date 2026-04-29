@@ -143,6 +143,12 @@ def _save_checkpoint(step_name, project_folder, data=None):
         json.dump(existing, f, indent=2, ensure_ascii=False, default=str)
 
 
+# ── PIPELINE CONSTANTS ──
+NUM_STORIES = 2
+IMAGES_PER_STORY = 3
+NUM_IMAGES = NUM_STORIES * IMAGES_PER_STORY  # = 6
+
+
 # ── PostgreSQL SAVE HELPER (non-blocking) ──
 _STATUS_MAP = {
     'news_fetch': 'scraped',
@@ -534,7 +540,7 @@ _step_start = time.time()
 try:
     dedicated_visuals = llm.generate_visual_prompts(script)
 
-    if dedicated_visuals and len(dedicated_visuals) >= 6:
+    if dedicated_visuals and len(dedicated_visuals) >= NUM_IMAGES:
         script['all_visual_scenes'] = dedicated_visuals
         log.info("visual_prompts.dedicated", count=len(dedicated_visuals))
     else:
@@ -652,7 +658,7 @@ log.info("step.complete", step="script_evaluation", duration_s=round(_step_durat
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 5: PIXEL ART GENERATION (2 per story = 6 total)
+# STEP 5: PIXEL ART GENERATION (3 per story = 6 total)
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="pixel_art")
 _step_start = time.time()
@@ -665,9 +671,10 @@ try:
     if SKIP_IMAGES:
         from PIL import Image as PILImage
         scene_names = []
-        for i in range(3):
+        for i in range(NUM_STORIES):
             scene_names.append(f'story_{i+1}_part1')
             scene_names.append(f'story_{i+1}_part2')
+            scene_names.append(f'story_{i+1}_real_talk')
 
         for scene_name in scene_names:
             placeholder = PILImage.new('RGB', (1088, 1152), (10, 5, 25))
@@ -688,24 +695,30 @@ try:
 
         # Build script-aware fallback prompts for missing scenes
         stories = script.get('stories', [])
-        for s_idx in range(3):
-            for p_idx in range(2):
-                fallback_idx = s_idx * 2 + p_idx
+        scene_types = ['part1', 'part2', 'real_talk']
+        for s_idx in range(NUM_STORIES):
+            for p_idx in range(IMAGES_PER_STORY):
+                fallback_idx = s_idx * IMAGES_PER_STORY + p_idx
                 if fallback_idx >= len(all_visual_scenes):
                     story = stories[s_idx] if s_idx < len(stories) else {}
-                    part_key = f'part_{p_idx+1}_narration'
-                    part_text = story.get(part_key, story.get('body', ''))
+                    scene_type = scene_types[p_idx]
+                    if scene_type == 'real_talk':
+                        part_text = story.get('real_talk', story.get('part_2_narration', ''))
+                    else:
+                        part_key = f'part_{p_idx+1}_narration'
+                        part_text = story.get(part_key, story.get('body', ''))
                     fallback_desc = _build_fallback_prompt(part_text, s_idx, p_idx, news_analyses)
                     all_visual_scenes.append({
-                        'scene': f'story_{s_idx+1}_part{p_idx+1}',
+                        'scene': f'story_{s_idx+1}_{scene_type}',
                         'description': fallback_desc
                     })
-        all_visual_scenes = all_visual_scenes[:6]
+        all_visual_scenes = all_visual_scenes[:NUM_IMAGES]
 
         scene_names = []
-        for i in range(3):
+        for i in range(NUM_STORIES):
             scene_names.append(f'story_{i+1}_part1')
             scene_names.append(f'story_{i+1}_part2')
+            scene_names.append(f'story_{i+1}_real_talk')
 
         for scene_idx, scene_name in enumerate(scene_names):
             log.debug("pixel_art.generating", scene=scene_name)
@@ -786,10 +799,10 @@ try:
                 log.warning("pixel_art.fallback", scene=scene_name,
                             source="adjacent_image" if 'placeholder' not in str(fallback_path) else "placeholder")
 
-        # Final validation: ensure exactly 6 images
-        if len(generated_images) < 6:
-            log.warning("pixel_art.few_images", count=len(generated_images), needed=6)
-            while len(generated_images) < 6:
+        # Final validation: ensure exactly NUM_IMAGES images
+        if len(generated_images) < NUM_IMAGES:
+            log.warning("pixel_art.few_images", count=len(generated_images), needed=NUM_IMAGES)
+            while len(generated_images) < NUM_IMAGES:
                 generated_images.append(generated_images[-1])
 
         log.info("pixel_art.complete", images=len(generated_images))
@@ -965,32 +978,30 @@ try:
                 image_times[i]['end'] = split_point
                 image_times[i + 1]['start'] = split_point
 
-        # Per-story image balancing (35-65%)
-        num_stories = num_images // 2
-        for story_i in range(num_stories):
-            img_a = story_i * 2
-            img_b = story_i * 2 + 1
-            if img_b >= num_images:
+        # Per-story image balancing (3 images per story: hook ~30%, mechanism ~40%, truth ~30%)
+        num_stories_calc = num_images // IMAGES_PER_STORY
+        for story_i in range(num_stories_calc):
+            img_a = story_i * IMAGES_PER_STORY
+            img_b = story_i * IMAGES_PER_STORY + 1
+            img_c = story_i * IMAGES_PER_STORY + 2
+            if img_c >= num_images:
                 break
             story_start = image_times[img_a]['start']
-            story_end = image_times[img_b]['end']
+            story_end = image_times[img_c]['end']
             story_total = story_end - story_start
             if story_total <= 0:
                 continue
-            dur_a = image_times[img_a]['end'] - image_times[img_a]['start']
-            ratio_a = dur_a / story_total if story_total > 0 else 0.5
-            if not (0.35 <= ratio_a <= 0.65):
-                target_split = story_start + story_total * 0.5
-                min_img_dur = story_total * 0.35
-                max_img_dur = story_total * 0.65
-                target_split = max(story_start + min_img_dur,
-                                   min(target_split, story_start + max_img_dur))
-                image_times[img_a]['end'] = target_split
-                image_times[img_b]['start'] = target_split
-                new_dur_a = target_split - image_times[img_a]['start']
-                new_ratio_a = new_dur_a / story_total
-                log.debug("assembly.rebalanced", story=story_i+1,
-                          img_a_dur=f"{new_dur_a:.1f}s", ratio=f"{new_ratio_a:.0%}")
+            # Target split: hook=30%, mechanism=40%, truth=30%
+            target_a_end = story_start + story_total * 0.30
+            target_b_end = story_start + story_total * 0.70
+            min_dur = story_total * 0.15
+            # Enforce minimum 15% per image
+            target_a_end = max(story_start + min_dur, min(target_a_end, story_end - 2 * min_dur))
+            target_b_end = max(target_a_end + min_dur, min(target_b_end, story_end - min_dur))
+            image_times[img_a]['end'] = target_a_end
+            image_times[img_b]['start'] = target_a_end
+            image_times[img_b]['end'] = target_b_end
+            image_times[img_c]['start'] = target_b_end
 
         # Safety: ensure minimum 2s per image
         for i, it in enumerate(image_times):
