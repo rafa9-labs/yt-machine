@@ -59,10 +59,18 @@ class LLMInterface:
                 if json_start:
                     text = text[think_match.start() + json_start.start():]
 
-        # Gemma 4 Heretic: <|channel>output<channel|>
-        output_match = re.search(r'<\|?channel\|?>output<\|?channel\|?>', text)
+        # Gemma 4 Heretic: <|channel>output<channel|> (output marker present)
+        output_match = re.search(r'<\|?channel\|?>\s*output\s*<\|?channel\|?>', text)
         if output_match:
             text = text[output_match.end():]
+        else:
+            # Gemma 4 Heretic: <|channel>thought<channel|> (only thought marker, no output marker)
+            # The actual JSON follows after the thought channel header
+            thought_match = re.search(r'<\|?channel\|?>\s*thought\s*<\|?channel\|?>', text)
+            if thought_match:
+                json_start = re.search(r'[{]', text[thought_match.end():])
+                if json_start:
+                    text = text[thought_match.end() + json_start.start():]
 
         # If nothing matched but text starts with non-JSON, find first {
         if not text.strip().startswith('{') and not text.strip().startswith('['):
@@ -732,9 +740,30 @@ CRITICAL RULES:
         
         script = self._extract_json(response)
         if not script or not isinstance(script, dict):
-            print(f"Failed to parse multi-news script JSON")
+            print(f"Failed to parse multi-news script JSON (attempt 1)")
             print(f"Raw response: {response[:500]}")
-            return None
+            
+            # Retry with doubled max_tokens and explicit no-thinking instruction
+            retry_max = prompt_config["max_tokens"] * 2
+            print(f"  [MULTI-NEWS] Retrying with max_tokens={retry_max}")
+            no_think_prefix = "DO NOT think or reason. Start your response immediately with {"
+            retry_prompt = f"{no_think_prefix}\n\n{prompt}"
+            retry_response = self.generate(
+                prompt=retry_prompt,
+                model=task_model,
+                system_prompt=prompt_config["system_prompt"],
+                temperature=prompt_config["temperature"],
+                max_tokens=retry_max
+            )
+            if retry_response:
+                script = self._extract_json(retry_response)
+                if script and isinstance(script, dict):
+                    response = retry_response
+                    print(f"  [MULTI-NEWS] Retry succeeded")
+            
+            if not script or not isinstance(script, dict):
+                print(f"Failed to parse multi-news script JSON (attempt 2)")
+                return None
         
         # Ensure greeting is set correctly
         script['greeting'] = greeting
