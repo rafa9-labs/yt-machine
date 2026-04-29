@@ -63,11 +63,11 @@ class CurationChain:
         )
 
         input_text = (
-            f"Transform these 3 story narrations from written text into natural, "
+            f"Transform these {len(story_bodies)} story narrations from written text into natural, "
             f"human-sounding spoken language.\n\n"
             f"ORIGINAL STORY NARRATIONS:\n{body_text}\n\n"
-            f"Output the 3 curated stories as plain text. "
-            f"Keep [STORY N] markers. Separate stories with ---. No JSON."
+            f"Output the {len(story_bodies)} curated stories as plain text. "
+            f"Separate stories with ---. No JSON."
         )
 
         try:
