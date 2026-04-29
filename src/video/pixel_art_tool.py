@@ -145,6 +145,12 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
         image.save(str(output_path))
         print(f"  [IMG] Local FLUX generation complete: {output_path.name}")
 
+        _flux_pipeline.to("cpu")
+        del _flux_pipeline
+        _flux_pipeline = None
+        torch.cuda.empty_cache()
+        print("  [IMG] FLUX pipeline offloaded — GPU memory freed")
+
         try:
             _upscale_pixel_art(str(output_path))
         except Exception as upscale_err:
@@ -162,8 +168,24 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
             "steps": steps,
         }
 
+    except torch.cuda.OutOfMemoryError:
+        print("  [IMG] CUDA OOM — FLUX too large for available VRAM, falling back to cloud API")
+        if _flux_pipeline is not None:
+            try:
+                _flux_pipeline.to("cpu")
+                del _flux_pipeline
+            except Exception:
+                pass
+        _flux_pipeline = None
+        torch.cuda.empty_cache()
+        return None
     except Exception as e:
         print(f"  [IMG] Local FLUX failed: {e}")
+        if _flux_pipeline is not None:
+            try:
+                del _flux_pipeline
+            except Exception:
+                pass
         _flux_pipeline = None
         return None
 
@@ -1386,10 +1408,10 @@ def generate_pixel_art(
 
     # ========== PRIMARY: Local FLUX (GPU, free, no API key needed) ==========
     if USE_LOCAL_FLUX and not reference_image_url:
-        target_app = os.environ.get("TARGET_APP", "Default")
-        size = _resolve_size(target_app)
-        if size["width"] * size["height"] > MAX_PIXELS:
-            size = {"width": 1024, "height": 768}
+        render_size = IMAGE_STYLE_CONFIG.get("generation_params", {}).get("render_resolution", [512, 512])
+        local_size = {"width": render_size[0], "height": render_size[1]}
+        if local_size["width"] * local_size["height"] > MAX_PIXELS:
+            local_size = {"width": 512, "height": 512}
 
         enforced_prompt = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {full_prompt}, vibrant colors, pixel-perfect"
         local_steps = MODEL_STEP_CONFIG.get("fal-ai/flux/dev", 28)
@@ -1398,7 +1420,7 @@ def generate_pixel_art(
         local_result = _generate_local_flux(
             prompt=enforced_prompt,
             output_path=output_path,
-            size=size,
+            size=local_size,
             seed=seed,
             steps=local_steps,
             guidance_scale=local_guidance,
@@ -1415,7 +1437,7 @@ def generate_pixel_art(
                 "accuracy_score": final_geo_validation['accuracy_score'],
                 "countries_detected": list(final_geo_validation['country_analysis'].keys()),
                 "equipment_validated": not any(analysis['issues'] for analysis in final_geo_validation['equipment_analysis'].values()),
-                "target_app": target_app,
+                "target_app": os.environ.get("TARGET_APP", "Default"),
                 "i2i_used": False,
                 "i2i_params": None,
                 "reference_image_url": None,
