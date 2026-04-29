@@ -262,7 +262,7 @@ def evaluate_continuity(
 ) -> Tuple[dict, List[dict]]:
     """
     LLM continuity critic. Checks for contradictory facts, entity
-    discontinuity, and timeline errors across the 3 stories.
+    discontinuity, and timeline errors across all stories.
 
     Returns (updated_script, issues_list).
     """
@@ -280,7 +280,7 @@ def evaluate_continuity(
             f"  segue: {s.get('segue', '')}"
         )
 
-    prompt = f"""Analyze these 3 news stories for narrative consistency issues.
+    prompt = f"""Analyze these {len(stories)} news stories for narrative consistency issues.
 
 {chr(10).join(story_texts)}
 
@@ -450,7 +450,7 @@ def _rebuild_timeline(script: dict) -> None:
     timeline.append({'text': '...', 'image_idx': 0, 'label': 'intro_pause', 'is_separator': True})
 
     for i, story in enumerate(stories):
-        img_base = i * 2
+        img_base = i * 3
 
         part_1 = story.get('part_1_narration', '')
         if part_1:
@@ -459,13 +459,10 @@ def _rebuild_timeline(script: dict) -> None:
         part_2 = story.get('part_2_narration', '')
         real_talk = story.get('real_talk', '')
 
-        # Strip real_talk from part_2 if LLM embedded it there
         if real_talk and real_talk.strip() in part_2:
             part_2 = part_2.replace(real_talk.strip(), '').strip()
-            # Clean trailing dashes/sep markers left behind
             part_2 = re.sub(r'\s*[-—]+\s*$', '', part_2).strip()
 
-        # Strip closing from last story's part_2 if LLM embedded it
         closing_text = script.get('closing', '')
         if closing_text and i == len(stories) - 1 and closing_text.strip() in part_2:
             part_2 = part_2.replace(closing_text.strip(), '').strip()
@@ -475,16 +472,16 @@ def _rebuild_timeline(script: dict) -> None:
             timeline.append({'text': part_2, 'image_idx': img_base + 1, 'label': f'story_{i+1}_part2'})
 
         if real_talk:
-            timeline.append({'text': real_talk, 'image_idx': img_base + 1, 'label': f'story_{i+1}_real_talk'})
+            timeline.append({'text': real_talk, 'image_idx': img_base + 2, 'label': f'story_{i+1}_real_talk'})
 
         segue = story.get('segue', '')
         if segue and i < len(stories) - 1:
-            timeline.append({'text': segue, 'image_idx': img_base + 1, 'label': f'story_{i+1}_segue'})
+            timeline.append({'text': segue, 'image_idx': img_base + 2, 'label': f'story_{i+1}_segue'})
 
         if i < len(stories) - 1:
-            timeline.append({'text': '....', 'image_idx': img_base + 1, 'label': f'story_{i+1}_separator', 'is_separator': True})
+            timeline.append({'text': '....', 'image_idx': img_base + 2, 'label': f'story_{i+1}_separator', 'is_separator': True})
 
-    timeline.append({'text': closing, 'image_idx': (len(stories) - 1) * 2 + 1, 'label': 'closing'})
+    timeline.append({'text': closing, 'image_idx': (len(stories) - 1) * 3 + 2, 'label': 'closing'})
 
     script['segment_timeline'] = timeline
 
@@ -497,6 +494,10 @@ def _rebuild_timeline(script: dict) -> None:
         visual_scenes.append({
             'scene': f'story_{i+1}_part2',
             'description': story.get('part_2_visual', story.get('body', ''))
+        })
+        visual_scenes.append({
+            'scene': f'story_{i+1}_real_talk',
+            'description': story.get('real_talk_visual', story.get('part_2_visual', ''))
         })
     script['all_visual_scenes'] = visual_scenes
 
