@@ -76,6 +76,98 @@ LORA_SCALE = 0.75
 FAL_MODEL = "fal-ai/flux/dev"
 FAL_FALLBACK_MODELS = ["fal-ai/flux/schnell"]
 
+USE_LOCAL_FLUX = os.getenv("USE_LOCAL_FLUX", "auto").lower() in ("true", "1", "yes", "auto")
+LOCAL_FLUX_MODEL = os.getenv("LOCAL_FLUX_MODEL", "black-forest-labs/FLUX.1-dev")
+LOCAL_FLUX_FALLBACK_MODEL = "black-forest-labs/FLUX.1-schnell"
+_flux_pipeline = None
+
+
+def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
+                          steps: int, guidance_scale: float, negative_prompt: str) -> Optional[dict]:
+    """Generate image using local FLUX.1-dev on GPU. Returns result dict or None."""
+    global _flux_pipeline
+
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            print("  [IMG] CUDA not available — skipping local FLUX")
+            return None
+    except ImportError:
+        return None
+
+    try:
+        from diffusers import FluxPipeline
+
+        if _flux_pipeline is None:
+            model_id = LOCAL_FLUX_MODEL
+            print(f"  [IMG] Loading {model_id} pipeline onto GPU...")
+            
+            try:
+                _flux_pipeline = FluxPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.bfloat16,
+                )
+            except Exception as auth_err:
+                if "401" in str(auth_err) or "access" in str(auth_err).lower() or "gated" in str(auth_err).lower():
+                    print(f"  [IMG] {model_id} is gated or auth required — trying {LOCAL_FLUX_FALLBACK_MODEL}")
+                    model_id = LOCAL_FLUX_FALLBACK_MODEL
+                    steps = min(steps, 4)
+                    _flux_pipeline = FluxPipeline.from_pretrained(
+                        model_id,
+                        torch_dtype=torch.bfloat16,
+                    )
+                else:
+                    raise
+
+            if _resolved_lora_path and LORA_SCALE:
+                print(f"  [IMG] Loading LoRA: {_resolved_lora_path} (scale={LORA_SCALE})")
+                _flux_pipeline.load_lora_weights(_resolved_lora_path)
+                _flux_pipeline.fuse_lora(lora_scale=LORA_SCALE)
+
+            _flux_pipeline.to("cuda")
+            print(f"  [IMG] {model_id} pipeline ready on GPU")
+
+        w, h = size["width"], size["height"]
+        print(f"  [IMG] LOCAL flux/dev | {w}x{h} | steps={steps} | guidance={guidance_scale} | seed={seed}")
+
+        gen_kwargs = {
+            "prompt": prompt,
+            "width": w,
+            "height": h,
+            "num_inference_steps": steps,
+            "guidance_scale": guidance_scale,
+        }
+        if seed is not None:
+            generator = torch.Generator("cuda").manual_seed(seed)
+            gen_kwargs["generator"] = generator
+
+        image = _flux_pipeline(**gen_kwargs).images[0]
+        image.save(str(output_path))
+        print(f"  [IMG] Local FLUX generation complete: {output_path.name}")
+
+        try:
+            _upscale_pixel_art(str(output_path))
+        except Exception as upscale_err:
+            print(f"  [IMG] Warning: Upscale failed: {upscale_err}")
+
+        return {
+            "success": True,
+            "filename": output_path.name,
+            "path": str(output_path),
+            "prompt_used": prompt,
+            "source": "local_flux",
+            "provider": "local",
+            "width": w,
+            "height": h,
+            "steps": steps,
+        }
+
+    except Exception as e:
+        print(f"  [IMG] Local FLUX failed: {e}")
+        _flux_pipeline = None
+        return None
+
+
 # Prompt hash cache — avoids regenerating identical/near-identical scenes
 _prompt_cache: Dict[str, str] = {}
 
@@ -1292,6 +1384,47 @@ def generate_pixel_art(
         else:
             print(f"  [IMG] Proceeding with text-to-image generation (no reference)")
 
+    # ========== PRIMARY: Local FLUX (GPU, free, no API key needed) ==========
+    if USE_LOCAL_FLUX and not reference_image_url:
+        target_app = os.environ.get("TARGET_APP", "Default")
+        size = _resolve_size(target_app)
+        if size["width"] * size["height"] > MAX_PIXELS:
+            size = {"width": 1024, "height": 768}
+
+        enforced_prompt = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {full_prompt}, vibrant colors, pixel-perfect"
+        local_steps = MODEL_STEP_CONFIG.get("fal-ai/flux/dev", 28)
+        local_guidance = 3.5
+
+        local_result = _generate_local_flux(
+            prompt=enforced_prompt,
+            output_path=output_path,
+            size=size,
+            seed=seed,
+            steps=local_steps,
+            guidance_scale=local_guidance,
+            negative_prompt=NEGATIVE_PROMPT,
+        )
+
+        if local_result:
+            _store_prompt_cache(full_prompt, str(output_path))
+            local_result.update({
+                "specificity_score": specificity,
+                "visual_type": visual_type,
+                "pixel_art_model_used": use_pixel_art_model,
+                "geopolitical_validation": final_geo_validation,
+                "accuracy_score": final_geo_validation['accuracy_score'],
+                "countries_detected": list(final_geo_validation['country_analysis'].keys()),
+                "equipment_validated": not any(analysis['issues'] for analysis in final_geo_validation['equipment_analysis'].values()),
+                "target_app": target_app,
+                "i2i_used": False,
+                "i2i_params": None,
+                "reference_image_url": None,
+            })
+            return local_result
+
+        print("  [IMG] Local FLUX failed — falling back to fal.ai")
+
+    # ========== FALLBACK: fal.ai cloud API ==========
     if FAL_KEY:
         try:
             import fal_client
