@@ -1324,18 +1324,18 @@ Output the 3 curated stories as plain text. Keep [STORY N] markers. Separate sto
         # Stories with real_talk and segues
         stories = script.get('stories', [])
         for i in range(len(story_bodies)):
-            # Split curated body back into part_1/part_2/real_talk sections
             body = story_bodies[i]
-            
-            # Try to extract real_talk from the original story structure
             story = stories[i] if i < len(stories) else {}
             original_rt = story.get('real_talk', '')
-            
+
             if original_rt and original_rt.strip() in body:
-                # Real talk is in the body — use as-is
+                # body already contains real_talk — strip it to avoid duplication
+                # when _rebuild_timeline adds real_talk as a separate segment
+                body = body.replace(original_rt.strip(), '').strip()
+                body = re.sub(r'\s*[-—]+\s*$', '', body).strip()
                 parts.append(body)
+                parts.append(original_rt)
             elif original_rt:
-                # Real talk wasn't in the curated body — append it
                 parts.append(body)
                 parts.append(original_rt)
             else:

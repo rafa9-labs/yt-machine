@@ -457,10 +457,23 @@ def _rebuild_timeline(script: dict) -> None:
             timeline.append({'text': part_1, 'image_idx': img_base, 'label': f'story_{i+1}_part1'})
 
         part_2 = story.get('part_2_narration', '')
+        real_talk = story.get('real_talk', '')
+
+        # Strip real_talk from part_2 if LLM embedded it there
+        if real_talk and real_talk.strip() in part_2:
+            part_2 = part_2.replace(real_talk.strip(), '').strip()
+            # Clean trailing dashes/sep markers left behind
+            part_2 = re.sub(r'\s*[-—]+\s*$', '', part_2).strip()
+
+        # Strip closing from last story's part_2 if LLM embedded it
+        closing_text = script.get('closing', '')
+        if closing_text and i == len(stories) - 1 and closing_text.strip() in part_2:
+            part_2 = part_2.replace(closing_text.strip(), '').strip()
+            part_2 = re.sub(r'\s*[-—]+\s*$', '', part_2).strip()
+
         if part_2:
             timeline.append({'text': part_2, 'image_idx': img_base + 1, 'label': f'story_{i+1}_part2'})
 
-        real_talk = story.get('real_talk', '')
         if real_talk:
             timeline.append({'text': real_talk, 'image_idx': img_base + 1, 'label': f'story_{i+1}_real_talk'})
 
