@@ -666,9 +666,10 @@ Synthesize into a compelling 60-80 second professional news narration script wit
     def synthesize_multi_news_script(
         self,
         news_analyses: List[Dict[str, Any]],
+        num_stories: int = 2,
     ) -> Optional[Dict[str, Any]]:
         """
-        Generate a 3-news Masker personality script.
+        Generate a multi-news Masker personality script.
         Each news_analysis dict should have: topic, key_facts, angle, impact_score.
         """
         prompt_config = self.config["prompts"]["multi_news_synthesizer"]
@@ -687,7 +688,7 @@ NEWS STORY {i}:
 - Second-order consequence: {analysis.get('second_order_consequence', 'N/A')}
 """
         
-        prompt = f"""Create a Mask script — 3 stories, Infotainment Satire structure (The Cartoonish Truth).
+        prompt = f"""Create a Mask script — {num_stories} stories, Infotainment Satire structure (The Cartoonish Truth).
 
 GREETING TO USE: "{greeting}"
 
@@ -696,16 +697,19 @@ GREETING TO USE: "{greeting}"
 CRITICAL RULES:
 - Output ONLY the JSON object. NO explanatory text before or after. NO markdown.
 - The greeting field must be EXACTLY: {greeting}
-- Each story: part_1 = THE HOOK (cartoonish entrance), part_2 = THE PAYOFF (speed-talk facts), real_talk = SERIOUS drop-the-act moment
-- Use Looney Tunes metaphors: "dance floor on fire", "old switcheroo", "crashing the party", "erase like a bad drawing"
-- Make the viewer feel like a cartoon character just pulled back the curtain on reality
+- Each story: part_1 = THE HOOK (what happened), part_2 = THE MECHANISM (why it matters, the hidden chain), real_talk = THE TRUTH (visceral specific consequence)
+- part_2_narration must NOT contain real_talk content. They are SEPARATE fields.
+- part_2 must answer SO WHAT — name the concrete second-order consequence. NO vague abstractions.
+- real_talk must name ONE specific visceral consequence. NOT abstract principles.
+- Create ORIGINAL metaphors. These are BANNED — never use: 'erase the status quo like a bad drawing', 'old switcheroo', 'dance floor on fire', 'crashing the party', 'flip the script'
+- The ONLY approved cartoon exclamation is 'Ssssmokin''. Do NOT invent random exclamations.
+- Each non-last story must have a "segue" field that bridges BOTH stories — reference what just happened AND what comes next. Generic bridges like 'just wait!' are FORBIDDEN.
 - Manic, chaotic, fast-talking energy — but the facts are REAL and DENSE
-- The real_talk field is where The Mask drops the act — NO caps, NO exclamations, just flat truth
-- Target: 200-260 words total for ~80 seconds.
-- ALL 3 stories must be roughly equal word count (35-55 words each). Max 10 words difference.
-- Each non-last story must have a "segue" field with a frantic cartoonish transition (8-15 words).
-- GEOGRAPHIC ANCHOR: On first mention, every country or nation MUST carry a brief regional descriptor giving viewers spatial grounding. Examples: "the Gulf kingdom of Bahrain", "Iran, the Middle Eastern power", "Ukraine, in Eastern Europe", "the United Kingdom", "Russia, the Eurasian giant". No bare country names on first mention.
-- CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing ("thanks for watching", "don't forget to like", "see you next time", "that's all for today", "wrapping up") in part_1_narration, part_2_narration, real_talk, or segue is FORBIDDEN. The last story MUST end with real_talk as a flat fact — NOT a conclusion, summary, or sign-off."""
+- The real_talk field is where The Mask drops the act — NO caps, NO exclamations, just flat visceral truth
+- Target: 200-280 words total for ~80-100 seconds.
+- ALL {num_stories} stories must be roughly equal word count (100-140 words each). Max 20 words difference.
+- GEOGRAPHIC ANCHOR: On first mention, every country or nation MUST carry a brief regional descriptor. Examples: "the Gulf kingdom of Bahrain", "Iran, the Middle Eastern power", "Ukraine, in Eastern Europe". No bare country names on first mention.
+- CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing in narration fields is FORBIDDEN. The last story MUST end with real_talk — NOT a conclusion or summary."""
         
         # ── OPENAI CLOUD FIRST, LOCAL FALLBACK ──
         response = None
@@ -770,7 +774,7 @@ CRITICAL RULES:
         
         # Ensure intro_hook exists
         if not script.get('intro_hook'):
-            script['intro_hook'] = "Hold onto your lobsters, folks! We've got THREE stories and the dance floor is on FIRE!"
+            script['intro_hook'] = "Ssssmokin'! We have got TWO stories and the dance floor is on FIRE!"
         
         # Ensure stories exist
         if 'stories' not in script or not script.get('stories'):
@@ -778,21 +782,21 @@ CRITICAL RULES:
             return None
         
         # ══════════════════════════════════════════════════════════════
-        # VALIDATION 1: Ensure exactly 3 stories with non-empty required fields
+        # VALIDATION 1: Ensure exactly num_stories stories with non-empty required fields
         # ══════════════════════════════════════════════════════════════
         stories = script.get('stories', [])
         
-        # Retry synthesis if fewer than 3 stories (max 3 attempts)
-        if len(stories) < 3:
-            print(f"  [VALIDATE] Only {len(stories)} stories — need 3. Re-synthesizing...")
+        # Retry synthesis if fewer than num_stories stories (max 3 attempts)
+        if len(stories) < num_stories:
+            print(f"  [VALIDATE] Only {len(stories)} stories — need {num_stories}. Re-synthesizing...")
             for retry_attempt in range(3):
                 retry_prompt = (
                     f"The previous script only had {len(stories)} stories. "
-                    f"You MUST produce exactly 3 stories. Each story needs part_1_narration, "
+                    f"You MUST produce exactly {num_stories} stories. Each story needs part_1_narration, "
                     f"part_2_narration, real_talk, and segue fields.\n\n"
                     f"{news_block}\n\n"
-                    f"CRITICAL: Output ONLY valid JSON with exactly 3 stories.\n"
-                    f"Target: 240-280 words total."
+                    f"CRITICAL: Output ONLY valid JSON with exactly {num_stories} stories.\n"
+                    f"Target: 200-280 words total."
                 )
                 retry_response = self.generate(
                     prompt=retry_prompt,
@@ -805,7 +809,7 @@ CRITICAL RULES:
                     retry_script = self._extract_json(retry_response)
                     if retry_script and isinstance(retry_script, dict):
                         retry_stories = retry_script.get('stories', [])
-                        if len(retry_stories) >= 3:
+                        if len(retry_stories) >= num_stories:
                             script = retry_script
                             script['greeting'] = greeting
                             stories = script.get('stories', [])
@@ -813,8 +817,8 @@ CRITICAL RULES:
                             break
                 print(f"  [VALIDATE] Retry {retry_attempt+1} still insufficient")
             
-            if len(stories) < 3:
-                print(f"  [VALIDATE] Failed to get 3 stories after 3 retries — aborting")
+            if len(stories) < num_stories:
+                print(f"  [VALIDATE] Failed to get {num_stories} stories after 3 retries — aborting")
                 return None
         
         # ══════════════════════════════════════════════════════════════
@@ -827,7 +831,7 @@ CRITICAL RULES:
                 if len(val.split()) < 5:
                     print(f"  [VALIDATE] Story {i+1} '{field}' is empty/weak ({len(val.split())} words) — repairing")
                     repair_prompt = (
-                        f"Story {i+1} in a 3-story news script is missing its {field}.\n"
+                        f"Story {i+1} in a {num_stories}-story news script is missing its {field}.\n"
                         f"Context — part_1: {story.get('part_1_narration', 'N/A')[:100]}\n"
                         f"Context — part_2: {story.get('part_2_narration', 'N/A')[:100]}\n"
                         f"News topic: {news_analyses[min(i, len(news_analyses)-1)].get('topic', 'N/A') if news_analyses else 'geopolitics'}\n"
@@ -868,9 +872,9 @@ CRITICAL RULES:
                 print(f"  [VALIDATE] Story {i+1} real_talk fallback injected")
         
         # ══════════════════════════════════════════════════════════════
-        # VALIDATION 3: Word count enforcement (240-280 words)
+        # VALIDATION 3: Word count enforcement (160-280 words)
         # ══════════════════════════════════════════════════════════════
-        MIN_WORDS = 240
+        MIN_WORDS = 160
         
         # Build a preliminary full_text to count words
         _prelim_parts = []
@@ -890,14 +894,14 @@ CRITICAL RULES:
             for retry_attempt in range(3):
                 expand_prompt = (
                     f"The script you generated is only {_prelim_words} words. "
-                    f"It MUST be 240-280 words total. Currently it is TOO SHORT.\n\n"
+                    f"It MUST be 200-280 words total. Currently it is TOO SHORT.\n\n"
                     f"Current script JSON:\n{json.dumps(script, indent=2, ensure_ascii=False)[:3000]}\n\n"
-                    f"EXPAND each story's part_1_narration and part_2_narration to 25-35 words each. "
-                    f"EXPAND each real_talk to 10-15 words. "
-                    f"Add MORE specific facts, names, numbers, and Looney Tunes metaphors.\n"
+                    f"EXPAND each story's part_1_narration and part_2_narration to 45-60 words each. "
+                    f"EXPAND each real_talk to 15-20 words. "
+                    f"Add MORE specific facts, names, numbers, and original metaphors.\n"
                     f"Keep the SAME story topics and angles — just make them LONGER and MORE DETAILED.\n"
-                    f"Target: 240-280 words total. Currently: {_prelim_words} words. Need at least {MIN_WORDS - _prelim_words} more.\n\n"
-                    f"Return ONLY the corrected JSON with all 3 stories expanded."
+                    f"Target: 200-280 words total. Currently: {_prelim_words} words. Need at least {MIN_WORDS - _prelim_words} more.\n\n"
+                    f"Return ONLY the corrected JSON with all {num_stories} stories expanded."
                 )
                 expand_response = self.generate(
                     prompt=expand_prompt,
@@ -910,7 +914,7 @@ CRITICAL RULES:
                     expand_script = self._extract_json(expand_response)
                     if expand_script and isinstance(expand_script, dict):
                         expand_stories = expand_script.get('stories', [])
-                        if len(expand_stories) >= 3:
+                        if len(expand_stories) >= num_stories:
                             # Count expanded words
                             _exp_parts = [expand_script.get('greeting', ''), expand_script.get('intro_hook', '')]
                             for s in expand_stories:
@@ -962,9 +966,9 @@ CRITICAL RULES:
         })
         
         for i, story in enumerate(script['stories']):
-            img_base = i * 2  # Story 0 → images 0,1; Story 1 → images 2,3; Story 2 → images 4,5
+            img_base = i * 3  # Story 0 → images 0,1,2; Story 1 → images 3,4,5
             
-            # Part 1 narration → image (img_base)
+            # Part 1 narration → image (img_base) — THE HOOK
             part_1 = story.get('part_1_narration', '')
             if part_1:
                 segment_timeline.append({
@@ -973,7 +977,7 @@ CRITICAL RULES:
                     'label': f'story_{i+1}_part1'
                 })
             
-            # Part 2 narration → image (img_base + 1)
+            # Part 2 narration → image (img_base + 1) — THE MECHANISM
             part_2 = story.get('part_2_narration', '')
             if part_2:
                 segment_timeline.append({
@@ -982,21 +986,21 @@ CRITICAL RULES:
                     'label': f'story_{i+1}_part2'
                 })
             
-            # Real Talk → serious drop-the-act moment (keep same image as part_2)
+            # Real Talk → image (img_base + 2) — THE TRUTH
             real_talk = story.get('real_talk', '')
             if real_talk:
                 segment_timeline.append({
                     'text': real_talk,
-                    'image_idx': img_base + 1,
+                    'image_idx': img_base + 2,
                     'label': f'story_{i+1}_real_talk'
                 })
             
-            # SEGUE → frantic cartoonish transition to next story (keep same image as part_2)
+            # SEGUE → content bridge to next story (keep same image as real_talk)
             segue = story.get('segue', story.get('transition', ''))
             if segue and i < len(script['stories']) - 1:
                 segment_timeline.append({
                     'text': segue,
-                    'image_idx': img_base + 1,
+                    'image_idx': img_base + 2,
                     'label': f'story_{i+1}_segue'
                 })
             
@@ -1004,7 +1008,7 @@ CRITICAL RULES:
             if i < len(script['stories']) - 1:
                 segment_timeline.append({
                     'text': '....',
-                    'image_idx': img_base + 1,
+                    'image_idx': img_base + 2,
                     'label': f'story_{i+1}_separator',
                     'is_separator': True
                 })
@@ -1014,7 +1018,7 @@ CRITICAL RULES:
         script['closing'] = closing
         segment_timeline.append({
             'text': closing,
-            'image_idx': (len(script['stories']) - 1) * 2 + 1,
+            'image_idx': (len(script['stories']) - 1) * 3 + 2,
             'label': 'closing'
         })
         
@@ -1037,6 +1041,10 @@ CRITICAL RULES:
             visual_prompts.append({
                 'scene': f'story_{i+1}_part2',
                 'description': story.get('part_2_visual', story.get('body', ''))
+            })
+            visual_prompts.append({
+                'scene': f'story_{i+1}_real_talk',
+                'description': story.get('real_talk_visual', story.get('part_2_visual', ''))
             })
         script['all_visual_scenes'] = visual_prompts
         
@@ -1076,7 +1084,7 @@ CRITICAL RULES:
         script['estimated_duration'] = int(script['word_count'] / 2.5)
         
         print(f"  [MULTI-NEWS] Script: {len(script['stories'])} stories, {script['word_count']} words, ~{script['estimated_duration']}s")
-        print(f"  [MULTI-NEWS] Timeline: {len(segment_timeline)} segments → 6 images")
+        print(f"  [MULTI-NEWS] Timeline: {len(segment_timeline)} segments → {len(script['stories']) * 3} images")
         for seg in segment_timeline:
             print(f"    [{seg['label']}] → img#{seg['image_idx']}: \"{seg['text'][:50]}...\"")
         
@@ -1183,7 +1191,7 @@ CRITICAL RULES:
             f"[STORY {i+1}]\n{body}" for i, body in enumerate(story_bodies)
         )
         
-        prompt = f"""Transform these 3 story narrations from written text into The Mask's manic spoken language.
+        prompt = f"""Transform these {len(story_bodies)} story narrations from written text into The Mask's manic spoken language.
 
 You receive ONLY the story narration bodies — no greeting, no segues, no closing.
 Your job is ONLY to improve the rhythm and naturalness of each story's narration.
@@ -1191,6 +1199,8 @@ Your job is ONLY to improve the rhythm and naturalness of each story's narration
 RULES:
 - NEVER change facts, numbers, or country names
 - NEVER add or remove information
+- NEVER change catchphrases, exclamations, or Mask personality quirks — only fix rhythm and punctuation
+- Strip any [STORY N] markers from the output — they are internal markers, not spoken text
 - Break long sentences into short punchy ones — The Mask speaks in rapid-fire BURSTS
 - Use PERIODS for dramatic pauses before punchlines
   Example: 'Classic leverage play. Disguised as safety.' NOT 'Classic leverage play... disguised as safety.'
@@ -1200,9 +1210,9 @@ RULES:
 - Create rhythm: alternate short punchy + longer explanatory sentences
 - Before every punchline/reveal, end previous sentence with a PERIOD, start punchline as new sentence
 - After rhetorical questions, use a period before the answer
-- Balance all 3 stories to roughly equal word count (35-55 words each)
-- Keep the [STORY N] markers exactly as they are
-- Output all 3 stories, one after another, separated by --- lines
+- Balance all stories to roughly equal word count (100-140 words each)
+- Keep the [STORY N] markers exactly as they are in the input, but strip them from the output
+- Output all {len(story_bodies)} stories, one after another, separated by --- lines
 
 THE MASK VOICE:
 - ALL CAPS on 5-8 KEY WORDS per story — The Mask is LOUD
@@ -1213,7 +1223,7 @@ THE MASK VOICE:
 ORIGINAL STORY NARRATIONS:
 {body_text}
 
-Output the 3 curated stories as plain text. Keep [STORY N] markers. Separate stories with ---. No JSON. No explanations."""
+Output the {len(story_bodies)} curated stories as plain text. Separate stories with ---. No JSON. No explanations."""
 
         # ── OLLAMA ONLY: Curation contains geopolitical narration
         # that triggers GLM-5's content filter (1301). No cloud fallback.
@@ -1413,14 +1423,14 @@ Output the 3 curated stories as plain text. Keep [STORY N] markers. Separate sto
     
     def generate_visual_prompts(self, script: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """
-        Generate 6 dedicated visual prompts from curated narration text.
-        Uses local abliterated model exclusively (no cloud API).
+        Generate dedicated visual prompts from curated narration text.
+        3 scenes per story (hook, mechanism, truth). Uses local abliterated model exclusively.
         
         Args:
-            script: Script dict with 'stories' array containing part_1_narration / part_2_narration
+            script: Script dict with 'stories' array
             
         Returns:
-            List of 6 dicts: [{'scene': 'story_N_partM', 'description': '...'}, ...]
+            List of dict: [{'scene': 'story_N_partM', 'description': '...'}, ...]
         """
         prompt_config = self.config["prompts"].get("visual_prompt_generator")
         if not prompt_config:
@@ -1432,30 +1442,36 @@ Output the 3 curated stories as plain text. Keep [STORY N] markers. Separate sto
             print("  [VISUAL-GEN] No stories in script, skipping")
             return None
         
-        # Build narration block — explicitly labeled for 1:1 mapping
+        num_scenes = len(stories) * 3
+        
+        # Build narration block — 3 segments per story (part_1, part_2, real_talk)
         narration_block = ""
         for i, story in enumerate(stories, 1):
             p1 = story.get('part_1_narration', story.get('mini_hook', ''))
             p2 = story.get('part_2_narration', story.get('body', ''))
+            rt = story.get('real_talk', '')
             narration_block += f"""
---- story_{i}_part1 (THE SETUP for Story {i}) ---
+--- story_{i}_part1 (THE HOOK for Story {i}) ---
 NARRATION: "{p1}"
 
---- story_{i}_part2 (THE PAYOFF for Story {i}) ---
+--- story_{i}_part2 (THE MECHANISM for Story {i}) ---
 NARRATION: "{p2}"
+
+--- story_{i}_real_talk (THE TRUTH for Story {i}) ---
+NARRATION: "{rt}"
 """
         
         system_prompt = prompt_config["system_prompt"]
         
-        user_prompt = f"""You MUST generate exactly 6 visual scene descriptions. Each scene MUST depict EXACTLY what the corresponding narration says.
+        user_prompt = f"""You MUST generate exactly {num_scenes} visual scene descriptions. Each scene MUST depict EXACTLY what the corresponding narration says.
 
 CRITICAL MAPPING RULES — DO NOT shuffle or rearrange:
-- story_1_part1 → MUST visually depict what Story 1 Part 1 narration describes
-- story_1_part2 → MUST visually depict what Story 1 Part 2 narration describes
-- story_2_part1 → MUST visually depict what Story 2 Part 1 narration describes
-- story_2_part2 → MUST visually depict what Story 2 Part 2 narration describes
-- story_3_part1 → MUST visually depict what Story 3 Part 1 narration describes
-- story_3_part2 → MUST visually depict what Story 3 Part 2 narration describes
+- story_1_part1 → THE HOOK — visually depict what Story 1 Part 1 narration describes
+- story_1_part2 → THE MECHANISM — visually depict what Story 1 Part 2 narration describes
+- story_1_real_talk → THE TRUTH — visually depict the visceral consequence from Story 1 real_talk
+- story_2_part1 → THE HOOK — visually depict what Story 2 Part 1 narration describes
+- story_2_part2 → THE MECHANISM — visually depict what Story 2 Part 2 narration describes
+- story_2_real_talk → THE TRUTH — visually depict the visceral consequence from Story 2 real_talk
 
 NARRATION SEGMENTS:
 {narration_block}
@@ -1476,10 +1492,10 @@ Output ONLY valid JSON:
   "scenes": [
     {{"scene": "story_1_part1", "description": "..."}},
     {{"scene": "story_1_part2", "description": "..."}},
+    {{"scene": "story_1_real_talk", "description": "..."}},
     {{"scene": "story_2_part1", "description": "..."}},
     {{"scene": "story_2_part2", "description": "..."}},
-    {{"scene": "story_3_part1", "description": "..."}},
-    {{"scene": "story_3_part2", "description": "..."}}
+    {{"scene": "story_2_real_talk", "description": "..."}}
   ]
 }}"""
         
@@ -1506,10 +1522,10 @@ Output ONLY valid JSON:
             return None
         
         scenes = result.get('scenes', [])
-        if not scenes or len(scenes) < 6:
-            print(f"  [VISUAL-GEN] Expected 6 scenes, got {len(scenes)}")
-            if len(scenes) >= 3:
-                while len(scenes) < 6:
+        if not scenes or len(scenes) < num_scenes:
+            print(f"  [VISUAL-GEN] Expected {num_scenes} scenes, got {len(scenes)}")
+            if len(scenes) >= len(stories):
+                while len(scenes) < num_scenes:
                     scenes.append({
                         'scene': f'fallback_{len(scenes)+1}',
                         'description': '16-bit isometric pixel art scene: Geopolitical world map with highlighted conflict regions, dramatic sunset lighting, military units positioned on left side'
@@ -1524,7 +1540,7 @@ Output ONLY valid JSON:
             if word_count < 5:
                 print(f"  [VISUAL-GEN] Scene {i} too short ({word_count} words), using fallback")
                 scenes[i]['description'] = '16-bit isometric pixel art scene: Geopolitical world map with highlighted regions, military assets in foreground left, dramatic sunset lighting'
-            scenes[i]['scene'] = scenes[i].get('scene', f'story_{(i//2)+1}_part{(i%2)+1}')
+            scenes[i]['scene'] = scenes[i].get('scene', f'story_{(i//3)+1}_{"part1" if i%3==0 else "part2" if i%3==1 else "real_talk"}')
         
         # ── DEDUPLICATION: Detect and regenerate duplicate descriptions ──
         scenes = self._deduplicate_visual_prompts(scenes, user_prompt, system_prompt)
@@ -1605,7 +1621,7 @@ Output ONLY JSON: {{"scene": "{scenes[j]['scene']}", "description": "..."}}"""
                                 print(f"  [VISUAL-GEN] \u26a0\ufe0f Regeneration still shares entities ({still_shared}), keeping as-is")
         
         if not duplicates_found:
-            print(f"  [VISUAL-GEN] \u2705 All 6 scenes are visually distinct (no duplicates)")
+            print(f"  [VISUAL-GEN] \u2705 All {len(scenes)} scenes are visually distinct (no duplicates)")
         
         return scenes
     
