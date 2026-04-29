@@ -1414,7 +1414,7 @@ def generate_pixel_art(
             local_size = {"width": 512, "height": 512}
 
         enforced_prompt = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {full_prompt}, vibrant colors, pixel-perfect"
-        local_steps = MODEL_STEP_CONFIG.get("fal-ai/flux/dev", 28)
+        local_steps = int(os.environ.get("LOCAL_FLUX_STEPS", "20"))
         local_guidance = 3.5
 
         local_result = _generate_local_flux(
