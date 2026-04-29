@@ -26,7 +26,7 @@ SUBTITLE_STYLE = {
     'outline_width': 5,
     'band_height': 120,
     'padding_x': 50,
-    'lead_in_seconds': 0.3,
+    'lead_in_seconds': 0.05,
 }
 
 TITLE_STYLE = {
@@ -190,7 +190,7 @@ def align_whisper_to_script(
     # Detect large pauses (>1.5s gap between consecutive words) and redistribute
     # word timing within each segment independently. This prevents closing words
     # from being stretched over silence gaps (causes sped-up subtitle mismatch).
-    PAUSE_THRESHOLD = 1.5  # seconds — anything larger is a structural pause
+    PAUSE_THRESHOLD = 0.3  # seconds — catches structural pauses (story breaks) and audio gaps
     gap_count = 0
     for i in range(1, len(aligned)):
         gap = aligned[i]['start'] - aligned[i-1]['end']
@@ -684,7 +684,7 @@ def generate_ass_subtitles(
     if not word_timestamps:
         return ""
 
-    SUBTITLE_DELAY = 0.25
+    SUBTITLE_DELAY = 0.04
     delayed_ts = [{'word': w['word'], 'start': w['start'] + SUBTITLE_DELAY, 'end': w['end'] + SUBTITLE_DELAY}
                   for w in word_timestamps]
 
@@ -766,7 +766,7 @@ def generate_ass_subtitles(
     TAIL_PAD = 0.01
 
     for phrase_idx, (start_idx, end_idx, phrase_start, phrase_end) in enumerate(phrases):
-        lead_in = s.get('lead_in_seconds', 0.3)
+        lead_in = s.get('lead_in_seconds', 0.05)
         prev_phrase_end = (phrases[phrase_idx - 1][3] + TAIL_PAD + 0.01) if phrase_idx > 0 else 0
         sub_start = max(prev_phrase_end, phrase_start - lead_in)
         sub_end = phrase_end + TAIL_PAD
@@ -940,9 +940,9 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
         return []
 
     # Apply subtitle delay to compensate for whisper's early start predictions.
-    # The whisper base model consistently marks words ~0.25s before they're
-    # actually spoken. Delaying all timestamps fixes the "subtitles ahead of voice" issue.
-    SUBTITLE_DELAY = 0.25
+    # Structural batch splitting now places silences at story boundaries,
+    # making whisper timestamps more accurate. A small residual offset remains.
+    SUBTITLE_DELAY = 0.04
     for w in word_timestamps:
         w['start'] = w['start'] + SUBTITLE_DELAY
         w['end'] = w['end'] + SUBTITLE_DELAY
