@@ -59,21 +59,49 @@
     }
   },
   "model_config": {
-    "default_model": "huihui_ai/qwen3-abliterated:4b",
+    "default_model": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
     "fallback_model": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
     "base_url": "http://localhost:11434",
     "timeout": 300,
     "retry_attempts": 3,
     "num_ctx": 16384,
-    "note": "Fast-Slow architecture. Worker: Qwen3 4B abliterated (fast JSON/text). Brain: Gemma 4 Heretic (creative script writing). Fallback: Gemma 4 Heretic. num_ctx=16384 to fit models in 24GB VRAM.",
+    "note": "Single-model architecture. Gemma 4 26B A4B (uncensored) handles all tasks — JSON/text extraction, analysis, and creative script writing. num_ctx=16384.",
     "task_models": {
       "multi_news_synthesizer": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
-      "script_curator": "huihui_ai/qwen3-abliterated:4b",
-      "news_processor": "huihui_ai/qwen3-abliterated:4b",
-      "visual_prompt_generator": "huihui_ai/qwen3-abliterated:4b",
-      "salience_extractor": "huihui_ai/qwen3-abliterated:4b",
-      "debate_skeptic": "huihui_ai/qwen3-abliterated:4b",
-      "debate_explainer": "huihui_ai/qwen3-abliterated:4b"
+      "script_curator": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
+      "news_processor": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
+      "visual_prompt_generator": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
+      "salience_extractor": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
+      "debate_skeptic": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
+      "debate_explainer": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest"
+    },
+    "hard_call_timeout": 180,
+    "idle_timeout": 60,
+    "call_timeouts": {
+      "dedup_comparison": {
+        "hard": 30,
+        "idle": 15
+      },
+      "news_processor": {
+        "hard": 120,
+        "idle": 45
+      },
+      "script_synthesizer": {
+        "hard": 300,
+        "idle": 90
+      },
+      "script_curator": {
+        "hard": 180,
+        "idle": 60
+      },
+      "visual_prompt_generator": {
+        "hard": 120,
+        "idle": 45
+      },
+      "script_evaluation": {
+        "hard": 60,
+        "idle": 30
+      }
     }
   }
 }

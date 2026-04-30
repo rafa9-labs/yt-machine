@@ -1,150 +1,6 @@
 {
   "videos": [
     {
-      "project_id": 1776631035,
-      "topic": "North Korea's missile tests signal regional tension",
-      "category": "regional_flashpoints",
-      "region": "regional",
-      "article_title": "North Korea launches ballistic missiles toward sea",
-      "created_at": "2026-04-19 21:37:15"
-    },
-    {
-      "project_id": 1776631035,
-      "topic": "African Nations Reimagined as 'Singapore': Compliance as a Political Strategy",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "From Sudan to Gaza, becoming 'Singapore' means choosing to comply",
-      "created_at": "2026-04-19 21:37:15"
-    },
-    {
-      "project_id": 1776656493,
-      "topic": "India's Harvest Festivals Face Climate and Structural Strains",
-      "category": "technology_disruption",
-      "region": "regional",
-      "article_title": "India's harvest festivals under climate strain",
-      "created_at": "2026-04-20 04:41:33"
-    },
-    {
-      "project_id": 1776656493,
-      "topic": "India protests Iran fire on two vessels in Strait of Hormuz",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "India protests Iran fire on two vessels in Strait of Hormuz",
-      "created_at": "2026-04-20 04:41:33"
-    },
-    {
-      "project_id": 1776656493,
-      "topic": "French ship in Strait of Hormuz targeted by Iran, intensifying regional tensions",
-      "category": "middle_east_conflict",
-      "region": "other",
-      "article_title": "French commercial vessel in Strait of Hormuz fired at, says report",
-      "created_at": "2026-04-20 04:41:33"
-    },
-    {
-      "project_id": 1777126030,
-      "topic": "Somalia Faces Growing Human Displacement in Worsening Drought Crisis",
-      "category": "technology_disruption",
-      "region": "other",
-      "article_title": "Somalia: Somalia Faces Growing Human Displacement in Worsening Drought Crisis",
-      "created_at": "2026-04-25 15:07:10"
-    },
-    {
-      "project_id": 1777126030,
-      "topic": "War on Iran reshapes Gulf trade routes through Saudi-Qatari corridors",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "How the war on Iran is rewriting regional trade routes",
-      "created_at": "2026-04-25 15:07:10"
-    },
-    {
-      "project_id": 1777126030,
-      "topic": "Turkey's Strategic Leverage Over Israel in Escalating Rivalry",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "What levers can Turkey use against Israel if their war of words escalates?",
-      "created_at": "2026-04-25 15:07:10"
-    },
-    {
-      "project_id": 1777240879,
-      "topic": "Iran-Russia diplomatic dialogue on ceasefire and regional stability",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Iran FM to visit Moscow for talks on ceasefire and negotiations",
-      "created_at": "2026-04-26 23:01:19"
-    },
-    {
-      "project_id": 1777240879,
-      "topic": "Russia confirms Iran foreign minister to visit for talks",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Russia confirms Iran foreign minister to visit for talks",
-      "created_at": "2026-04-26 23:01:19"
-    },
-    {
-      "project_id": 1777240879,
-      "topic": "Jordan's King Warns Against Israeli Escalation in Gaza, West Bank",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Jordan\u2019s king warns against Israeli escalation in Gaza, West Bank",
-      "created_at": "2026-04-26 23:01:19"
-    },
-    {
-      "project_id": 1777258962,
-      "topic": "Jordan's King Warns Against Israeli Escalation in Gaza, West Bank",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Jordan\u2019s king warns against Israeli escalation in Gaza, West Bank",
-      "created_at": "2026-04-27 04:02:42"
-    },
-    {
-      "project_id": 1777258962,
-      "topic": "Hezbollah Strikes Israeli Forces in Lebanon with Drones and Missiles",
-      "category": "middle_east_conflict",
-      "region": "other",
-      "article_title": "Hezbollah says it targeted troops, tank with drones and missile",
-      "created_at": "2026-04-27 04:02:42"
-    },
-    {
-      "project_id": 1777258962,
-      "topic": "Russia-North Korea Military Pact Entrenches Eastern Front Strategy",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Russia, North Korea agree 'long-term' military cooperation",
-      "created_at": "2026-04-27 04:02:42"
-    },
-    {
-      "project_id": 1777296610,
-      "topic": "Israel-UAE Defense Pact Unveils Iron Dome in Gulf War",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Israel sent air defence system and troops to UAE during Iran war, report says",
-      "created_at": "2026-04-27 14:30:10"
-    },
-    {
-      "project_id": 1777296610,
-      "topic": "Ukraine's drone commander targets Russian oil, troops, and morale",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine's drone commander has Russian oil, troops and morale in his sights",
-      "created_at": "2026-04-27 14:30:10"
-    },
-    {
-      "project_id": 1777296610,
-      "topic": "Mali's defense minister killed as armed groups launch countrywide offensive",
-      "category": "technology_disruption",
-      "region": "other",
-      "article_title": "Mali's defence minister killed as armed groups launch countrywide offensive",
-      "created_at": "2026-04-27 14:30:10"
-    },
-    {
-      "project_id": 1777316205,
-      "topic": "Bahrain revokes citizenship of 69 people linked to Iran war",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Bahrain revokes citizenship of 69 people in connection with Iran war",
-      "created_at": "2026-04-27 19:56:45"
-    },
-    {
       "project_id": 1777316205,
       "topic": "Oil and gas companies raking in $30m/hour from Iran war, as UK energy bills soar",
       "category": "middle_east_conflict",
@@ -159,7 +15,151 @@
       "region": "great_power",
       "article_title": "Ukraine's drone commander has Russian oil, troops and morale in his sights",
       "created_at": "2026-04-27 19:56:45"
+    },
+    {
+      "project_id": 1777408087,
+      "topic": "Iran War Drives Energy Prices to Post-Ukraine High",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Iran war to push energy prices to highest since Ukraine invasion: World Bank",
+      "created_at": "2026-04-28 21:28:07"
+    },
+    {
+      "project_id": 1777408087,
+      "topic": "Generational rift in Iranian-American households deepens over war perspectives",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "War deepens generational rift inside Iranian-American households",
+      "created_at": "2026-04-28 21:28:07"
+    },
+    {
+      "project_id": 1777408087,
+      "topic": "UN warns Gaza endures 'ongoing' Israeli strikes",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "UN official warns Gaza faces 'ongoing' deadly Israeli strikes",
+      "created_at": "2026-04-28 21:28:07"
+    },
+    {
+      "project_id": 1777437855,
+      "topic": "US and Latin America condemn China's economic retaliation over Panama Canal",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "US, Latin America countries criticise China\u2019s retaliation over Panama Canal",
+      "created_at": "2026-04-29 05:44:15"
+    },
+    {
+      "project_id": 1777437855,
+      "topic": "King Charles III underscores NATO unity and Ukraine support during US Congress speech",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "King Charles calls for NATO unity, Ukraine support in US Congress speech",
+      "created_at": "2026-04-29 05:44:15"
+    },
+    {
+      "project_id": 1777437855,
+      "topic": "Russia loses key Malian town and helicopter in African front",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Russia lost a town and a helicopter in Mali. It cannot handle two fronts at once \u2013 African and Ukrainian",
+      "created_at": "2026-04-29 05:44:15"
+    },
+    {
+      "project_id": 1777438666,
+      "topic": "Tehran-Moscow flights resume after two-month suspension",
+      "category": "middle_east_conflict",
+      "region": "other",
+      "article_title": "Tehran-Moscow flights resume after two-month suspension",
+      "created_at": "2026-04-29 05:57:46"
+    },
+    {
+      "project_id": 1777438666,
+      "topic": "Ukraine rebukes Israel for buying grain 'stolen' by Russia",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Ukraine's Zelenskyy rebukes Israel for buying grain 'stolen' by Russia",
+      "created_at": "2026-04-29 05:57:46"
+    },
+    {
+      "project_id": 1777438666,
+      "topic": "US and Latin America condemn China's economic retaliation over Panama Canal",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "US, Latin America countries criticise China\u2019s retaliation over Panama Canal",
+      "created_at": "2026-04-29 05:57:46"
+    },
+    {
+      "project_id": 1777470248,
+      "topic": "China's Zero-Tariff Policy for African Products Set to Take Effect in 2026",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Africa: China's Zero-Tariff for African Products Takes Effect May 1 - Envoy",
+      "created_at": "2026-04-29 14:44:08"
+    },
+    {
+      "project_id": 1777470248,
+      "topic": "Russian Attacks on Ukraine Kill Three, Injure Over 10",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "At least three killed, more than 10 injured in Russian attacks on Ukraine",
+      "created_at": "2026-04-29 14:44:08"
+    },
+    {
+      "project_id": 1777470248,
+      "topic": "Ukraine targets Druzhba pipeline to sever Russian oil, influence in EU",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Ukraine targets Druzhba pipeline to sever Russian oil, influence in EU",
+      "created_at": "2026-04-29 14:44:08"
+    },
+    {
+      "project_id": 1777470879,
+      "topic": "Pentagon chief to testify on Iran war",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Pentagon chief to testify on Iran war",
+      "created_at": "2026-04-29 14:54:39"
+    },
+    {
+      "project_id": 1777470879,
+      "topic": "China's Zero-Tariff Policy for African Products Takes Effect May 1",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Africa: China's Zero-Tariff for African Products Takes Effect May 1 - Envoy",
+      "created_at": "2026-04-29 14:54:39"
+    },
+    {
+      "project_id": 1777470879,
+      "topic": "Russian Attacks on Ukraine Cause Casualties and Damage",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "At least three killed, more than 10 injured in Russian attacks on Ukraine",
+      "created_at": "2026-04-29 14:54:39"
+    },
+    {
+      "project_id": 1777479012,
+      "topic": "Pentagon chief to testify on Iran war",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Pentagon chief to testify on Iran war",
+      "created_at": "2026-04-29 17:10:12"
+    },
+    {
+      "project_id": 1777479012,
+      "topic": "China's Zero-Tariff Policy for African Goods Effective May 1, 2026",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Africa: China's Zero-Tariff for African Products Takes Effect May 1 - Envoy",
+      "created_at": "2026-04-29 17:10:12"
+    },
+    {
+      "project_id": 1777479012,
+      "topic": "Pentagon reveals $25 billion cost of US war in Iran",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "US war in Iran has cost $25bn so far, says Pentagon official",
+      "created_at": "2026-04-29 17:10:12"
     }
   ],
-  "last_updated": "2026-04-27 19:56:45"
+  "last_updated": "2026-04-29 17:10:12"
 }

@@ -14,16 +14,14 @@ An agentic AI system that autonomously creates viral short-form videos from glob
 │  ├─ Full article extraction (trafilatura + Playwright)      │
 │  └─ Viral scoring + category rotation                       │
 │                                                              │
-│  Stage B: LLM Pipeline (Fast-Slow Architecture)             │
-│  ├─ Worker: Qwen3 4B abliterated (all JSON/text tasks)      │
-│  │   ├─ news_processor (structured analysis)                 │
-│  │   ├─ debate_skeptic / debate_explainer                    │
-│  │   ├─ visual_prompt_generator                              │
-│  │   ├─ script_curator                                       │
-│  │   └─ salience_extractor                                   │
-│  ├─ Brain: Qwen3 30B MoE abliterated (reasoning only)       │
-│  │   └─ multi_news_synthesizer (3-story script synthesis)    │
-│  └─ Fallback: Gemma 4 26B Heretic (safety net)              │
+│  Stage B: LLM Pipeline (Gemma 4 Single-Model)              │
+│  └─ Gemma 4 26B A4B uncensored (all tasks)                  │
+│     ├─ multi_news_synthesizer (script synthesis)              │
+│     ├─ news_processor (structured analysis)                    │
+│     ├─ debate_skeptic / debate_explainer                      │
+│     ├─ visual_prompt_generator                                │
+│     ├─ script_curator                                         │
+│     └─ salience_extractor                                    │
 │                                                              │
 │  Stage C: Video Production                                   │
 │  ├─ Voiceover (edge-tts / Kokoro / ElevenLabs)              │
@@ -50,14 +48,12 @@ An agentic AI system that autonomously creates viral short-form videos from glob
    - Memory Reader: Query past videos, check duplicates, analyze performance
    - Tested: All memory operations verified with sample data
 
-2. **LLM Brain Interface (Fast-Slow Architecture)**
-   - Worker: Qwen3 4B abliterated (fast JSON/text, ~80+ tok/s on RTX 3090)
-   - Brain: Qwen3 30B-A3B MoE abliterated (reasoning, ~60+ tok/s on RTX 3090)
-   - Fallback: Gemma 4 26B Heretic (safety net)
-   - System Prompts: 7 specialized personas with per-task model routing
+2. **LLM Brain Interface (Gemma 4 Single-Model Architecture)**
+   - Model: Gemma 4 26B A4B uncensored (all tasks — JSON, analysis, script writing)
+   - System Prompts: 7 specialized personas with task routing
    - LLM Wrapper: Ollama API + LangChain with retry logic, streaming, and Pydantic output parsing
    - Debate System: Multi-agent conversation framework
-   - Thinking token stripping: Handles Qwen3 `<think`, Gemma4 `<|channel|>`, DeepSeek-R1 patterns
+   - Thinking token stripping: Handles Gemma 4 `<|channel|>`, DeepSeek-R1 `<think` patterns
 
 #### Phase 2: Ideation Engine & Testing ✓
 1. **Redfish RSS Scraper**
@@ -83,33 +79,23 @@ pip install -r requirements.txt
 ### 2. Install Ollama
 Download from: https://ollama.ai/download
 
-### 3. Pull LLM Models (Fast-Slow Architecture)
+### 3. Pull LLM Model (Gemma 4 26B)
 
-The pipeline uses a two-model setup optimized for RTX 3090 24GB:
+The pipeline uses a single Gemma 4 model for all tasks:
 
-| Role | Model | VRAM | Purpose |
-|---|---|---|---|
-| **Worker** | `huihui_ai/qwen3-abliterated:4b` | ~4 GB | JSON output, news analysis, curation (fast) |
-| **Brain** | `huihui_ai/qwen3-abliterated:30b-a3b` | ~19 GB | Script synthesis, reasoning (MoE) |
-| **Fallback** | `hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF` | ~16 GB | Safety net if Qwen3 models fail |
-
-All three models are abliterated/uncensored — no content restrictions on geopolitical news topics.
+| Role | Model | Purpose |
+|---|---|---|
+| **All tasks** | `hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest` | JSON output, news analysis, script synthesis |
 
 ```powershell
-# Pull the Worker (2.5 GB download — fast JSON/text tasks)
-ollama pull huihui_ai/qwen3-abliterated:4b
-
-# Pull the Brain (18 GB download — MoE reasoning model)
-ollama pull huihui_ai/qwen3-abliterated:30b-a3b
-
-# Pull the Fallback (16 GB download — already have it? skip this)
+# Pull the model
 ollama pull hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest
 
-# Verify all models are available
+# Verify it's available
 ollama list
 ```
 
-**Why this setup?** The Brain is a Mixture-of-Experts (MoE) model — 30B total parameters but only ~3B active per token. This gives large-model intelligence at small-model speed. The Worker handles all structured tasks (JSON output, curation, dedup) at 80+ tok/s. Only script synthesis hits the Brain. Total VRAM: ~23 GB of 24 GB.
+**Why Gemma 4 only?** Simpler deployment, no context-size conflicts, no VRAM contention between models. Gemma 4 26B A4B uses quantized attention (A4B) for efficient inference on consumer GPUs.
 
 ### 4. Install LangChain (Recommended)
 

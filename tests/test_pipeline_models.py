@@ -1,14 +1,14 @@
 """
-Pipeline Validation Test — Qwen3 Fast-Slow Architecture
-========================================================
+Pipeline Validation Test — Gemma 4 Single-Model Architecture
+=============================================================
 Validates every LLM call in the generate_complete_video.py pipeline
-using the new Qwen3 model routing.
+using Gemma 4 for all tasks.
 
 Tests:
   1. Config loading — correct model routing per task
   2. Raw LLM interface — generate, process_news, debate, script synthesis
   3. LangChain interface — structured chains, text chains
-  4. Thinking token stripping — Qwen3, Gemma 4, DeepSeek-R1 patterns
+  4. Thinking token stripping — Gemma 4, DeepSeek-R1 patterns
   5. JSON extraction — handles thinking tokens + malformed JSON
   6. End-to-end pipeline simulation — news → analysis → script → curation
 """
@@ -48,12 +48,14 @@ with open(config_path, 'r', encoding='utf-8') as f:
 
 mc = config["model_config"]
 
-test("default_model is Qwen3 4B Worker",
-     mc["default_model"] == "huihui_ai/qwen3-abliterated:4b",
+GEMMA4_MODEL = "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest"
+
+test("default_model is Gemma 4 26B",
+     mc["default_model"] == GEMMA4_MODEL,
      f"Got: {mc['default_model']}")
 
-test("fallback_model is Gemma 4 Heretic",
-     mc["fallback_model"] == "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",
+test("fallback_model is Gemma 4 26B",
+     mc["fallback_model"] == GEMMA4_MODEL,
      f"Got: {mc['fallback_model']}")
 
 test("timeout reduced from 600 to 300",
@@ -65,15 +67,15 @@ test("num_ctx reduced from 32768 to 16384",
      f"Got: {mc['num_ctx']}")
 
 task_models = mc.get("task_models", {})
-test("multi_news_synthesizer uses Brain (30B MoE)",
-     "30b-a3b" in task_models.get("multi_news_synthesizer", ""),
+test("multi_news_synthesizer uses Brain (Gemma 4)",
+     "gemma-4-26B" in task_models.get("multi_news_synthesizer", ""),
      f"Got: {task_models.get('multi_news_synthesizer', 'MISSING')}")
 
 worker_tasks = ["news_processor", "visual_prompt_generator", "script_curator",
                 "salience_extractor", "debate_skeptic", "debate_explainer"]
 for task in worker_tasks:
-    test(f"{task} uses Worker (4B)",
-         task_models.get(task) == "huihui_ai/qwen3-abliterated:4b",
+    test(f"{task} uses Gemma 4",
+         task_models.get(task) == GEMMA4_MODEL,
          f"Got: {task_models.get(task, 'MISSING')}")
 
 
@@ -88,9 +90,9 @@ try:
     llm = LLMInterface()
 
     test("LLMInterface loads without error", True)
-    test(f"default_model = {llm.default_model[:40]}...",
-         "qwen3-abliterated:4b" in llm.default_model)
-    test(f"fallback_model = {llm.fallback_model[:40]}...",
+    test(f"default_model = {llm.default_model[:50]}...",
+         "gemma-4-26B" in llm.default_model)
+    test(f"fallback_model = {llm.fallback_model[:50]}...",
          "gemma-4-26B" in llm.fallback_model)
     test(f"num_ctx = {llm.num_ctx}", llm.num_ctx == 16384)
     test(f"timeout = {llm.timeout}", llm.timeout == 300)
@@ -107,17 +109,17 @@ print("-" * 50)
 
 strip = LLMInterface._strip_thinking_tokens
 
-# Qwen3 pattern: <think...\n</think\n\n{json}
-qwen3_thinking = '<think\nLet me analyze this...\nSome reasoning here.\n</think\n\n{"topic": "test", "impact_score": 7}'
-stripped = strip(qwen3_thinking)
-test("Qwen3: strips <think...</think wrapper",
+# DeepSeek-R1 / misc pattern: <think...\n</think\n\n{json}
+thinking_test = '<think\nLet me analyze this...\nSome reasoning here.\n</think\n\n{"topic": "test", "impact_score": 7}'
+stripped = strip(thinking_test)
+test("Strips <think/></think> wrapper",
      '"topic"' in stripped and '<think' not in stripped,
      f"Got: {stripped[:100]}")
 
-# Qwen3 pattern without closing tag
-qwen3_no_close = '<think\nReasoning about stuff...\n{"topic": "test"}'
-stripped = strip(qwen3_no_close)
-test("Qwen3: handles unclosed <think tag",
+# Pattern without closing tag
+no_close = '<think\nReasoning about stuff...\n{"topic": "test"}'
+stripped = strip(no_close)
+test("Handles unclosed <think tag",
      '"topic"' in stripped and '<think' not in stripped,
      f"Got: {stripped[:100]}")
 
@@ -192,21 +194,21 @@ try:
 
     test("LangChainInterface loads without error", True)
     test(f"LangChain default_model correct",
-         "qwen3-abliterated:4b" in lc.default_model)
+         "gemma-4-26B" in lc.default_model)
 
     prompt_config = lc.get_prompt_config("news_processor")
-    test("news_processor routed to Worker",
-         "4b" in prompt_config["model"],
+    test("news_processor routed to Gemma 4",
+         "gemma-4-26B" in prompt_config["model"],
          f"Got: {prompt_config['model']}")
 
     prompt_config = lc.get_prompt_config("multi_news_synthesizer")
-    test("multi_news_synthesizer routed to Brain",
-         "30b-a3b" in prompt_config["model"],
+    test("multi_news_synthesizer routed to Gemma 4",
+         "gemma-4-26B" in prompt_config["model"],
          f"Got: {prompt_config['model']}")
 
     prompt_config = lc.get_prompt_config("script_curator")
-    test("script_curator routed to Worker",
-         "4b" in prompt_config["model"],
+    test("script_curator routed to Gemma 4",
+         "gemma-4-26B" in prompt_config["model"],
          f"Got: {prompt_config['model']}")
 
 except Exception as e:
@@ -216,7 +218,7 @@ except Exception as e:
 # ══════════════════════════════════════════════════════════════════════
 # TEST 6: LIVE LLM CALLS (Worker only — fast, ~10s total)
 # ══════════════════════════════════════════════════════════════════════
-print("\n[6] LIVE LLM CALLS (Worker — Qwen3 4B)")
+print("\n[6] LIVE LLM CALLS (Gemma 4 26B)")
 print("-" * 50)
 
 SAMPLE_ARTICLE = """
@@ -259,7 +261,7 @@ if debate_result:
 # ══════════════════════════════════════════════════════════════════════
 # TEST 7: LIVE BRAIN CALL (MoE 30B — slower, ~30-60s)
 # ══════════════════════════════════════════════════════════════════════
-print("\n[7] LIVE BRAIN CALL (Qwen3 30B MoE — script synthesis)")
+print("\n[7] LIVE BRAIN CALL (Gemma 4 26B — script synthesis)")
 print("-" * 50)
 
 mock_analyses = [

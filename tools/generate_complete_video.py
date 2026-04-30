@@ -32,6 +32,7 @@ import sys
 import json
 import time
 import asyncio
+import threading
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -93,6 +94,31 @@ def _extract_segment_text(segment_data) -> str:
 
 
 from src.pipeline_utils import bridge_timestamp_gaps, build_fallback_prompt as _build_fallback_prompt
+
+
+def _run_with_timeout(func, timeout_seconds, step_name, *args, **kwargs):
+    """Run a function with a hard wall-clock timeout. Returns (result, timed_out)."""
+    result_container = [None]
+    exception_container = [None]
+
+    def worker():
+        try:
+            result_container[0] = func(*args, **kwargs)
+        except Exception as e:
+            exception_container[0] = e
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout_seconds)
+
+    if thread.is_alive():
+        log.error("step.hard_timeout", step=step_name, timeout_s=timeout_seconds)
+        return None, True
+
+    if exception_container[0] is not None:
+        raise exception_container[0]
+
+    return result_container[0], False
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -283,7 +309,7 @@ def _is_semantically_similar(title_a: str, title_b: str) -> bool:
             f"Headline A: {title_a}\n"
             f"Headline B: {title_b}"
         )
-        response = llm.generate(prompt, max_tokens=10, temperature=0.1)
+        response = llm.generate(prompt, max_tokens=10, temperature=0.1, task_name="dedup_comparison")
         answer = response.strip().lower()
         return answer.startswith('yes')
     except Exception:
@@ -410,6 +436,7 @@ for i, article in enumerate(articles, 1):
 
 if len(news_analyses) < 2:
     log.error("analysis.insufficient", count=len(news_analyses), minimum=2)
+    llm.unload_model()
     exit(1)
 
 # Sort by impact (lowest first, most important last for retention)
@@ -465,10 +492,14 @@ _step_start = time.time()
 
 try:
     log.info("script.generating", format="multi_news_3_stories")
-    script = llm.synthesize_multi_news_script(news_analyses)
+    script, _synth_timed_out = _run_with_timeout(
+        llm.synthesize_multi_news_script, 600, "script_synthesis",
+        news_analyses
+    )
 
-    if not script:
-        log.error("script.synthesis_failed", reason="empty_result")
+    if _synth_timed_out or not script:
+        log.error("script.synthesis_failed", reason="timeout" if _synth_timed_out else "empty_result")
+        llm.unload_model()
         exit(1)
 
     full_script = script.get('full_text', '')
@@ -525,6 +556,7 @@ except Exception as e:
     log.error("script.synthesis.exception", error=str(e))
     import traceback
     traceback.print_exc()
+    llm.unload_model()
     exit(1)
 
 _step_duration = time.time() - _step_start
@@ -538,7 +570,13 @@ log.info("step.start", step="visual_prompts")
 _step_start = time.time()
 
 try:
-    dedicated_visuals = llm.generate_visual_prompts(script)
+    dedicated_visuals, _visual_timed_out = _run_with_timeout(
+        llm.generate_visual_prompts, 300, "visual_prompts",
+        script
+    )
+    if _visual_timed_out:
+        log.error("visual_prompts.timeout", timeout_s=300)
+        dedicated_visuals = None
 
     if dedicated_visuals and len(dedicated_visuals) >= NUM_IMAGES:
         script['all_visual_scenes'] = dedicated_visuals
@@ -593,7 +631,13 @@ try:
 
     # ── Fallback to raw LLM curation ──
     if not curated_text:
-        curated_text = llm.curate_script(script)
+        curated_text, _curate_timed_out = _run_with_timeout(
+            llm.curate_script, 300, "script_curation",
+            script
+        )
+        if _curate_timed_out:
+            log.error("curation.timeout", timeout_s=300)
+            curated_text = None
 
     if curated_text and curated_text != original_text:
         # Reassemble full script with structural elements (segues, closing)
@@ -633,12 +677,15 @@ _step_start = time.time()
 try:
     from src.brain.script_evaluator import run_script_evaluation
 
-    script = run_script_evaluation(
+    script, _eval_timed_out = _run_with_timeout(
+        run_script_evaluation, 120, "script_evaluation",
         script=script,
         news_analyses=news_analyses,
         llm_interface=llm,
         similarity_threshold=0.90,
     )
+    if _eval_timed_out:
+        log.error("script_evaluation.timeout", timeout_s=120)
 
     full_script = script.get('full_text', full_script)
     script_file = project_folder / "script.txt"
@@ -1216,6 +1263,11 @@ if final_video_path and not args.no_telegram:
 # ══════════════════════════════════════════════════════════════════════════
 # PIPELINE COMPLETE
 # ══════════════════════════════════════════════════════════════════════════
+try:
+    llm.unload_model()
+except Exception:
+    pass
+
 log.info("pipeline.complete",
          project_id=project_id,
          video=final_video_path or "FAILED",
