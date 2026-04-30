@@ -24,6 +24,11 @@ class LLMInterface:
         self.retry_attempts = self.config["model_config"]["retry_attempts"]
         self.num_ctx = self.config["model_config"].get("num_ctx", 4096)
         
+        # Per-call timeouts to prevent Ollama bloat
+        self.hard_call_timeout = self.config["model_config"].get("hard_call_timeout", 180)
+        self.idle_timeout = self.config["model_config"].get("idle_timeout", 60)
+        self.call_timeouts = self.config["model_config"].get("call_timeouts", {})
+        
         # Task-specific model routing
         self.task_models = self.config["model_config"].get("task_models", {})
         
@@ -39,16 +44,26 @@ class LLMInterface:
     def _strip_thinking_tokens(text: str) -> str:
         """Strip thinking tokens from LLM response.
 
-        Handles three model families:
-          Qwen3: <think...</think
+        Handles model families:
           Gemma 4 Heretic: <|channel>thought<channel|>...<|channel>output<channel|>
-          DeepSeek-R1: <think...</think
+          DeepSeek-R1 / misc: <think...</think
         These consume output budget and break JSON parsing.
         """
         import re
 
-        # Qwen3 / DeepSeek-R1: <think...</think
-        # Some Qwen3 outputs use <think without closing >, or </think without >
+        # Gemma 4 Heretic: <|channel>output<channel|> (output marker present)
+        output_match = re.search(r'<\|?channel\|?>\s*output\s*<\|?channel\|?>', text)
+        if output_match:
+            text = text[output_match.end():]
+        else:
+            # Gemma 4 Heretic: <|channel>thought<channel|> (only thought marker, no output marker)
+            thought_match = re.search(r'<\|?channel\|?>\s*thought\s*<\|?channel\|?>', text)
+            if thought_match:
+                json_start = re.search(r'[{]', text[thought_match.end():])
+                if json_start:
+                    text = text[thought_match.end() + json_start.start():]
+
+        # DeepSeek-R1 / misc: <think...</think
         think_match = re.search(r'<think\b', text)
         if think_match:
             close_match = re.search(r'</think\s*>?', text)
@@ -58,19 +73,6 @@ class LLMInterface:
                 json_start = re.search(r'[{]', text[think_match.start():])
                 if json_start:
                     text = text[think_match.start() + json_start.start():]
-
-        # Gemma 4 Heretic: <|channel>output<channel|> (output marker present)
-        output_match = re.search(r'<\|?channel\|?>\s*output\s*<\|?channel\|?>', text)
-        if output_match:
-            text = text[output_match.end():]
-        else:
-            # Gemma 4 Heretic: <|channel>thought<channel|> (only thought marker, no output marker)
-            # The actual JSON follows after the thought channel header
-            thought_match = re.search(r'<\|?channel\|?>\s*thought\s*<\|?channel\|?>', text)
-            if thought_match:
-                json_start = re.search(r'[{]', text[thought_match.end():])
-                if json_start:
-                    text = text[thought_match.end() + json_start.start():]
 
         # If nothing matched but text starts with non-JSON, find first {
         if not text.strip().startswith('{') and not text.strip().startswith('['):
@@ -86,7 +88,7 @@ class LLMInterface:
     def _extract_json(self, response: str) -> Optional[Dict[str, Any]]:
         import re
 
-        # Strip thinking tokens from abliterated/heretic models
+        # Strip thinking tokens from heretic models
         response = self._strip_thinking_tokens(response)
 
         # Remove markdown code blocks if present
@@ -140,7 +142,10 @@ class LLMInterface:
         except:
             return None
     
-    def _make_request(self, endpoint: str, payload: Dict[str, Any], attempt: int = 1) -> Optional[Dict[str, Any]]:
+    def _make_request(self, endpoint: str, payload: Dict[str, Any], attempt: int = 1,
+                      hard_timeout: float = None, idle_timeout: float = None) -> Optional[Dict[str, Any]]:
+        _hard = hard_timeout if hard_timeout is not None else self.hard_call_timeout
+        _idle = idle_timeout if idle_timeout is not None else self.idle_timeout
         try:
             url = f"{self.base_url}{endpoint}"
             response = requests.post(
@@ -152,8 +157,20 @@ class LLMInterface:
             response.raise_for_status()
             
             full_response = ""
+            start = time.monotonic()
+            last_data = time.monotonic()
             for line in response.iter_lines():
+                now = time.monotonic()
+                if now - start > _hard:
+                    print(f"  [LLM] Hard timeout ({_hard:.0f}s exceeded) - aborting request")
+                    response.close()
+                    return None
+                if now - last_data > _idle:
+                    print(f"  [LLM] Idle timeout ({_idle:.0f}s no data) - aborting request")
+                    response.close()
+                    return None
                 if line:
+                    last_data = now
                     chunk = json.loads(line)
                     if "response" in chunk:
                         full_response += chunk["response"]
@@ -166,7 +183,8 @@ class LLMInterface:
             if attempt < self.retry_attempts:
                 print(f"Request failed (attempt {attempt}/{self.retry_attempts}): {e}")
                 time.sleep(2 ** attempt)
-                return self._make_request(endpoint, payload, attempt + 1)
+                return self._make_request(endpoint, payload, attempt + 1,
+                                          hard_timeout=_hard, idle_timeout=_idle)
             else:
                 print(f"Request failed after {self.retry_attempts} attempts: {e}")
                 return None
@@ -181,10 +199,15 @@ class LLMInterface:
         model: str = None,
         system_prompt: str = None,
         temperature: float = 0.7,
-        max_tokens: int = 500
+        max_tokens: int = 500,
+        task_name: str = None
     ) -> Optional[str]:
         if model is None:
             model = self.default_model
+        
+        task_timeouts = self.call_timeouts.get(task_name, {}) if task_name else {}
+        hard_timeout = task_timeouts.get("hard") if task_timeouts else None
+        idle_timeout = task_timeouts.get("idle") if task_timeouts else None
         
         payload = {
             "model": model,
@@ -202,10 +225,12 @@ class LLMInterface:
         
         # If primary model has failed too many times, go straight to fallback
         if model == self.default_model and self._primary_failures >= self._MAX_PRIMARY_FAILURES:
-            print(f"  [LLM] ⚠️ Primary model circuit breaker active ({self._primary_failures} failures), using fallback: {self.fallback_model}")
+            print(f"  [LLM] ⚡ Primary model circuit breaker active ({self._primary_failures} failures), using fallback: {self.fallback_model}")
             payload["model"] = self.fallback_model
         
-        result = self._make_request("/api/generate", payload)
+        result = self._make_request("/api/generate", payload,
+                                    hard_timeout=hard_timeout,
+                                    idle_timeout=idle_timeout)
         
         if result and result.get("response", "").strip():
             # Reset circuit breaker on success
@@ -232,15 +257,31 @@ class LLMInterface:
         for fallback in fallback_chain:
             print(f"  [LLM] Model {payload['model']} failed, trying fallback: {fallback}")
             payload["model"] = fallback
-            result = self._make_request("/api/generate", payload)
+            result = self._make_request("/api/generate", payload,
+                                         hard_timeout=hard_timeout,
+                                         idle_timeout=idle_timeout)
             
             if result and result.get("response", "").strip():
-                print(f"  [LLM] ✅ Fallback model ({fallback}) succeeded ({len(result['response'])} chars)")
+                print(f"  [LLM] ✓ Fallback model ({fallback}) succeeded ({len(result['response'])} chars)")
                 return result["response"]
         
-        print(f"  [LLM] ❌ All models in fallback chain failed")
+        print(f"  [LLM] ✗ All models in fallback chain failed")
         
         return None
+    
+    def unload_model(self, model: str = None) -> bool:
+        model = model or self.default_model
+        try:
+            requests.post(
+                f"{self.base_url}/api/generate",
+                json={"model": model, "keep_alive": 0},
+                timeout=10
+            )
+            print(f"  [LLM] Model '{model}' unloaded (keep_alive=0)")
+            return True
+        except Exception as e:
+            print(f"  [LLM] Failed to unload model: {e}")
+            return False
     
     def chat(
         self,
@@ -263,7 +304,9 @@ class LLMInterface:
             }
         }
         
-        result = self._make_request("/api/chat", payload)
+        result = self._make_request("/api/chat", payload,
+                                    hard_timeout=self.hard_call_timeout,
+                                    idle_timeout=self.idle_timeout)
         return result["response"] if result else None
     
     def process_news(self, article_text: str) -> Optional[Dict[str, Any]]:
@@ -277,7 +320,8 @@ class LLMInterface:
             prompt=prompt,
             system_prompt=prompt_config["system_prompt"],
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            task_name="news_processor"
         )
         
         if not response:
@@ -299,7 +343,8 @@ class LLMInterface:
             prompt=prompt,
             system_prompt=prompt_config["system_prompt"],
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            task_name="news_processor"
         )
         
         if not response:
@@ -319,7 +364,8 @@ class LLMInterface:
             prompt=prompt,
             system_prompt=prompt_config["system_prompt"],
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            task_name="news_processor"
         )
         
         if not response:
@@ -393,7 +439,8 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             prompt=prompt,
             system_prompt=prompt_config["system_prompt"],
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            task_name="script_synthesizer"
         )
         
         if not response:
@@ -422,7 +469,8 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             recovery_response = self.generate(
                 prompt=recovery_prompt,
                 temperature=0.7,
-                max_tokens=1200
+                max_tokens=1200,
+                task_name="script_synthesizer"
             )
             if recovery_response:
                 recovery_data = self._extract_json(recovery_response)
@@ -735,7 +783,8 @@ CRITICAL RULES:
                 model=task_model,
                 system_prompt=prompt_config["system_prompt"],
                 temperature=prompt_config["temperature"],
-                max_tokens=prompt_config["max_tokens"]
+                max_tokens=prompt_config["max_tokens"],
+                task_name="script_synthesizer"
             )
         
         if not response:
@@ -757,7 +806,8 @@ CRITICAL RULES:
                 model=task_model,
                 system_prompt=prompt_config["system_prompt"],
                 temperature=prompt_config["temperature"],
-                max_tokens=retry_max
+                max_tokens=retry_max,
+                task_name="script_synthesizer"
             )
             if retry_response:
                 script = self._extract_json(retry_response)
@@ -803,7 +853,8 @@ CRITICAL RULES:
                     model=self.task_models.get("multi_news_synthesizer", self.default_model),
                     system_prompt=prompt_config["system_prompt"],
                     temperature=prompt_config["temperature"],
-                    max_tokens=prompt_config["max_tokens"]
+                    max_tokens=prompt_config["max_tokens"],
+                    task_name="script_synthesizer"
                 )
                 if retry_response:
                     retry_script = self._extract_json(retry_response)
@@ -845,7 +896,8 @@ CRITICAL RULES:
                         repair_response = self.generate(
                             prompt=repair_prompt,
                             temperature=0.8,
-                            max_tokens=300
+                            max_tokens=300,
+                            task_name="script_synthesizer"
                         )
                         if repair_response:
                             repair_data = self._extract_json(repair_response)
@@ -908,7 +960,8 @@ CRITICAL RULES:
                     model=self.task_models.get("multi_news_synthesizer", self.default_model),
                     system_prompt=prompt_config["system_prompt"],
                     temperature=prompt_config["temperature"],
-                    max_tokens=prompt_config["max_tokens"]
+                    max_tokens=prompt_config["max_tokens"],
+                    task_name="script_synthesizer"
                 )
                 if expand_response:
                     expand_script = self._extract_json(expand_response)
@@ -1231,7 +1284,8 @@ Output the {len(story_bodies)} curated stories as plain text. Separate stories w
             prompt=prompt,
             system_prompt=prompt_config["system_prompt"],
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            task_name="script_curator"
         )
         
         if not response:
@@ -1424,7 +1478,7 @@ Output the {len(story_bodies)} curated stories as plain text. Separate stories w
     def generate_visual_prompts(self, script: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """
         Generate dedicated visual prompts from curated narration text.
-        3 scenes per story (hook, mechanism, truth). Uses local abliterated model exclusively.
+        3 scenes per story (hook, mechanism, truth).
         
         Args:
             script: Script dict with 'stories' array
@@ -1504,7 +1558,8 @@ Output ONLY valid JSON:
             prompt=user_prompt,
             system_prompt=system_prompt,
             temperature=prompt_config["temperature"],
-            max_tokens=prompt_config["max_tokens"]
+            max_tokens=prompt_config["max_tokens"],
+            task_name="visual_prompt_generator"
         )
         
         if not response:
@@ -1603,7 +1658,8 @@ Output ONLY JSON: {{"scene": "{scenes[j]['scene']}", "description": "..."}}"""
                         prompt=diff_prompt,
                         system_prompt="You are a pixel art scene designer. Generate visually and geographically distinct scenes.",
                         temperature=0.6,
-                        max_tokens=300
+                        max_tokens=300,
+                        task_name="visual_prompt_generator"
                     )
                     
                     if retry:
@@ -1673,7 +1729,8 @@ Include BOTH military AND non-military subjects."""
         response = self.generate(
             prompt=extraction_prompt,
             temperature=0.3,
-            max_tokens=500
+            max_tokens=500,
+            task_name="visual_prompt_generator"
         )
         
         if not response:

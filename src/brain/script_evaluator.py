@@ -220,7 +220,8 @@ CRITICAL RULES:
         response = llm_interface.generate(
             prompt=prompt,
             temperature=0.8,
-            max_tokens=500
+            max_tokens=500,
+            task_name="script_evaluation"
         )
         if not response:
             return None
@@ -311,7 +312,8 @@ Return ONLY the JSON object. No explanation before or after."""
         response = llm_interface.generate(
             prompt=prompt,
             temperature=0.3,
-            max_tokens=1000
+            max_tokens=1000,
+            task_name="script_evaluation"
         )
         if not response:
             return script, []

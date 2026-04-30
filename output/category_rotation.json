@@ -1,8 +1,8 @@
 {
   "current_cycle": {
-    "day_index": 7,
-    "category": "kinetic_operations",
-    "date": "2026-04-27"
+    "day_index": 2,
+    "category": "economic_warfare",
+    "date": "2026-04-30"
   },
   "history": [
     {
@@ -112,6 +112,18 @@
     {
       "date": "2026-04-26",
       "category": "kinetic_operations"
+    },
+    {
+      "date": "2026-04-27",
+      "category": "middle_east_conflict"
+    },
+    {
+      "date": "2026-04-28",
+      "category": "great_power_competition"
+    },
+    {
+      "date": "2026-04-29",
+      "category": "economic_warfare"
     }
   ]
 }

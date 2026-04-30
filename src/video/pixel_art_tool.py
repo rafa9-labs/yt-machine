@@ -10,6 +10,9 @@ from src.collector.geopolitical_validator import GeopoliticalValidator
 # Load environment variables from .env file
 load_dotenv()
 
+# Reduce CUDA memory fragmentation and prevent spill to system RAM
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:128")
+
 # Load image style config — single source of truth
 _STYLE_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "image_style.json"
 with open(_STYLE_CONFIG_PATH, 'r', encoding='utf-8') as _f:
@@ -79,7 +82,93 @@ FAL_FALLBACK_MODELS = ["fal-ai/flux/schnell"]
 USE_LOCAL_FLUX = os.getenv("USE_LOCAL_FLUX", "auto").lower() in ("true", "1", "yes", "auto")
 LOCAL_FLUX_MODEL = os.getenv("LOCAL_FLUX_MODEL", "black-forest-labs/FLUX.1-dev")
 LOCAL_FLUX_FALLBACK_MODEL = "black-forest-labs/FLUX.1-schnell"
+LOCAL_FLUX_QUANTIZE = os.getenv("LOCAL_FLUX_QUANTIZE", "8bit").lower()  # "8bit", "4bit", or "none"
+LOCAL_FLUX_COMPILE = os.getenv("LOCAL_FLUX_COMPILE", "none").lower()  # "none", "reduce-overhead", "max-autotune"
+LOCAL_FLUX_MIN_VRAM_GB = int(os.getenv("LOCAL_FLUX_MIN_VRAM_GB", "14"))  # minimum free VRAM to load FLUX
+LOCAL_FLUX_EVICT_OLLAMA = os.getenv("LOCAL_FLUX_EVICT_OLLAMA", "true").lower() in ("true", "1", "yes")
+_KEEP_ALIVE = LOCAL_FLUX_COMPILE not in ("none", "")
 _flux_pipeline = None
+
+
+def _check_vram_available(min_gb: int) -> tuple:
+    """Check if enough VRAM is available on the default CUDA device.
+
+    Returns (has_enough, free_gb) where has_enough is True when free_gb >= min_gb.
+    Falls back to (True, -1) if CUDA is not yet initialised (allows first load to proceed).
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False, 0.0
+        free_bytes, _total_bytes = torch.cuda.mem_get_info()
+        free_gb = free_bytes / (1024 ** 3)
+        return free_gb >= min_gb, round(free_gb, 2)
+    except Exception:
+        return True, -1.0
+
+
+def _evict_ollama_models() -> None:
+    """Tell Ollama to unload all running models from GPU, freeing VRAM.
+
+    Models reload automatically on next LLM call. Safe to call at any time.
+    """
+    try:
+        import requests
+        resp = requests.get("http://localhost:11434/api/ps", timeout=5)
+        if resp.status_code == 200:
+            models = resp.json().get("models", [])
+            for m in models:
+                model_name = m.get("name", "")
+                if model_name:
+                    try:
+                        requests.post(
+                            "http://localhost:11434/api/generate",
+                            json={"model": model_name, "keep_alive": 0},
+                            timeout=30,
+                        )
+                        print(f"  [IMG] Evicted Ollama model: {model_name}")
+                    except Exception:
+                        print(f"  [IMG] Failed to evict Ollama model: {model_name}")
+        else:
+            print(f"  [IMG] Ollama API returned status {resp.status_code} — skipping eviction")
+    except requests.exceptions.ConnectionError:
+        print("  [IMG] Ollama not running — no models to evict")
+    except Exception as e:
+        print(f"  [IMG] Could not evict Ollama models ({e}) — continuing anyway")
+
+
+def _flush_flux_pipeline() -> None:
+    """Manually free the FLUX pipeline from GPU memory.
+
+    Call this after a batch of image generations when LOCAL_FLUX_COMPILE
+    keeps the pipeline alive between calls. Safe to call even if no
+    pipeline is loaded.
+    """
+    global _flux_pipeline
+    import gc
+    try:
+        import torch
+    except ImportError:
+        _flux_pipeline = None
+        return
+
+    if _flux_pipeline is not None:
+        print("  [IMG] Flushing FLUX pipeline — releasing GPU memory...")
+        try:
+            if LOCAL_FLUX_QUANTIZE in ("8bit", "4bit"):
+                del _flux_pipeline
+            else:
+                _flux_pipeline.to("cpu")
+                del _flux_pipeline
+        except Exception:
+            try:
+                del _flux_pipeline
+            except Exception:
+                pass
+        _flux_pipeline = None
+        torch.cuda.empty_cache()
+        gc.collect()
+        print("  [IMG] FLUX pipeline flushed — GPU memory released")
 
 
 def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
@@ -95,27 +184,74 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
     except ImportError:
         return None
 
+    # Pre-flight VRAM check — prevent loading FLUX if GPU memory is tight
+    if _flux_pipeline is None:
+        vram_ok, free_gb = _check_vram_available(LOCAL_FLUX_MIN_VRAM_GB)
+        if not vram_ok:
+            print(f"  [IMG] Insufficient VRAM: {free_gb}GB free, need {LOCAL_FLUX_MIN_VRAM_GB}GB")
+            if LOCAL_FLUX_EVICT_OLLAMA:
+                print("  [IMG] Attempting to free VRAM by evicting Ollama models...")
+                _evict_ollama_models()
+                import time
+                time.sleep(2)
+                vram_ok, free_gb = _check_vram_available(LOCAL_FLUX_MIN_VRAM_GB)
+            if not vram_ok:
+                print(f"  [IMG] Still only {free_gb}GB free after eviction — falling back to fal.ai")
+                return None
+            print(f"  [IMG] VRAM freed: {free_gb}GB now available (needed {LOCAL_FLUX_MIN_VRAM_GB}GB)")
+        else:
+            print(f"  [IMG] VRAM check passed: {free_gb}GB free (need {LOCAL_FLUX_MIN_VRAM_GB}GB)")
+
     try:
         from diffusers import FluxPipeline
 
+        _is_quantized = LOCAL_FLUX_QUANTIZE in ("8bit", "4bit")
+        _is_compiled = LOCAL_FLUX_COMPILE not in ("none", "")
+
         if _flux_pipeline is None:
             model_id = LOCAL_FLUX_MODEL
-            print(f"  [IMG] Loading {model_id} pipeline onto GPU...")
-            
+            print(f"  [IMG] Loading {model_id} pipeline onto GPU (quantize={LOCAL_FLUX_QUANTIZE}, compile={LOCAL_FLUX_COMPILE})...")
+
+            if _is_quantized:
+                from transformers import BitsAndBytesConfig
+
+                if LOCAL_FLUX_QUANTIZE == "8bit":
+                    quant_config = BitsAndBytesConfig(load_in_8bit=True)
+                else:
+                    quant_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                        bnb_4bit_quant_type="nf4",
+                    )
+
             try:
-                _flux_pipeline = FluxPipeline.from_pretrained(
-                    model_id,
-                    torch_dtype=torch.bfloat16,
-                )
+                if _is_quantized:
+                    _flux_pipeline = FluxPipeline.from_pretrained(
+                        model_id,
+                        quantization_config=quant_config,
+                        torch_dtype=torch.bfloat16,
+                    )
+                else:
+                    _flux_pipeline = FluxPipeline.from_pretrained(
+                        model_id,
+                        torch_dtype=torch.bfloat16,
+                    )
             except Exception as auth_err:
                 if "401" in str(auth_err) or "access" in str(auth_err).lower() or "gated" in str(auth_err).lower():
                     print(f"  [IMG] {model_id} is gated or auth required — trying {LOCAL_FLUX_FALLBACK_MODEL}")
                     model_id = LOCAL_FLUX_FALLBACK_MODEL
                     steps = min(steps, 4)
-                    _flux_pipeline = FluxPipeline.from_pretrained(
-                        model_id,
-                        torch_dtype=torch.bfloat16,
-                    )
+                    if _is_quantized:
+                        _flux_pipeline = FluxPipeline.from_pretrained(
+                            model_id,
+                            quantization_config=quant_config,
+                            torch_dtype=torch.bfloat16,
+                        )
+                    else:
+                        _flux_pipeline = FluxPipeline.from_pretrained(
+                            model_id,
+                            torch_dtype=torch.bfloat16,
+                        )
                 else:
                     raise
 
@@ -124,11 +260,52 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
                 _flux_pipeline.load_lora_weights(_resolved_lora_path)
                 _flux_pipeline.fuse_lora(lora_scale=LORA_SCALE)
 
-            _flux_pipeline.to("cuda")
-            print(f"  [IMG] {model_id} pipeline ready on GPU")
+            if _is_quantized:
+                print(f"  [IMG] {model_id} pipeline ready on GPU (quantized: {LOCAL_FLUX_QUANTIZE})")
+            else:
+                _flux_pipeline.to("cuda")
+                print(f"  [IMG] {model_id} pipeline ready on GPU")
+
+            try:
+                _flux_pipeline.enable_xformers_memory_efficient_attention()
+                print("  [IMG] xformers memory efficient attention enabled")
+            except ImportError:
+                print("  [IMG] xformers not installed — using PyTorch SDPA (automatic)")
+            except AttributeError:
+                print("  [IMG] xformers not available for this model — using default attention")
+            except Exception as e:
+                print(f"  [IMG] xformers unavailable ({e}) — using default attention")
+
+            if _is_compiled:
+                try:
+                    torch.set_float32_matmul_precision("high")
+                    _flux_pipeline.transformer = torch.compile(
+                        _flux_pipeline.transformer,
+                        mode=LOCAL_FLUX_COMPILE,
+                        fullgraph=True,
+                    )
+                    print(f"  [IMG] transformer compiled (mode={LOCAL_FLUX_COMPILE})")
+                except Exception as compile_err:
+                    print(f"  [IMG] torch.compile failed ({compile_err}) — continuing uncompiled")
+                    _is_compiled = False
+
+                if _is_compiled:
+                    print("  [IMG] Running warmup inference to trigger compilation...")
+                    try:
+                        warmup_size = {"height": 256, "width": 256}
+                        _warmup_kwargs = {
+                            "prompt": "warmup",
+                            "num_inference_steps": 1,
+                            "guidance_scale": 1.0,
+                            **warmup_size,
+                        }
+                        _flux_pipeline(**_warmup_kwargs)
+                        print("  [IMG] Warmup complete — compiled kernels cached")
+                    except Exception as warmup_err:
+                        print(f"  [IMG] Warmup failed ({warmup_err}) — first real generation will be slower")
 
         w, h = size["width"], size["height"]
-        print(f"  [IMG] LOCAL flux/dev | {w}x{h} | steps={steps} | guidance={guidance_scale} | seed={seed}")
+        print(f"  [IMG] LOCAL flux/dev | {w}x{h} | steps={steps} | guidance={guidance_scale} | seed={seed} | quantize={LOCAL_FLUX_QUANTIZE} | compile={LOCAL_FLUX_COMPILE}")
 
         gen_kwargs = {
             "prompt": prompt,
@@ -145,11 +322,19 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
         image.save(str(output_path))
         print(f"  [IMG] Local FLUX generation complete: {output_path.name}")
 
-        _flux_pipeline.to("cpu")
-        del _flux_pipeline
-        _flux_pipeline = None
-        torch.cuda.empty_cache()
-        print("  [IMG] FLUX pipeline offloaded — GPU memory freed")
+        if _KEEP_ALIVE:
+            print("  [IMG] Pipeline kept alive (compile mode) — VRAM still in use, call _flush_flux_pipeline() to release")
+        elif _is_quantized:
+            del _flux_pipeline
+            _flux_pipeline = None
+            torch.cuda.empty_cache()
+            print("  [IMG] FLUX pipeline offloaded — GPU memory freed")
+        else:
+            _flux_pipeline.to("cpu")
+            del _flux_pipeline
+            _flux_pipeline = None
+            torch.cuda.empty_cache()
+            print("  [IMG] FLUX pipeline offloaded — GPU memory freed")
 
         try:
             _upscale_pixel_art(str(output_path))
@@ -172,7 +357,8 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
         print("  [IMG] CUDA OOM — FLUX too large for available VRAM, falling back to cloud API")
         if _flux_pipeline is not None:
             try:
-                _flux_pipeline.to("cpu")
+                if not _is_quantized:
+                    _flux_pipeline.to("cpu")
                 del _flux_pipeline
             except Exception:
                 pass

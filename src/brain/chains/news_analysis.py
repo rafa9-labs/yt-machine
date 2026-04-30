@@ -115,7 +115,7 @@ class NewsAnalysisChain:
 
     @staticmethod
     def _strip_thinking_tokens(text: str) -> str:
-        """Strip thinking tokens from text (Qwen3, Gemma 4, DeepSeek-R1)."""
+        """Strip thinking tokens from text (Gemma 4, DeepSeek-R1)."""
         text = re.sub(r'<think\b.*?(?:</think\s*>|$)', '', text, flags=re.DOTALL)
         text = re.sub(
             r'<\|channel\>thought.*?(?:<\|channel\>output<\|channel\>|<\|channel\>)?',
