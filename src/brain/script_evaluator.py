@@ -44,6 +44,7 @@ def _story_text(story: dict) -> str:
         story.get('part_1_narration', ''),
         story.get('part_2_narration', ''),
         story.get('real_talk', ''),
+        story.get('fallout', ''),
     ]
     return ' '.join(p for p in parts if p).strip()
 
@@ -177,6 +178,7 @@ def merge_and_replace(
             full_parts.append(s.get('part_1_narration', ''))
             full_parts.append(s.get('part_2_narration', ''))
             full_parts.append(s.get('real_talk', ''))
+            full_parts.append(s.get('fallout', ''))
             full_parts.append(s.get('segue', ''))
         script['full_text'] = ' '.join(p for p in full_parts if p)
 
@@ -206,14 +208,15 @@ REFERENCE STYLE (match this tone and structure):
 - real_talk: {reference_story.get('real_talk', '')[:60]}...
 
 CRITICAL RULES:
-- Output ONLY a JSON object with keys: part_1_narration, part_2_narration, part_1_visual, part_2_visual, real_talk, segue
+- Output ONLY a JSON object with keys: part_1_narration, part_2_narration, part_1_visual, part_2_visual, real_talk, fallout, segue
 - part_1 = THE HOOK (cartoonish entrance, Looney Tunes metaphors)
 - part_2 = THE PAYOFF (speed-talk facts, dense information)
 - real_talk = SERIOUS drop-the-act moment (NO caps, NO exclamations, flat truth)
-- segue = frantic cartoonish transition to next story (8-15 words)
+- fallout = WHAT HAPPENS NEXT — the second-order consequence, the domino that falls after (10-14 words)
+- segue = frantic cartoonish transition to next story, bridging FROM fallout (8-15 words)
 - GEOGRAPHIC ANCHOR: every country name on first mention must carry a regional descriptor
 - CTA QUARANTINE: NO subscribe/like/share/sign-off text in any narration field
-- Target: 35-55 words per part_1/part_2, 8-15 words for real_talk
+- Target: 18-22 words per part_1, 22-28 words per part_2, 12-16 words for real_talk, 10-14 words for fallout
 - NEVER repeat topics from existing stories"""
 
     try:
@@ -230,7 +233,7 @@ CRITICAL RULES:
         if not story or not isinstance(story, dict):
             return None
 
-        required = ['part_1_narration', 'part_2_narration', 'real_talk']
+        required = ['part_1_narration', 'part_2_narration', 'real_talk', 'fallout']
         for key in required:
             if key not in story or len(story.get(key, '').split()) < 5:
                 return None
@@ -278,6 +281,7 @@ def evaluate_continuity(
             f"  part_1: {s.get('part_1_narration', '')}\n"
             f"  part_2: {s.get('part_2_narration', '')}\n"
             f"  real_talk: {s.get('real_talk', '')}\n"
+            f"  fallout: {s.get('fallout', '')}\n"
             f"  segue: {s.get('segue', '')}"
         )
 
@@ -299,7 +303,7 @@ If issues ARE found, respond with a JSON object:
     {{
       "type": "contradiction|entity|timeline|repetition",
       "story_index": 0,
-      "field": "part_1_narration|part_2_narration|real_talk|segue",
+      "field": "part_1_narration|part_2_narration|real_talk|fallout|segue",
       "description": "What's wrong",
       "suggested_fix": "The corrected text for this field"
     }}
@@ -357,7 +361,7 @@ def apply_continuity_fixes(script: dict, issues: List[dict]) -> dict:
 
         if idx < 0 or idx >= len(stories):
             continue
-        if field not in ('part_1_narration', 'part_2_narration', 'real_talk', 'segue'):
+        if field not in ('part_1_narration', 'part_2_narration', 'real_talk', 'fallout', 'segue'):
             continue
         if len(suggested.split()) < 5:
             continue
@@ -379,6 +383,7 @@ def apply_continuity_fixes(script: dict, issues: List[dict]) -> dict:
         full_parts.append(s.get('part_1_narration', ''))
         full_parts.append(s.get('part_2_narration', ''))
         full_parts.append(s.get('real_talk', ''))
+        full_parts.append(s.get('fallout', ''))
         full_parts.append(s.get('segue', ''))
     greeting = script.get('greeting', '')
     intro = script.get('intro_hook', '')
@@ -427,6 +432,8 @@ def run_script_evaluation(
         from src.brain.llm_interface import LLMInterface
         if '_enforce_segues' in dir(llm_interface) and isinstance(llm_interface, LLMInterface):
             script = llm_interface._enforce_segues(script)
+        if '_enforce_fallout' in dir(llm_interface) and isinstance(llm_interface, LLMInterface):
+            script = llm_interface._enforce_fallout(script, news_analyses)
 
     if script.get('stories') and script.get('segment_timeline'):
         _rebuild_timeline(script)
@@ -452,7 +459,7 @@ def _rebuild_timeline(script: dict) -> None:
     timeline.append({'text': '...', 'image_idx': 0, 'label': 'intro_pause', 'is_separator': True})
 
     for i, story in enumerate(stories):
-        img_base = i * 3
+        img_base = i * 4
 
         part_1 = story.get('part_1_narration', '')
         if part_1:
@@ -476,31 +483,43 @@ def _rebuild_timeline(script: dict) -> None:
         if real_talk:
             timeline.append({'text': real_talk, 'image_idx': img_base + 2, 'label': f'story_{i+1}_real_talk'})
 
+        fallout = story.get('fallout', '')
+        if fallout:
+            timeline.append({'text': fallout, 'image_idx': img_base + 3, 'label': f'story_{i+1}_fallout'})
+
         segue = story.get('segue', '')
         if segue and i < len(stories) - 1:
-            timeline.append({'text': segue, 'image_idx': img_base + 2, 'label': f'story_{i+1}_segue'})
+            timeline.append({'text': segue, 'image_idx': img_base + 3, 'label': f'story_{i+1}_segue'})
 
         if i < len(stories) - 1:
-            timeline.append({'text': '....', 'image_idx': img_base + 2, 'label': f'story_{i+1}_separator', 'is_separator': True})
+            timeline.append({'text': '....', 'image_idx': img_base + 3, 'label': f'story_{i+1}_separator', 'is_separator': True})
 
-    timeline.append({'text': closing, 'image_idx': (len(stories) - 1) * 3 + 2, 'label': 'closing'})
+    timeline.append({'text': closing, 'image_idx': (len(stories) - 1) * 4 + 3, 'label': 'closing'})
 
     script['segment_timeline'] = timeline
 
+    existing_scenes = script.get('all_visual_scenes', [])
     visual_scenes = []
+    narration_fields = ['part_1_narration', 'part_2_narration', 'real_talk', 'fallout']
     for i, story in enumerate(stories):
-        visual_scenes.append({
-            'scene': f'story_{i+1}_part1',
-            'description': story.get('part_1_visual', story.get('mini_hook', ''))
-        })
-        visual_scenes.append({
-            'scene': f'story_{i+1}_part2',
-            'description': story.get('part_2_visual', story.get('body', ''))
-        })
-        visual_scenes.append({
-            'scene': f'story_{i+1}_real_talk',
-            'description': story.get('real_talk_visual', story.get('part_2_visual', ''))
-        })
+        field_defaults = [
+            ('part_1_visual', story.get('mini_hook', story.get('part_1_narration', ''))),
+            ('part_2_visual', story.get('body', story.get('part_2_narration', ''))),
+            ('real_talk_visual', story.get('part_2_visual', story.get('real_talk', ''))),
+            ('fallout_visual', story.get('second_order_visual', story.get('fallout_visual', story.get('fallout', '')))),
+        ]
+        scene_names = [f'story_{i+1}_part1', f'story_{i+1}_part2',
+                       f'story_{i+1}_real_talk', f'story_{i+1}_fallout']
+        for j, (field, fallback_text) in enumerate(field_defaults):
+            existing_desc = ''
+            for es in existing_scenes:
+                if es.get('scene') == scene_names[j]:
+                    existing_desc = es.get('description', '')
+                    break
+            desc = existing_desc or story.get(field, fallback_text)
+            if not desc:
+                desc = story.get(narration_fields[j], '')
+            visual_scenes.append({'scene': scene_names[j], 'description': desc})
     script['all_visual_scenes'] = visual_scenes
 
     full_parts = []

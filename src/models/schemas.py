@@ -182,7 +182,7 @@ class VideoScript(BaseModel):
     stories: List[ScriptSegment] = Field(default_factory=list)
     closing: str = Field(default="")
     full_text: str = Field(default="")
-    target_word_count: int = Field(default=500, ge=100, le=2000)
+    target_word_count: int = Field(default=160, ge=100, le=500)
     estimated_duration_seconds: float = Field(default=0.0, ge=0.0)
 
     def build_full_text(self) -> str:

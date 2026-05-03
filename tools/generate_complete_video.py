@@ -28,6 +28,10 @@ STEPS:
 """
 
 import os
+
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'max_split_size_mb:128')
+os.environ['PYTHONUNBUFFERED'] = '1'
+
 import sys
 import json
 import time
@@ -37,9 +41,11 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Fix Unicode encoding for Windows console
+# Fix Unicode encoding + force line buffering for Windows console
 if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+else:
+    sys.stdout.reconfigure(line_buffering=True)
 
 load_dotenv()
 
@@ -61,8 +67,13 @@ parser.add_argument('--resume', type=str, default=None, metavar='PROJECT_FOLDER'
                     help='Resume a failed pipeline run from the project folder')
 parser.add_argument('--skip-images', action='store_true', help='Use placeholder images (no API calls)')
 parser.add_argument('--no-telegram', action='store_true', help='Skip Telegram delivery')
+parser.add_argument('--dry-run', action='store_true',
+                    help='Run pipeline with canned data (no API calls) to validate wiring')
 args = parser.parse_args()
 if args.skip_images:
+    SKIP_IMAGES = True
+DRY_RUN = args.dry_run
+if DRY_RUN:
     SKIP_IMAGES = True
 
 # ── RESUME LOGIC ──
@@ -96,6 +107,91 @@ def _extract_segment_text(segment_data) -> str:
 from src.pipeline_utils import bridge_timestamp_gaps, build_fallback_prompt as _build_fallback_prompt
 
 
+# ── DRY-RUN CANNED DATA ──
+if DRY_RUN:
+    log.info("[DRY-RUN] MODE ACTIVE — using canned data, no API calls")
+
+    _DRY_RUN_ARTICLES = [
+        {'title': 'Iran launches missile strike on Israeli military base',
+         'summary': 'Iran fired dozens of missiles at an Israeli airbase in a retaliatory strike.',
+         'link': 'https://example.com/1', 'published': '2025-01-15', 'source': 'test'},
+        {'title': 'Pentagon confirms new AI defense contract with SpaceX',
+         'summary': 'The US Department of Defense signed a $2B AI defense contract with SpaceX.',
+         'link': 'https://example.com/2', 'published': '2025-01-15', 'source': 'test'},
+        {'title': 'Global oil prices spike after Middle East tensions escalate',
+         'summary': 'Brent crude jumped 8% as supply route disruptions spread across the region.',
+         'link': 'https://example.com/3', 'published': '2025-01-15', 'source': 'test'},
+    ]
+
+    _DRY_RUN_ANALYSES = [
+        {
+            'topic': 'Iran missile strike on Israeli military base',
+            'summary': 'Iran fired dozens of missiles at an Israeli airbase in retaliation.',
+            'impact_score': 9,
+            'geopolitical_angle': 'escalation',
+            'first_order_effect': 'Immediate military escalation in the Middle East.',
+            'second_order_consequence': 'Allied nations forced to choose sides, diplomatic channels freeze.',
+            'third_order_effect': 'Global energy markets react as shipping routes are threatened.',
+            'visual_category': 'warfare',
+            'key_entities': ['Iran', 'Israel', 'Missile Defense'],
+            'locations': ['Iran', 'Israel', 'Persian Gulf'],
+            'emotions': ['shock', 'fear', 'urgency'],
+        },
+        {
+            'topic': 'Pentagon AI defense contract with SpaceX',
+            'summary': 'The US Department of Defense signed a $2B AI defense contract with SpaceX.',
+            'impact_score': 7,
+            'geopolitical_angle': 'technology_race',
+            'first_order_effect': 'US military gains AI-powered surveillance and defense capabilities.',
+            'second_order_consequence': 'Rival nations accelerate their own AI military programs.',
+            'third_order_effect': 'Civilian privacy concerns mount as military AI expands.',
+            'visual_category': 'arms_defense',
+            'key_entities': ['Pentagon', 'SpaceX', 'AI'],
+            'locations': ['United States', 'Pentagon'],
+            'emotions': ['surprise', 'intrigue', 'concern'],
+        },
+    ]
+
+    _DRY_RUN_SCRIPT = {
+        'greeting': "Ssssmokin'!",
+        'intro_hook': "Hold onto your lobsters, folks!",
+        'full_text': "Ssssmokin'! Hold onto your lobsters, folks! Iran launched missiles at Israel yesterday. "
+                     "The Pentagon confirmed multiple impacts across the region. This changes the regional power "
+                     "dynamics entirely. The consequences will ripple for decades. But wait, there is more. The "
+                     "Pentagon signed a two billion dollar AI defense contract with SpaceX. Global markets "
+                     "reacted with oil prices spiking immediately. This is what happens when geopolitics meets "
+                     "economics. The ripple effects are just beginning. Stay curious, stay critical, and remember "
+                     "— the truth is always stranger than fiction. Subscribe for more Masker!",
+        'word_count': 80,
+        'estimated_duration': 32,
+        'stories': [
+            {
+                'part_1_narration': 'Iran launched missiles at Israel yesterday.',
+                'part_2_narration': 'The Pentagon confirmed multiple impacts across the region.',
+                'real_talk': 'This changes the regional power dynamics entirely.',
+                'fallout': 'The consequences will ripple for decades.',
+                'segue': "But wait, there is more!",
+                'part_1_visual': '16-bit isometric pixel art scene: dramatic wide establishing shot, missile trails in foreground, military installation in midground, sunset lighting',
+                'part_2_visual': '16-bit isometric pixel art scene: tactical close-up view of radar installation, impact zones visible in background, golden hour lighting',
+                'real_talk_visual': '16-bit isometric pixel art scene: somber revealing scene, civilian perspective on left, consequences visible in background, cold blue lighting',
+                'fallout_visual': '16-bit isometric pixel art scene: forward-looking consequence scene, domino effect visible, dark horizon on left, twilight atmosphere',
+            },
+            {
+                'part_1_narration': 'The Pentagon signed a two billion dollar AI defense contract with SpaceX.',
+                'part_2_narration': 'Global markets reacted with oil prices spiking immediately.',
+                'real_talk': 'This is what happens when geopolitics meets economics.',
+                'fallout': 'The ripple effects are just beginning.',
+                'segue': '',
+                'part_1_visual': '16-bit isometric pixel art scene: dramatic wide establishing shot, Pentagon building in foreground, contract signing scene in midground, strategic lighting',
+                'part_2_visual': '16-bit isometric pixel art scene: tactical close-up view of trading screens, oil price charts visible, red indicators in background, dramatic lighting',
+                'real_talk_visual': '16-bit isometric pixel art scene: somber revealing scene, economic impact visible on left, global consequences in background, cold lighting',
+                'fallout_visual': '16-bit isometric pixel art scene: forward-looking consequence scene, cascade effect spreading, ripple patterns in foreground, twilight atmosphere',
+            },
+        ],
+        'closing': 'Stay curious, stay critical, and remember — the truth is always stranger than fiction. Subscribe for more Masker!',
+    }
+
+
 def _run_with_timeout(func, timeout_seconds, step_name, *args, **kwargs):
     """Run a function with a hard wall-clock timeout. Returns (result, timed_out)."""
     result_container = [None]
@@ -121,6 +217,61 @@ def _run_with_timeout(func, timeout_seconds, step_name, *args, **kwargs):
     return result_container[0], False
 
 
+def _run_with_heartbeat(func, label: str, heartbeat_interval: int = 8, timeout_seconds: int = 600, *args, **kwargs):
+    """Run a function in a background thread, printing heartbeat dots while waiting.
+
+    Prints a dot every `heartbeat_interval` seconds so the user knows the process
+    isn't frozen. Also prints VRAM status every 3rd heartbeat.
+    Enforces `timeout_seconds` — if the function doesn't complete in time, returns
+    (None, True) and abandons the thread (it's daemon, so it won't block exit).
+
+    Returns:
+        (result, timed_out) — same as _run_with_timeout
+    """
+    result_container = [None]
+    exception_container = [None]
+    done_event = threading.Event()
+
+    def worker():
+        try:
+            result_container[0] = func(*args, **kwargs)
+        except Exception as e:
+            exception_container[0] = e
+        finally:
+            done_event.set()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    elapsed = 0
+    dots = 0
+    while not done_event.is_set():
+        waited = done_event.wait(timeout=heartbeat_interval)
+        if waited:
+            break
+        elapsed += heartbeat_interval
+        dots += 1
+        print(".", end="", flush=True)
+        if dots % 3 == 0:
+            try:
+                orchestrator.heartbeat(f"{label} ({elapsed}s)")
+            except Exception:
+                print(f" ({elapsed}s)", end="", flush=True)
+        if elapsed >= timeout_seconds:
+            break
+
+    if not done_event.is_set():
+        print(f" TIMEOUT ({timeout_seconds}s)", flush=True)
+        log.error("heartbeat.hard_timeout", label=label, timeout_s=timeout_seconds)
+        return None, True
+
+    if exception_container[0] is not None:
+        print(f" FAIL", flush=True)
+        raise exception_container[0]
+
+    print(f" done ({elapsed}s)", flush=True)
+    return result_container[0], False
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # LLM INITIALIZATION — Try LangChain first, fallback to raw interface
 # ══════════════════════════════════════════════════════════════════════════
@@ -140,11 +291,15 @@ llm = LLMInterface()
 log.info("llm.raw.loaded")
 
 # Video server components
-from src.video.pixel_art_tool import generate_pixel_art
+from src.video.pixel_art_tool import generate_pixel_art, _detect_failed_image, _progressive_content_scrub, _detect_visual_type, _CATEGORY_SAFE_PROMPTS
 from src.video.pexels_tool import fetch_vertical_footage
 from src.video.tts_tool import generate_voiceover
 from src.video.split_video_assembler import build_split_video
 from src.video.visual_qa import validate_image, adjust_prompt_for_retry
+from src.video.model_orchestrator import ModelOrchestrator
+
+# ── GPU MODEL ORCHESTRATOR ──
+orchestrator = ModelOrchestrator()
 
 
 # ── CHECKPOINT HELPER ──
@@ -171,8 +326,30 @@ def _save_checkpoint(step_name, project_folder, data=None):
 
 # ── PIPELINE CONSTANTS ──
 NUM_STORIES = 2
-IMAGES_PER_STORY = 3
-NUM_IMAGES = NUM_STORIES * IMAGES_PER_STORY  # = 6
+IMAGES_PER_STORY = 4
+NUM_IMAGES = NUM_STORIES * IMAGES_PER_STORY  # = 8
+
+
+# ── STEP BANNER ──
+_PIPELINE_STEP = [0]
+
+def _step_banner(title: str) -> None:
+    """Print a visible step banner so the user knows where the pipeline is."""
+    _PIPELINE_STEP[0] += 1
+    step_num = _PIPELINE_STEP[0]
+    orchestrator.heartbeat(f"step {step_num}: {title}" if step_num % 2 == 0 else "")
+    print(f"\n{'='*60}")
+    print(f"  STEP {step_num}: {title}")
+    print(f"{'='*60}")
+
+
+def _step_done(step_name: str) -> None:
+    duration = round(time.time() - _step_start, 1)
+    elapsed = round(time.time() - _pipeline_start, 1)
+    print(f"  [{step_name}] Done in {duration}s (elapsed: {elapsed}s)")
+
+
+_PIPELINE_START = time.time()
 
 
 # ── PostgreSQL SAVE HELPER (non-blocking) ──
@@ -251,9 +428,92 @@ log.info("time_of_day", greeting=greeting_label, hour=datetime.now().strftime('%
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# DRY-RUN: Short-circuit the entire pipeline with canned data
+# ══════════════════════════════════════════════════════════════════════════
+if DRY_RUN:
+    log.info("[DRY-RUN] ========== DRY-RUN MODE — no API calls ==========")
+
+    # Inject canned data
+    articles = _DRY_RUN_ARTICLES
+    news_analyses = _DRY_RUN_ANALYSES[:NUM_STORIES]
+    trending_context = {}
+    script = dict(_DRY_RUN_SCRIPT)
+
+    # Enforce structure (same as real pipeline)
+    script = llm._enforce_greeting(script)
+    script = llm._enforce_segues(script)
+    script = llm._dedup_segue_overlap(script)
+    script = llm._dedup_inter_story_phrases(script)
+    script = llm._enforce_fallout(script, news_analyses)
+    script = llm._ensure_greeting_in_fulltext(script)
+    script['word_count'] = len(script['full_text'].split())
+    script['estimated_duration'] = int(script['word_count'] / 2.5)
+
+    # Build segment timeline (same as real pipeline)
+    segment_timeline = []
+    greeting_seg = script.get('greeting', '')
+    if greeting_seg:
+        segment_timeline.append({'text': greeting_seg, 'image_idx': -1, 'label': 'greeting'})
+    intro_hook = script.get('intro_hook', '')
+    if intro_hook:
+        segment_timeline.append({'text': intro_hook, 'image_idx': -1, 'label': 'intro_hook'})
+    segment_timeline.append({'text': '....', 'image_idx': -1, 'label': 'intro_pause', 'is_separator': True})
+    for i, story in enumerate(script['stories']):
+        img_base = i * 4
+        for field, suffix, img_off in [
+            ('part_1_narration', 'part1', 0),
+            ('part_2_narration', 'part2', 1),
+            ('real_talk', 'real_talk', 2),
+            ('fallout', 'fallout', 3),
+        ]:
+            val = story.get(field, '')
+            if val:
+                segment_timeline.append({'text': val, 'image_idx': img_base + img_off, 'label': f'story_{i+1}_{suffix}'})
+        segue = story.get('segue', story.get('transition', ''))
+        if segue and i < len(script['stories']) - 1:
+            segment_timeline.append({'text': segue, 'image_idx': img_base + 3, 'label': f'story_{i+1}_segue'})
+        if i < len(script['stories']) - 1:
+            segment_timeline.append({'text': '....', 'image_idx': img_base + 3, 'label': f'story_{i+1}_separator', 'is_separator': True})
+    script['segment_timeline'] = segment_timeline
+
+    # Save output files
+    project_folder.mkdir(parents=True, exist_ok=True)
+    (project_folder / "script.txt").write_text(script['full_text'], encoding='utf-8')
+    (project_folder / "script_segments.json").write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding='utf-8')
+    _save_checkpoint("dry_run_complete", project_folder, {"word_count": script['word_count']})
+
+    full_script = script['full_text']
+    log.info("[DRY-RUN] Script synthesized", words=script['word_count'], duration_s=script['estimated_duration'])
+    log.info("[DRY-RUN] Stories: %d, Timeline segments: %d" % (len(script['stories']), len(segment_timeline)))
+    for seg in segment_timeline:
+        log.info("  [%s] img#%d: \"%s\"" % (seg['label'], seg['image_idx'], seg['text'][:50]))
+
+    log.info("[DRY-RUN] ========== DRY-RUN COMPLETE ==========")
+    log.info("[DRY-RUN] Project folder: %s" % project_folder)
+    log.info("[DRY-RUN] To view output: cat %s/script.txt" % project_folder)
+
+    llm.unload_model()
+    print(f"\n[DRY-RUN] Complete! Project: {project_folder}")
+    print(f"[DRY-RUN] Script: {script['word_count']} words, ~{script['estimated_duration']}s")
+    print(f"[DRY-RUN] Stories: {len(script['stories'])}, Segments: {len(segment_timeline)}")
+    exit(0)
+
+
+# ── GPU MODEL LIFECYCLE: Pre-pipeline sweep + VRAM check ──
+if not orchestrator.phase_pre_pipeline():
+    print("\nFATAL: Insufficient GPU VRAM to start the pipeline.")
+    print("Close other GPU processes (Ollama, browser tabs, ComfyUI) and retry.")
+    print("Or set USE_LOCAL_FLUX=false to use cloud API instead.")
+    sys.exit(1)
+
+# ── GPU MODEL LIFECYCLE: Transition to LLM phase ──
+orchestrator.phase_llm()
+
+# ══════════════════════════════════════════════════════════════════════════
 # STEP 1: FETCH LATEST NEWS — Async Scraper with sync fallback
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="news_fetch")
+_step_banner("FETCH NEWS")
 _step_start = time.time()
 
 articles = []
@@ -275,9 +535,11 @@ try:
     log.info("scraper.async.success", articles=len(all_articles))
 
     # Use sync scraper for ranking (filter_viral_potential)
+    print("  [SCRAPER] Ranking articles...", flush=True)
     from src.collector.rss_scraper import RSScraper
     ranker = RSScraper()
     viral_articles = ranker.filter_viral_potential(all_articles, top_n=10)
+    print(f"  [SCRAPER] {len(viral_articles)} viral articles found", flush=True)
 
     _save_to_postgres("news_fetch", project_id, {
         "article_count": len(all_articles),
@@ -299,26 +561,15 @@ except Exception as e:
 if len(viral_articles) < 3:
     log.warning("articles.few", count=len(viral_articles), minimum=3)
 
-# ── Topic diversity selection (LLM-aware) ──
+# ── Topic diversity selection (word overlap — no LLM calls) ──
 def _is_semantically_similar(title_a: str, title_b: str) -> bool:
-    """Use LLM to check if two article titles cover the same underlying story."""
-    try:
-        prompt = (
-            "Are these two news headlines covering the SAME event or essentially the same story? "
-            "Answer ONLY 'yes' or 'no'.\n\n"
-            f"Headline A: {title_a}\n"
-            f"Headline B: {title_b}"
-        )
-        response = llm.generate(prompt, max_tokens=10, temperature=0.1, task_name="dedup_comparison")
-        answer = response.strip().lower()
-        return answer.startswith('yes')
-    except Exception:
-        words_a = frozenset(title_a.lower().split()[:5])
-        words_b = frozenset(title_b.lower().split()[:5])
-        return len(words_a & words_b) >= 3
+    """Fast word-overlap dedup. No LLM call — titles don't need semantic analysis."""
+    words_a = frozenset(title_a.lower().split()[:6])
+    words_b = frozenset(title_b.lower().split()[:6])
+    return len(words_a & words_b) >= 3
 
 selected = []
-for article in viral_articles:
+for i, article in enumerate(viral_articles):
     title = article.get('title', '')
     is_duplicate = False
     for existing in selected:
@@ -328,6 +579,7 @@ for article in viral_articles:
             break
     if not is_duplicate:
         selected.append(article)
+        print(f"  [DEDUP] Selected: {title[:65]}")
     if len(selected) >= 3:
         break
 
@@ -346,63 +598,99 @@ for i, a in enumerate(articles, 1):
 _save_checkpoint("news_fetch", project_folder, {"article_titles": [a.get('title', '') for a in articles]})
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="news_fetch", duration_s=round(_step_duration, 2), articles=len(articles))
+print(f"\n  [SCRAPER] {len(articles)} articles selected in {round(_step_duration, 1)}s")
+for i, a in enumerate(articles, 1):
+    print(f"    {i}. {a.get('title', 'N/A')[:70]}")
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 1.5: VECTOR DEDUP CHECK (optional — requires pgvector)
+# Wrapped in _run_with_heartbeat so it can't block silently.
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="vector_dedup")
+_step_banner("VECTOR DEDUP")
 _step_start = time.time()
 
-try:
+def _run_vector_dedup(article_list, viral_list):
+    """Run vector dedup with progress output. Returns deduplicated article list."""
+    print("  [DEDUP] Connecting to pgvector...", flush=True)
     from src.brain.memory.vector_store import VectorStore
     from src.brain.memory.deduplication import DeduplicationChecker
 
+    print("  [DEDUP] Loading dedup checker...", flush=True)
     dedup = DeduplicationChecker(threshold=0.35)
     log.info("dedup.loaded", backend="pgvector")
 
     deduped_articles = []
-    for article in articles:
+    for i, article in enumerate(article_list, 1):
         topic_text = article.get('title', '')
+        print(f"  [DEDUP] Checking article {i}/{len(article_list)}: {topic_text[:50]}...", end="", flush=True)
         result = dedup.check_topic(topic_text)
         if result.is_duplicate:
             log.info("dedup.skip_duplicate", topic=topic_text[:60], matched=result.matched_topic)
+            print(" DUPLICATE", flush=True)
         else:
             deduped_articles.append(article)
+            print(" UNIQUE", flush=True)
 
     if len(deduped_articles) < 3:
         log.warning("dedup.few_unique", count=len(deduped_articles))
-        for a in viral_articles:
+        for a in viral_list:
             if a not in deduped_articles and len(deduped_articles) < 3:
                 result = dedup.check_topic(a.get('title', ''))
                 if not result.is_duplicate:
                     deduped_articles.append(a)
 
-    articles = deduped_articles[:3]
-    log.info("dedup.complete", unique_articles=len(articles))
+    return deduped_articles[:3]
 
+try:
+    articles, _dedup_timed_out = _run_with_heartbeat(
+        _run_vector_dedup, "vector_dedup", 8, 60,
+        articles, viral_articles
+    )
+    if _dedup_timed_out or articles is None:
+        log.warning("dedup.timeout", action="continuing_without_dedup")
+        articles = selected[:3]
+    else:
+        log.info("dedup.complete", unique_articles=len(articles))
 except Exception as e:
     log.warning("dedup.failed", error=str(e), action="continuing_without_dedup")
+    articles = selected[:3]
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="vector_dedup", duration_s=round(_step_duration, 2))
+_step_done("VECTOR DEDUP")
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 2: NEWS ANALYSIS — LangChain with raw LLM fallback
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="news_analysis")
+_step_banner("NEWS ANALYSIS (LLM)")
 _step_start = time.time()
+print("  [LLM] Ollama model will load on first call (may take 30-90s)...", flush=True)
 
 news_analyses = []
 for i, article in enumerate(articles, 1):
+    print(f"\n  [{i}/{len(articles)}] Analyzing: {article.get('title', 'N/A')[:70]}...")
+    _analysis_start = time.time()
     try:
         # Get full article text
+        print(f"  [{i}/{len(articles)}] Fetching article text...", flush=True)
+        article_text = None
         try:
             from src.collector.rss_scraper import RSScraper
             text_scraper = RSScraper()
-            article_text = text_scraper.get_full_article_text(article)
-        except:
+            article_text, _fetch_timed_out = _run_with_heartbeat(
+                text_scraper.get_full_article_text, f"fetch_text_{i}", 5, 15,
+                article
+            )
+            if _fetch_timed_out or not article_text:
+                article_text = None
+        except Exception:
+            article_text = None
+
+        if not article_text:
             article_text = article.get('summary', article.get('title', ''))
 
         log.debug("analysis.article", index=i, chars=len(article_text))
@@ -412,27 +700,47 @@ for i, article in enumerate(articles, 1):
         # ── Try LangChain structured chain first ──
         if _USE_LANGCHAIN:
             try:
+                print(f"  [{i}/{len(articles)}]   LangChain analysis...", end="", flush=True)
                 from src.models.schemas import NewsAnalysis as NewsAnalysisModel
                 chain = _langchain.build_structured_chain(NewsAnalysisModel, "news_processor")
-                result = chain.invoke({"input_text": f"Analyze this news article:\n\n{article_text}"})
-                analysis = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
-                log.info("analysis.langchain.success", index=i)
+                result, _lc_timed_out = _run_with_heartbeat(
+                    chain.invoke, f"analysis_{i}/{len(articles)}", 8, 120,
+                    {"input_text": f"Analyze this news article:\n\n{article_text}"}
+                )
+                if not _lc_timed_out and result:
+                    analysis = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+                    log.info("analysis.langchain.success", index=i)
+                else:
+                    print(f"  [{i}/{len(articles)}]   LangChain timed out", flush=True)
             except Exception as e:
+                print(f"  [{i}/{len(articles)}]   LangChain error: {str(e)[:60]}", flush=True)
                 log.warning("analysis.langchain.failed", index=i, error=str(e))
 
         # ── Fallback to raw LLM interface ──
         if not analysis:
-            analysis = llm.process_news(article_text)
+            print(f"  [{i}/{len(articles)}]   Raw LLM fallback...", end="", flush=True)
+            analysis, _proc_timed_out = _run_with_heartbeat(
+                llm.process_news, f"analysis_{i}/{len(articles)}", 8, 120,
+                article_text
+            )
+            if _proc_timed_out:
+                analysis = None
 
         if analysis:
             log.info("analysis.complete", index=i,
                      topic=analysis.get('topic', 'N/A')[:60],
                      impact=analysis.get('impact_score', 0))
             news_analyses.append(analysis)
+            _analysis_dur = round(time.time() - _analysis_start, 1)
+            print(f"  [{i}/{len(articles)}] Done ({_analysis_dur}s) — impact={analysis.get('impact_score', '?')}: {analysis.get('topic', 'N/A')[:55]}")
+            if i % 2 == 0:
+                orchestrator.heartbeat(f"news_analysis_{i}/{len(articles)}")
         else:
             log.error("analysis.empty", index=i)
+            print(f"  [{i}/{len(articles)}] FAILED — empty analysis result")
     except Exception as e:
         log.error("analysis.failed", index=i, error=str(e))
+        print(f"  [{i}/{len(articles)}] ERROR — {str(e)[:80]}")
 
 if len(news_analyses) < 2:
     log.error("analysis.insufficient", count=len(news_analyses), minimum=2)
@@ -463,12 +771,14 @@ _save_to_postgres("news_analysis", project_id, {
 })
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="news_analysis", duration_s=round(_step_duration, 2))
+_step_done("NEWS ANALYSIS")
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 3: TRENDING CONTEXT (optional boost)
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="trending_context")
+_step_banner("TRENDING CONTEXT")
 _step_start = time.time()
 
 trending_context = {}
@@ -488,12 +798,14 @@ log.info("step.complete", step="trending_context", duration_s=round(_step_durati
 # STEP 4: MULTI-NEWS SCRIPT SYNTHESIS (Masker personality)
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="script_synthesis")
+_step_banner("SCRIPT SYNTHESIS (LLM)")
 _step_start = time.time()
 
 try:
     log.info("script.generating", format="multi_news_3_stories")
-    script, _synth_timed_out = _run_with_timeout(
-        llm.synthesize_multi_news_script, 600, "script_synthesis",
+    print("\n  [LLM] Generating script (this may take 30-120s)...", flush=True)
+    script, _synth_timed_out = _run_with_heartbeat(
+        llm.synthesize_multi_news_script, "script_synthesis", 8, 600,
         news_analyses
     )
 
@@ -535,6 +847,8 @@ try:
     log.info("script.synthesized",
              duration_s=script.get('estimated_duration', 0),
              words=script.get('word_count', 0))
+    print(f"  [LLM] Script done — {script.get('word_count', 0)} words, ~{script.get('estimated_duration', 0)}s")
+    orchestrator.heartbeat("script_synthesis_done")
     for i, story in enumerate(script.get('stories', []), 1):
         log.debug("script.story", index=i,
                   hook=story.get('mini_hook', 'N/A')[:60],
@@ -561,17 +875,80 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_synthesis", duration_s=round(_step_duration, 2))
+_step_done("SCRIPT SYNTHESIS")
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 4.5: DEDICATED VISUAL PROMPT GENERATION (BEFORE curation)
+# STEP 4.1: ENFORCE SCRIPT STRUCTURE + BUILD SEGMENT TIMELINE
 # ══════════════════════════════════════════════════════════════════════════
+log.info("step.start", step="script_enforcement")
+_step_banner("SCRIPT ENFORCEMENT")
+_step_start = time.time()
+
+try:
+    script = llm._enforce_greeting(script)
+    script = llm._enforce_segues(script)
+    script = llm._dedup_segue_overlap(script)
+    script = llm._dedup_inter_story_phrases(script)
+    script = llm._enforce_fallout(script, news_analyses)
+    script = llm._ensure_greeting_in_fulltext(script)
+    script['word_count'] = len(script.get('full_text', full_script).split())
+    script['estimated_duration'] = int(script['word_count'] / 2.5)
+    full_script = script.get('full_text', full_script)
+
+    # Build segment timeline for video assembly
+    segment_timeline = []
+    greeting_seg = script.get('greeting', '')
+    if greeting_seg:
+        segment_timeline.append({'text': greeting_seg, 'image_idx': -1, 'label': 'greeting'})
+    intro_hook = script.get('intro_hook', '')
+    if intro_hook:
+        segment_timeline.append({'text': intro_hook, 'image_idx': -1, 'label': 'intro_hook'})
+    segment_timeline.append({'text': '....', 'image_idx': -1, 'label': 'intro_pause', 'is_separator': True})
+    for i, story in enumerate(script['stories']):
+        img_base = i * IMAGES_PER_STORY
+        for field, suffix, img_off in [
+            ('part_1_narration', 'part1', 0),
+            ('part_2_narration', 'part2', 1),
+            ('real_talk', 'real_talk', 2),
+            ('fallout', 'fallout', 3),
+        ]:
+            val = story.get(field, '')
+            if val:
+                segment_timeline.append({'text': val, 'image_idx': img_base + img_off, 'label': f'story_{i+1}_{suffix}'})
+        segue = story.get('segue', story.get('transition', ''))
+        if segue and i < len(script['stories']) - 1:
+            segment_timeline.append({'text': segue, 'image_idx': img_base + 3, 'label': f'story_{i+1}_segue'})
+        if i < len(script['stories']) - 1:
+            segment_timeline.append({'text': '....', 'image_idx': img_base + 3, 'label': f'story_{i+1}_separator', 'is_separator': True})
+    script['segment_timeline'] = segment_timeline
+
+    # Save updated script
+    script_file = project_folder / "script.txt"
+    script_file.write_text(full_script, encoding='utf-8')
+    segments_file = project_folder / "script_segments.json"
+    segments_file.write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding='utf-8')
+
+    log.info("script_enforcement.complete",
+             greeting=bool(script.get('greeting')),
+             segues=sum(1 for s in script.get('stories', [])[:-1] if s.get('segue')),
+             fallouts=sum(1 for s in script.get('stories', []) if s.get('fallout')),
+             timeline_segments=len(segment_timeline))
+
+except Exception as e:
+    log.error("script_enforcement.failed", error=str(e))
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="script_enforcement", duration_s=round(_step_duration, 2))
+# ══════════════════════════════════════════════════════════════════════════
+_step_banner("VISUAL PROMPTS (LLM)")
 log.info("step.start", step="visual_prompts")
 _step_start = time.time()
 
 try:
-    dedicated_visuals, _visual_timed_out = _run_with_timeout(
-        llm.generate_visual_prompts, 300, "visual_prompts",
+    print("\n  [LLM] Generating visual prompts (this may take 15-60s)...", flush=True)
+    dedicated_visuals, _visual_timed_out = _run_with_heartbeat(
+        llm.generate_visual_prompts, "visual_prompts", 8, 300,
         script
     )
     if _visual_timed_out:
@@ -592,15 +969,18 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="visual_prompts", duration_s=round(_step_duration, 2))
+_step_done("VISUAL PROMPTS")
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 4.7: SCRIPT CURATION — LangChain with raw LLM fallback
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="script_curation")
+_step_banner("SCRIPT CURATION (LLM)")
 _step_start = time.time()
 
 try:
+    print("\n  [LLM] Curating script (this may take 15-60s)...")
     original_text = full_script
     log.info("curation.original", words=len(original_text.split()))
 
@@ -609,6 +989,7 @@ try:
     # ── Try LangChain curation chain first ──
     if _USE_LANGCHAIN:
         try:
+            print("  [LLM] LangChain curation...", end="", flush=True)
             from src.brain.chains.curation import CurationChain
             curation_chain_obj = CurationChain()
             story_bodies = []
@@ -627,12 +1008,14 @@ try:
                 curated_text = chain_result
                 log.info("curation.langchain.success")
         except Exception as e:
+            print(f"  [LLM] Curation error: {str(e)[:60]}", flush=True)
             log.warning("curation.langchain.failed", error=str(e))
 
     # ── Fallback to raw LLM curation ──
     if not curated_text:
-        curated_text, _curate_timed_out = _run_with_timeout(
-            llm.curate_script, 300, "script_curation",
+        print("  [LLM] Curation fallback...", end="", flush=True)
+        curated_text, _curate_timed_out = _run_with_heartbeat(
+            llm.curate_script, "script_curation", 8, 300,
             script
         )
         if _curate_timed_out:
@@ -667,18 +1050,21 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_curation", duration_s=round(_step_duration, 2))
+_step_done("SCRIPT CURATION")
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 4.8: SCRIPT EVALUATION — Semantic Dedup + Continuity Critic
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="script_evaluation")
+_step_banner("SCRIPT EVALUATION")
 _step_start = time.time()
 
 try:
+    print("  [LLM] Evaluating script...", end="", flush=True)
     from src.brain.script_evaluator import run_script_evaluation
 
-    script, _eval_timed_out = _run_with_timeout(
-        run_script_evaluation, 120, "script_evaluation",
+    script, _eval_timed_out = _run_with_heartbeat(
+        run_script_evaluation, "script_evaluation", 8, 120,
         script=script,
         news_analyses=news_analyses,
         llm_interface=llm,
@@ -702,12 +1088,22 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_evaluation", duration_s=round(_step_duration, 2))
+_step_done("SCRIPT EVALUATION")
 
+
+# ── GPU MODEL LIFECYCLE: Transition to image generation phase ──
+log.info("orchestrator.transition", phase="image_gen", note="Evicting Ollama, preloading FLUX")
+flux_preloaded = orchestrator.phase_image_generation()
+if flux_preloaded:
+    log.info("orchestrator.flux_preloaded", note="FLUX pipeline loaded and pinned for batch generation")
+else:
+    log.warning("orchestrator.flux_preload_failed", note="FLUX preload failed, will attempt per-image or fall back to cloud")
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 5: PIXEL ART GENERATION (3 per story = 6 total)
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="pixel_art")
+_step_banner("PIXEL ART GENERATION (GPU)")
 _step_start = time.time()
 
 try:
@@ -722,6 +1118,7 @@ try:
             scene_names.append(f'story_{i+1}_part1')
             scene_names.append(f'story_{i+1}_part2')
             scene_names.append(f'story_{i+1}_real_talk')
+            scene_names.append(f'story_{i+1}_fallout')
 
         for scene_name in scene_names:
             placeholder = PILImage.new('RGB', (1088, 1152), (10, 5, 25))
@@ -742,7 +1139,7 @@ try:
 
         # Build script-aware fallback prompts for missing scenes
         stories = script.get('stories', [])
-        scene_types = ['part1', 'part2', 'real_talk']
+        scene_types = ['part1', 'part2', 'real_talk', 'fallout']
         for s_idx in range(NUM_STORIES):
             for p_idx in range(IMAGES_PER_STORY):
                 fallback_idx = s_idx * IMAGES_PER_STORY + p_idx
@@ -751,6 +1148,8 @@ try:
                     scene_type = scene_types[p_idx]
                     if scene_type == 'real_talk':
                         part_text = story.get('real_talk', story.get('part_2_narration', ''))
+                    elif scene_type == 'fallout':
+                        part_text = story.get('fallout', story.get('real_talk', ''))
                     else:
                         part_key = f'part_{p_idx+1}_narration'
                         part_text = story.get(part_key, story.get('body', ''))
@@ -766,47 +1165,76 @@ try:
             scene_names.append(f'story_{i+1}_part1')
             scene_names.append(f'story_{i+1}_part2')
             scene_names.append(f'story_{i+1}_real_talk')
+            scene_names.append(f'story_{i+1}_fallout')
 
         for scene_idx, scene_name in enumerate(scene_names):
             log.debug("pixel_art.generating", scene=scene_name)
+            print(f"\n  [IMG {scene_idx+1}/{NUM_IMAGES}] {scene_name}...")
 
-            scene_data = all_visual_scenes[scene_idx]
+            scene_data = all_visual_scenes[scene_idx] if scene_idx < len(all_visual_scenes) else {}
             prompt = scene_data.get('description', '')
 
             # Pass only the raw scene description to generate_pixel_art.
             # Style suffix (from config/image_style.json) is applied internally by pixel_art_tool.
             full_prompt = prompt if prompt else ""
 
-            story_idx = scene_idx // 2
+            story_idx = scene_idx // IMAGES_PER_STORY
+            scene_in_story = scene_idx % IMAGES_PER_STORY
             story_text = ''
             if story_idx < len(script.get('stories', [])):
                 story = script['stories'][story_idx]
-                part_key = 'part_1_narration' if scene_idx % 2 == 0 else 'part_2_narration'
-                story_text = story.get(part_key, '')
-                rt = story.get('real_talk', '')
-                if scene_idx % 2 == 1 and rt:
-                    story_text = f"{story_text} {rt}".strip()
+                if scene_in_story == 0:
+                    story_text = story.get('part_1_narration', story.get('body', ''))
+                elif scene_in_story == 1:
+                    story_text = story.get('part_2_narration', story.get('body', ''))
+                elif scene_in_story == 2:
+                    story_text = story.get('real_talk', story.get('part_2_narration', ''))
+                elif scene_in_story == 3:
+                    story_text = story.get('fallout', story.get('real_talk', ''))
 
             fallback_desc = _build_fallback_prompt(
-                story_text, story_idx, scene_idx % 2, news_analyses
+                story_text, story_idx, scene_in_story, news_analyses
             )
 
             current_prompt = full_prompt
             accepted = False
             qa_attempts = []
+            scrub_level = 0
 
-            for attempt in range(3):
+            for attempt in range(4):
                 seed = base_seed + scene_idx + (attempt * 100)
                 log.debug("pixel_art.attempt", scene=scene_name, attempt=attempt + 1)
                 art_result = generate_pixel_art(current_prompt, script_text=story_text, seed=seed)
 
+                # Auto-detect failed generation (solid color, monochrome, etc.)
+                if art_result.get('success') and art_result.get('detected_failure'):
+                    log.warning("pixel_art.failed_detection", scene=scene_name, reason=art_result['detected_failure'])
+                    scrub_level = min(scrub_level + 1, 3)
+                    visual_type = _detect_visual_type(current_prompt)
+                    scrubbed = _progressive_content_scrub(full_prompt, visual_type, level=scrub_level)
+                    if scrubbed != full_prompt:
+                        current_prompt = scrubbed
+                    elif fallback_desc:
+                        current_prompt = fallback_desc
+                    if attempt < 3:
+                        continue
+                    else:
+                        break
+
                 if not art_result.get('success'):
                     log.warning("pixel_art.gen_failed", scene=scene_name, attempt=attempt + 1)
-                    if attempt < 2:
+                    scrub_level = min(scrub_level + 1, 3)
+                    if attempt < 3:
                         adjusted = adjust_prompt_for_retry(full_prompt, 'api_failure', attempt + 1)
                         if adjusted == full_prompt and fallback_desc:
                             adjusted = fallback_desc
                         current_prompt = adjusted
+                        # On 4th attempt (last), use category-safe prompt
+                        if attempt == 2:
+                            visual_type = _detect_visual_type(full_prompt)
+                            safe_prompt = _CATEGORY_SAFE_PROMPTS.get(visual_type, _CATEGORY_SAFE_PROMPTS.get('general', ''))
+                            if safe_prompt:
+                                current_prompt = safe_prompt
                         continue
                     else:
                         break
@@ -824,27 +1252,41 @@ try:
 
                 if qa_result['pass']:
                     generated_images.append(str(dst_path))
+                    print(f"  [IMG {scene_idx+1}/{NUM_IMAGES}] {scene_name} OK (attempt {attempt+1})")
                     log.info("pixel_art.accepted", scene=scene_name, attempt=attempt + 1,
                              reason=qa_result.get('reason', 'pass'))
                     accepted = True
                     break
                 else:
+                    print(f"  [IMG {scene_idx+1}/{NUM_IMAGES}] {scene_name} QA failed: {qa_result.get('reason', 'unknown')[:40]} (attempt {attempt+1})")
                     log.warning("pixel_art.qa_failed", scene=scene_name,
                                 reason=qa_result.get('reason', 'unknown'), attempt=attempt + 1)
                     dst_path.unlink(missing_ok=True)
-                    if attempt < 2:
+                    scrub_level = min(scrub_level + 1, 3)
+                    if attempt < 3:
                         adjusted = adjust_prompt_for_retry(full_prompt, qa_result.get('reason', ''), attempt + 1)
                         if adjusted == full_prompt and fallback_desc:
                             adjusted = fallback_desc
-                        current_prompt = adjusted
+                        # On last QA retry, use category-safe prompt
+                        if attempt == 2:
+                            visual_type = _detect_visual_type(full_prompt)
+                            safe_prompt = _CATEGORY_SAFE_PROMPTS.get(visual_type, _CATEGORY_SAFE_PROMPTS.get('general', ''))
+                            if safe_prompt:
+                                current_prompt = safe_prompt
+                        else:
+                            current_prompt = adjusted
 
             if not accepted:
                 fallback_path = _get_adjacent_fallback(
                     scene_idx, generated_images, image_folder, scene_name, PILImage
                 )
                 generated_images.append(str(fallback_path))
+                print(f"  [IMG {scene_idx+1}/{NUM_IMAGES}] {scene_name} FALLBACK")
                 log.warning("pixel_art.fallback", scene=scene_name,
                             source="adjacent_image" if 'placeholder' not in str(fallback_path) else "placeholder")
+
+            if (scene_idx + 1) % 2 == 0:
+                orchestrator.heartbeat(f"image_gen_{scene_idx+1}/{NUM_IMAGES}")
 
         # Final validation: ensure exactly NUM_IMAGES images
         if len(generated_images) < NUM_IMAGES:
@@ -865,6 +1307,11 @@ except Exception as e:
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="pixel_art", duration_s=round(_step_duration, 2),
          images=len(generated_images))
+_step_done("PIXEL ART")
+
+# ── GPU MODEL LIFECYCLE: Flush FLUX after batch generation ──
+orchestrator.phase_image_generation_done()
+log.info("orchestrator.transition", phase="post_image", note="FLUX pipeline flushed, VRAM released")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -874,15 +1321,21 @@ log.info("step.skip", step="video_footage", reason="using_pixel_art_only")
 downloaded_files = []
 
 
+# ── GPU MODEL LIFECYCLE: Transition to TTS phase ──
+orchestrator.phase_tts()
+log.info("orchestrator.transition", phase="tts", note="FLUX flushed, Kokoro will load on demand")
+
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 7: VOICE GENERATION
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="voice_generation")
+_step_banner("VOICE GENERATION (TTS)")
 _step_start = time.time()
 
 voice_file = None
 tts_result = {}
 try:
+    print("\n  [TTS] Generating voiceover...")
     tts_result = generate_voiceover(full_script, "authoritative")
 
     if tts_result.get('success'):
@@ -893,6 +1346,7 @@ try:
 
         log.info("voice.complete", duration_s=tts_result.get('estimated_duration_seconds', 0))
         voice_file = str(dst_audio)
+        print(f"  [TTS] Done — {tts_result.get('estimated_duration_seconds', 0):.1f}s audio")
         _save_checkpoint("tts", project_folder,
                          {"voice_duration": tts_result.get('estimated_duration_seconds', 0)})
         _save_to_postgres("tts", project_id,
@@ -905,12 +1359,17 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="voice_generation", duration_s=round(_step_duration, 2))
+_step_done("VOICE GENERATION")
 
+
+# ── GPU MODEL LIFECYCLE: Video assembly needs no GPU models ──
+orchestrator.phase_video_assembly()
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 8: VIDEO ASSEMBLY
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="video_assembly")
+_step_banner("VIDEO ASSEMBLY")
 _step_start = time.time()
 
 if not voice_file or not generated_images:
@@ -1025,30 +1484,35 @@ try:
                 image_times[i]['end'] = split_point
                 image_times[i + 1]['start'] = split_point
 
-        # Per-story image balancing (3 images per story: hook ~30%, mechanism ~40%, truth ~30%)
+        # Per-story image balancing (4 images per story: hook ~25%, mechanism ~30%, truth ~25%, fallout ~20%)
         num_stories_calc = num_images // IMAGES_PER_STORY
         for story_i in range(num_stories_calc):
             img_a = story_i * IMAGES_PER_STORY
             img_b = story_i * IMAGES_PER_STORY + 1
             img_c = story_i * IMAGES_PER_STORY + 2
-            if img_c >= num_images:
+            img_d = story_i * IMAGES_PER_STORY + 3
+            if img_d >= num_images:
                 break
             story_start = image_times[img_a]['start']
-            story_end = image_times[img_c]['end']
+            story_end = image_times[img_d]['end']
             story_total = story_end - story_start
             if story_total <= 0:
                 continue
-            # Target split: hook=30%, mechanism=40%, truth=30%
-            target_a_end = story_start + story_total * 0.30
-            target_b_end = story_start + story_total * 0.70
-            min_dur = story_total * 0.15
-            # Enforce minimum 15% per image
-            target_a_end = max(story_start + min_dur, min(target_a_end, story_end - 2 * min_dur))
-            target_b_end = max(target_a_end + min_dur, min(target_b_end, story_end - min_dur))
+            min_dur = story_total * 0.10
+            # Target split: hook=25%, mechanism=30%, truth=25%, fallout=20%
+            target_a_end = story_start + story_total * 0.25
+            target_b_end = story_start + story_total * 0.55
+            target_c_end = story_start + story_total * 0.80
+            # Enforce minimum 10% per image
+            target_a_end = max(story_start + min_dur, min(target_a_end, story_end - 3 * min_dur))
+            target_b_end = max(target_a_end + min_dur, min(target_b_end, story_end - 2 * min_dur))
+            target_c_end = max(target_b_end + min_dur, min(target_c_end, story_end - min_dur))
             image_times[img_a]['end'] = target_a_end
             image_times[img_b]['start'] = target_a_end
             image_times[img_b]['end'] = target_b_end
             image_times[img_c]['start'] = target_b_end
+            image_times[img_c]['end'] = target_c_end
+            image_times[img_d]['start'] = target_c_end
 
         # Safety: ensure minimum 2s per image
         for i, it in enumerate(image_times):
@@ -1132,12 +1596,14 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="video_assembly", duration_s=round(_step_duration, 2))
+_step_done("VIDEO ASSEMBLY")
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 9: PLATFORM METADATA
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="platform_metadata")
+_step_banner("PLATFORM METADATA")
 _step_start = time.time()
 
 platform_metadata = {}
@@ -1156,12 +1622,14 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="platform_metadata", duration_s=round(_step_duration, 2))
+_step_done("PLATFORM METADATA")
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 10: PROJECT SUMMARY + TELEGRAM DELIVERY
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="project_summary")
+_step_banner("PROJECT SUMMARY")
 
 manifest = {
     'project_id': project_id,
@@ -1267,6 +1735,10 @@ try:
     llm.unload_model()
 except Exception:
     pass
+
+# ── GPU MODEL LIFECYCLE: Final cleanup ──
+orchestrator.phase_cleanup()
+log.info("orchestrator.cleanup", note="All GPU models evicted")
 
 log.info("pipeline.complete",
          project_id=project_id,

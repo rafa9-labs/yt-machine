@@ -122,6 +122,81 @@ def select_voice_for_content(script_text: str, default_tone: str = "authoritativ
     return default_tone
 
 
+def _detect_outro_segment(text: str):
+    """
+    Split full script text into main content and outro segment.
+    The outro is identified by the last '....' separator and trailing text.
+    Returns (main_text, outro_text).
+    """
+    parts = re.split(r'\.{4,}', text)
+    if len(parts) >= 2:
+        main = '....'.join(parts[:-1])
+        outro = parts[-1].strip()
+        return main, outro
+    return text, ""
+
+
+def _apply_outro_tts_settings(voice_settings: dict, is_outro: bool = False) -> dict:
+    """
+    Modify TTS voice settings for outro segments.
+    Creates a melancholy, natural spoken tone: slower, softer, more stable.
+    """
+    if not is_outro:
+        return voice_settings
+
+    settings = voice_settings.copy()
+
+    # ElevenLabs: higher stability, lower style for melancholy
+    if 'stability' in settings:
+        settings['stability'] = min(1.0, float(settings.get('stability', 0.35)) + 0.25)
+    if 'style_exaggeration' in settings:
+        settings['style_exaggeration'] = max(0.0, float(settings.get('style_exaggeration', 0.65)) - 0.35)
+    if 'similarity_boost' in settings:
+        settings['similarity_boost'] = min(1.0, float(settings.get('similarity_boost', 0.70)) + 0.05)
+
+    # Edge TTS: slower rate, lower pitch
+    settings['rate'] = "-15%"
+    settings['pitch'] = "-3Hz"
+
+    # Kokoro: slower speed
+    settings['speed'] = 0.85
+
+    return settings
+
+
+def _apply_outro_reverb(audio_path: str) -> str:
+    """
+    Apply subtle reverb tail to outro audio for melancholy atmosphere.
+    ffmpeg aecho: 0.8 gain, 0.88 feedback, 60ms delay, 0.4 decay.
+    Also applies a 1-second fade-out at the end.
+    """
+    ffmpeg_exe = _get_ffmpeg()
+    if not ffmpeg_exe:
+        return audio_path
+
+    ext = audio_path.rsplit('.', 1)[-1] if '.' in audio_path else 'wav'
+    output_path = audio_path.rsplit('.', 1)[0] + '_outro_reverb.' + ext
+    try:
+        import subprocess
+        cmd = [
+            ffmpeg_exe, '-y',
+            '-i', audio_path,
+            '-af', 'aecho=0.8:0.88:60:0.4,afade=t=out:st=0:d=1',
+            '-ar', '44100',
+            output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=30, text=True)
+        if result.returncode == 0 and Path(output_path).exists():
+            try:
+                Path(audio_path).unlink()
+            except Exception:
+                pass
+            return output_path
+    except Exception as e:
+        print(f"  [TTS] Warning: Outro reverb failed: {e}")
+    return audio_path
+
+
 def _find_ffmpeg() -> Optional[str]:
     """
     Find ffmpeg executable — checks system PATH, then falls back to
@@ -376,6 +451,11 @@ def _add_natural_pacing(text: str, engine: str = "kokoro") -> str:
     # ── NUMBER NORMALIZATION ──
     text = _normalize_numbers_for_speech(text)
     
+    # ── GREETING NORMALIZATION ──
+    # Prevent TTS from interpreting "Ssssmokin'" as a slow sibilant hiss
+    text = re.sub(r"[Ss]{3,}mokin'", "Smokin'", text, flags=re.IGNORECASE)
+    text = re.sub(r"[Ss]{3,}mokin", "Smokin", text, flags=re.IGNORECASE)
+    
     # ── LIGHT CLEANUP ──
     text = re.sub(r'[\r\n]+', ' ', text)          # Collapse newlines
     text = re.sub(r' {2,}', ' ', text)            # Collapse multiple spaces
@@ -413,7 +493,7 @@ def _get_voice_parameters(voice_tone: str) -> dict:
     return prosody_settings.get(voice_tone, {"rate": "+0%", "pitch": "+0Hz"})
 
 
-def _generate_kokoro_tts(structural_chunks: list, voice_tone: str, filepath: Path) -> Optional[dict]:
+def _generate_kokoro_tts(structural_chunks: list, voice_tone: str, filepath: Path, has_outro: bool = False) -> Optional[dict]:
     """
     Generate speech using Kokoro TTS (local, free, GPU-accelerated).
     
@@ -458,11 +538,17 @@ def _generate_kokoro_tts(structural_chunks: list, voice_tone: str, filepath: Pat
                 audio_per_chunk.append(None)
                 continue
             
+            # Apply slower speed for outro chunk (melancholy feel)
+            is_outro_chunk = has_outro and (i == len(structural_chunks) - 1)
+            chunk_speed = 0.85 if is_outro_chunk else speed
+            
             chunk_label = f"chunk {i+1}/{len(structural_chunks)}"
+            if is_outro_chunk:
+                chunk_label += " (outro)"
             print(f"  [KOKORO] Generating {chunk_label} ({len(chunk_text.split())} words)...")
             
             chunk_segments = []
-            for _, _, audio in _kokoro_pipeline(chunk_text, voice=voice_name, speed=speed):
+            for _, _, audio in _kokoro_pipeline(chunk_text, voice=voice_name, speed=chunk_speed):
                 if audio is not None:
                     chunk_segments.append(np.array(audio, dtype=np.float32))
             
@@ -488,6 +574,15 @@ def _generate_kokoro_tts(structural_chunks: list, voice_tone: str, filepath: Pat
         structural_silence[:fade_len] *= fade_in
         structural_silence[-fade_len:] *= fade_out
         
+        CLOSING_SILENCE = 0.30
+        closing_silence_samples = int(sr * CLOSING_SILENCE)
+        closing_fade_len = min(50, closing_silence_samples // 2)
+        closing_silence = np.zeros(closing_silence_samples, dtype=np.float32)
+        closing_fade_in = np.linspace(0, 1, closing_fade_len, dtype=np.float32)
+        closing_fade_out = np.linspace(1, 0, closing_fade_len, dtype=np.float32)
+        closing_silence[:closing_fade_len] *= closing_fade_in
+        closing_silence[-closing_fade_len:] *= closing_fade_out
+        
         assembled_parts = []
         for i, chunk_segments in enumerate(audio_per_chunk):
             if chunk_segments is None:
@@ -495,7 +590,10 @@ def _generate_kokoro_tts(structural_chunks: list, voice_tone: str, filepath: Pat
             for seg in chunk_segments:
                 assembled_parts.append(seg)
             if i < len(audio_per_chunk) - 1:
-                assembled_parts.append(structural_silence)
+                if i == len(audio_per_chunk) - 2:
+                    assembled_parts.append(closing_silence)
+                else:
+                    assembled_parts.append(structural_silence)
         
         assembled = np.concatenate(assembled_parts, axis=0)
         
@@ -600,7 +698,7 @@ def _generate_edge_tts(clean_text: str, voice_tone: str, filepath: Path) -> Opti
         return None
 
 
-def _generate_elevenlabs_tts(structural_chunks: list, voice_tone: str, filepath: Path) -> Optional[dict]:
+def _generate_elevenlabs_tts(structural_chunks: list, voice_tone: str, filepath: Path, has_outro: bool = False) -> Optional[dict]:
     """
     Generate speech using ElevenLabs API (highest quality natural voice).
     
@@ -666,12 +764,24 @@ def _generate_elevenlabs_tts(structural_chunks: list, voice_tone: str, filepath:
         
         print(f"  [ELEVENLABS] Generating in {len(all_batches)} batches across {len(chunk_boundaries)} structural chunks (voice: {voice_id[:8]}...)")
         
+        # Determine last chunk boundary for outro detection
+        last_chunk_start_idx = 0
+        last_chunk_end_idx = 0
+        if has_outro and chunk_boundaries:
+            last_chunk_start_idx, last_chunk_end_idx = chunk_boundaries[-1]
+
         audio_segments = []
         for i, batch_text in enumerate(all_batches):
+            batch_voice_settings = dict(ELEVENLABS_SETTINGS)
+            if i == 0:
+                batch_voice_settings["stability"] = 0.55
+            # Apply melancholy settings for outro batches (last structural chunk)
+            if has_outro and i >= last_chunk_start_idx:
+                batch_voice_settings = _apply_outro_tts_settings(batch_voice_settings, is_outro=True)
             payload = {
                 "text": batch_text,
                 "model_id": ELEVENLABS_MODEL,
-                "voice_settings": ELEVENLABS_SETTINGS,
+                "voice_settings": batch_voice_settings,
             }
             
             resp = http_requests.post(url, json=payload, headers=headers, timeout=60)
@@ -718,17 +828,23 @@ def _generate_elevenlabs_tts(structural_chunks: list, voice_tone: str, filepath:
                     sil[-fade_len:] *= fade_out[:, None]
                 return sil
             
+            CLOSING_SILENCE = 0.30
             n_ch = 1 if batch_arrays[0].ndim == 1 else batch_arrays[0].shape[1]
             structural_sil = _make_silence(int(sr * STRUCTURAL_SILENCE), sr, n_ch)
+            closing_sil = _make_silence(int(sr * CLOSING_SILENCE), sr, n_ch)
             micro_sil = _make_silence(int(sr * MICRO_BREATH), sr, n_ch)
             
             parts = []
             struct_count = 0
+            closing_count = 0
             micro_count = 0
             for i, arr in enumerate(batch_arrays):
                 parts.append(arr)
                 if i < len(batch_arrays) - 1:
-                    if i in structural_after_indices:
+                    if i == len(batch_arrays) - 2 and (len(batch_arrays) - 2) in structural_after_indices:
+                        parts.append(closing_sil)
+                        closing_count += 1
+                    elif i in structural_after_indices:
                         parts.append(structural_sil)
                         struct_count += 1
                     else:
@@ -745,7 +861,7 @@ def _generate_elevenlabs_tts(structural_chunks: list, voice_tone: str, filepath:
             wav_clip.close()
             wav_path.unlink(missing_ok=True)
             
-            print(f"  [ELEVENLABS] Silences: {struct_count}x{STRUCTURAL_SILENCE}s (story) + {micro_count}x{MICRO_BREATH}s (breath)")
+            print(f"  [ELEVENLABS] Silences: {struct_count}x{STRUCTURAL_SILENCE}s (story) + {closing_count}x{CLOSING_SILENCE}s (closing) + {micro_count}x{MICRO_BREATH}s (breath)")
             
             for p in audio_segments:
                 Path(p).unlink(missing_ok=True)
@@ -807,6 +923,10 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     if voice_tone == "authoritative":
         voice_tone = select_voice_for_content(text, default_tone="authoritative")
 
+    # Detect outro segment for melancholy TTS treatment
+    _, outro_text = _detect_outro_segment(text)
+    has_outro = bool(outro_text and len(outro_text.strip()) > 5)
+
     # Determine target engine
     target_engine = "elevenlabs"
     
@@ -826,7 +946,7 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
     filepath = OUTPUT_DIR / filename
     
     # === PRIMARY: Kokoro (local, free, GPU-accelerated) ===
-    result = _generate_kokoro_tts(structural_chunks, voice_tone, filepath)
+    result = _generate_kokoro_tts(structural_chunks, voice_tone, filepath, has_outro=has_outro)
     
     if result and result.get('success'):
         mastered = _apply_audio_mastering(Path(result['path']))
@@ -835,12 +955,20 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
             result['audio_mastered'] = True
             result['file_size_bytes'] = Path(result['path']).stat().st_size
         
+        # Apply subtle reverb tail for melancholy outro feel
+        if has_outro:
+            reverb_path = _apply_outro_reverb(result['path'])
+            if reverb_path != result['path']:
+                result['path'] = reverb_path
+                result['audio_mastered'] = True
+                print(f"  [TTS] Outro reverb applied (melancholy tail)")
+        
         result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)
         return result
     
     # === PREMIUM: ElevenLabs (cloud, highest quality) ===
     print(f"  [TTS] Kokoro unavailable, trying ElevenLabs...")
-    result = _generate_elevenlabs_tts(structural_chunks, voice_tone, filepath)
+    result = _generate_elevenlabs_tts(structural_chunks, voice_tone, filepath, has_outro=has_outro)
     
     if result and result.get('success'):
         mastered = _apply_audio_mastering(Path(result['path']))
@@ -848,6 +976,14 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
             print(f"  [TTS] Audio mastering applied (EQ + compression)")
             result['audio_mastered'] = True
             result['file_size_bytes'] = Path(result['path']).stat().st_size
+        
+        # Apply subtle reverb tail for melancholy outro feel
+        if has_outro:
+            reverb_path = _apply_outro_reverb(result['path'])
+            if reverb_path != result['path']:
+                result['path'] = reverb_path
+                result['audio_mastered'] = True
+                print(f"  [TTS] Outro reverb applied (melancholy tail)")
         
         result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)
         return result
@@ -863,6 +999,13 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
             print(f"  [TTS] Audio mastering applied")
             result['audio_mastered'] = True
             result['file_size_bytes'] = Path(result['path']).stat().st_size
+        
+        # Apply subtle reverb tail for melancholy outro feel
+        if has_outro:
+            reverb_path = _apply_outro_reverb(result['path'])
+            if reverb_path != result['path']:
+                result['path'] = reverb_path
+                print(f"  [TTS] Outro reverb applied (melancholy tail)")
         
         # Get word timestamps for subtitle sync
         result['word_timestamps'] = _get_faster_whisper_timestamps(result['path'], clean_text)

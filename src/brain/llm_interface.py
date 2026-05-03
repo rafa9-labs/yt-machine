@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import requests
 from typing import Dict, Any, Optional, List
 from pathlib import Path
@@ -556,32 +557,90 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         "And believe it or not, it gets even CRAZIER.",
     ]
     
+    INTRO_HOOK_TEMPLATES = [
+        "Two stories. One screen. Let us go.",
+        "Tonight the dominoes are already falling.",
+        "Big moves. Big consequences. Let us dive in.",
+        "The world just shifted. Here is what it means.",
+        "Hold tight. Two stories that change everything.",
+        "Chaos incoming. Two stories you cannot miss.",
+    ]
+
+    def _enforce_greeting(self, script: dict) -> dict:
+        """
+        GUARANTEE: Every script MUST have a non-empty greeting and intro_hook.
+        If LLM returns empty strings, generate from templates.
+        Never derive intro_hook from part_1_narration — that creates repetition.
+        """
+        import random
+        
+        GREETING_TEMPLATES = [
+            "Ssssmokin'!",
+            "Hold onto your lobsters, folks!",
+            "It is showtime!",
+            "Did somebody order CHAOS?",
+            "Baby, you are NOT ready for this!",
+            "Well, well, well. Look what just walked in!",
+        ]
+        
+        if not script.get('greeting', '').strip():
+            script['greeting'] = random.choice(GREETING_TEMPLATES)
+            print(f"  [GREETING] Generated greeting: \"{script['greeting']}\"")
+        
+        if not script.get('intro_hook', '').strip():
+            stories = script.get('stories', [])
+            if stories:
+                topics = []
+                for story in stories:
+                    topic = story.get('topic', '') or story.get('part_1_narration', '').split('.')[0]
+                    if topic and len(topic.split()) <= 6:
+                        topics.append(topic)
+                if topics:
+                    script['intro_hook'] = random.choice(self.INTRO_HOOK_TEMPLATES)
+                else:
+                    script['intro_hook'] = random.choice(self.INTRO_HOOK_TEMPLATES)
+            else:
+                script['intro_hook'] = random.choice(self.INTRO_HOOK_TEMPLATES)
+            print(f"  [GREETING] Generated intro_hook: \"{script['intro_hook'][:60]}\"")
+        
+        return script
+    
     def _ensure_greeting_in_fulltext(self, script: dict) -> dict:
         """
         GUARANTEE: full_text MUST start with the greeting.
         This is called after every full_text modification (synthesis, curation, etc.)
+        Uses fuzzy prefix match to avoid prepending duplicate greetings.
         """
-        full_text = script.get('full_text', '')
-        greeting = script.get('greeting', '')
-        intro_hook = script.get('intro_hook', '')
+        full_text = script.get('full_text', '').strip()
+        greeting = script.get('greeting', '').strip()
+        intro_hook = script.get('intro_hook', '').strip()
         
         if not full_text or not greeting:
             return script
         
-        # Check if full_text already starts with the greeting
-        if full_text.strip().startswith(greeting):
-            return script  # All good
+        # Normalize for fuzzy comparison
+        ft_lower = full_text.lower()
+        g_lower = greeting.lower()
+        g_first_word = greeting.split()[0].lower() if greeting.split() else ''
         
-        # Check if full_text starts with a partial greeting (e.g., just "Look,")
-        # In that case, prepend the full greeting
-        if intro_hook and full_text.strip().startswith(intro_hook[:10]):
-            # full_text starts with intro_hook but missing greeting
-            script['full_text'] = f"{greeting} {full_text.strip()}"
+        # Already starts with greeting (fuzzy: case-insensitive, punctuation-tolerant)
+        if ft_lower.startswith(g_lower) or ft_lower.startswith(g_lower.rstrip('.,!?')):
+            return script
+        
+        # Check if first 20 chars already contain the greeting content
+        ft_prefix = ft_lower[:len(g_lower) + 5]
+        if g_lower in ft_prefix:
+            return script  # Greeting content already present (maybe with different case/punct)
+        
+        # Check if full_text starts with intro_hook (missing greeting)
+        ih_lower = intro_hook[:15].lower() if intro_hook else ''
+        if ih_lower and ft_lower.startswith(ih_lower):
+            script['full_text'] = f"{greeting} {full_text}"
             print(f"  [GREETING] Prepended missing greeting to full_text")
-        elif greeting.split()[0].lower() not in full_text[:30].lower():
+        elif g_first_word and g_first_word not in ft_lower[:len(g_lower) + 10]:
             # Neither greeting nor intro_hook at start — prepend both
             prefix = f"{greeting} {intro_hook}".strip()
-            script['full_text'] = f"{prefix} {full_text.strip()}"
+            script['full_text'] = f"{prefix} {full_text}"
             print(f"  [GREETING] Prepended greeting + intro_hook to full_text")
         
         return script
@@ -619,8 +678,244 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         
         return script
     
+    def _enforce_fallout(self, script: dict, analyses: list = None) -> dict:
+        """Ensure every story has a non-empty fallout field and a valid fallout_visual.
+        If fallout narration is missing, derive from second_order_consequence.
+        NEVER copy real_talk verbatim — that causes repetition when both are spoken aloud."""
+        stories = script.get('stories', [])
+        for i, story in enumerate(stories):
+            fallout = story.get('fallout', '').strip()
+            if fallout and len(fallout.split()) >= 5:
+                pass
+            else:
+                source = ''
+                if analyses and i < len(analyses):
+                    source = analyses[i].get('second_order_consequence', '')
+                if not source or len(source.split()) < 3:
+                    real_talk = story.get('real_talk', '')
+                    if real_talk:
+                        # Transform real_talk into a forward-looking consequence rather than copying it
+                        rt_words = real_talk.split()
+                        # Extract key nouns/entities from real_talk for the forward-looking phrase
+                        key_words = [w for w in rt_words if w[0].isupper() or any(c.isdigit() for c in w)][:3]
+                        if key_words:
+                            source = f"The ripple from {' '.join(key_words)} is just beginning — and nobody is watching the next domino."
+                        else:
+                            source = "The ripple effects are just beginning — and the next domino is already falling."
+                
+                prefix = story.get('fallout', '').strip()
+                if prefix and len(prefix.split()) >= 2:
+                    fallout = prefix
+                elif source:
+                    fallout = source
+                else:
+                    fallout = "The consequences are still unfolding — and the next domino is already in motion."
+                story['fallout'] = fallout
+                print(f"  [FALLOUT] Story {i+1} fallout enforced: \"{fallout[:60]}...\"" if len(fallout) > 60 else f"  [FALLOUT] Story {i+1} fallout enforced: \"{fallout}\"")
+            
+            # Validate fallout_visual: must have composition structure, not narration
+            fallout_visual = story.get('fallout_visual', '').strip()
+            is_valid_visual = LLMInterface._validate_visual_prompt_composition(fallout_visual) if fallout_visual else False
+            if not fallout_visual or (not is_valid_visual and len(fallout_visual.split()) < 10):
+                import random
+                templates = [
+                    "16-bit isometric pixel art scene: chain of dominoes collapsing, consequences spreading in foreground, dark horizon on left, twilight atmosphere",
+                    "16-bit isometric pixel art scene: cracked ground spreading toward distant city on right, foreground debris on left, heavy fog, dramatic shadows",
+                    "16-bit isometric pixel art scene: single ember igniting dry field, smoke rising in background, aerial perspective, dusk lighting",
+                    "16-bit isometric pixel art scene: shadowy figure walking from crumbling structure in foreground, destruction visible in midground, heavy fog",
+                    "16-bit isometric pixel art scene: massive wave building offshore, small boats scrambling in foreground, dark clouds in background, aerial view",
+                ]
+                visual_source = story.get('part_2_visual', story.get('real_talk_visual', ''))
+                if visual_source and LLMInterface._validate_visual_prompt_composition(visual_source):
+                    subject = visual_source.split(',')[0].strip()
+                    subject = subject.replace('Pixel art', '').replace('pixel art', '').replace('pixel_art', '').strip()
+                    if subject and len(subject.split()) >= 3:
+                        story['fallout_visual'] = f"16-bit isometric pixel art scene: aftermath of {subject.lower()}, consequences visible in foreground, dark horizon on left, twilight atmosphere, ominous sky"
+                    else:
+                        story['fallout_visual'] = random.choice(templates)
+                else:
+                    story['fallout_visual'] = random.choice(templates)
+                print(f"  [FALLOUT] Story {i+1} fallout_visual enforced: \"{story['fallout_visual'][:70]}...\"")
+        script['stories'] = stories
+        return script
+    
+    # Scene type templates for narration-to-visual conversion
+    _SCENE_TYPE_TEMPLATES = {
+        'hook': '16-bit isometric pixel art scene: dramatic wide establishing shot of',
+        'mechanism': '16-bit isometric pixel art scene: tactical close-up view of',
+        'truth': '16-bit isometric pixel art scene: somber revealing scene depicting',
+        'fallout': '16-bit isometric pixel art scene: forward-looking consequence scene showing',
+    }
+
+    _COMPOSITION_KEYWORDS = frozenset([
+        'foreground', 'midground', 'background', 'left side', 'right side', 'split-screen',
+        'overhead', 'aerial', 'isometric', 'camera', 'shot', 'perspective', 'view',
+        'lighting', 'sunset', 'dawn', 'dusk', 'golden hour', 'twilight',
+        'scene:', 'depicting', 'showing', 'with', 'positioned', 'visible',
+    ])
+
+    _NARRATION_PATTERNS = frozenset([
+        'holding a', 'standing in', 'says', 'told', 'explains', 'reveals that',
+        'announces', 'reports', 'states', 'declares', 'argues that',
+        'close-up of a single', 'a single', 'the aftermath of',
+    ])
+
+    METAPHOR_TO_SCENE = {
+        'wedge': ('dividing barrier', 'strategic split'),
+        'nail': ('fortification breach', 'structural impact'),
+        'padlock': ('security lockdown', 'access restriction'),
+        'lock': ('security lockdown', 'access restriction'),
+        'crumbling': ('collapsing structure', 'institutional decay'),
+        'fracture': ('breaking alliance', 'shattered coalition'),
+        'fractured': ('broken alliance', 'shattered coalition'),
+        'domino': ('cascading failure', 'chain reaction'),
+        'fire': ('escalating conflict', 'spreading crisis'),
+        'spark': ('initial provocation', 'ignition point'),
+        'wall': ('defensive barrier', 'separation structure'),
+        'bridge': ('diplomatic connection', 'negotiation channel'),
+        'chain': ('linked dependencies', 'interconnected systems'),
+        'mirror': ('parallel situation', 'reflected consequence'),
+        'mask': ('hidden agenda', 'covert operation'),
+        'puppet': ('controlled entity', 'external influence'),
+        'game': ('strategic maneuver', 'calculated move'),
+        'chess': ('strategic maneuver', 'calculated positioning'),
+    }
+
+    _METAPHOR_INDICATORS = frozenset([
+        "it's a", "it is a", "like a", "acting as", "serving as",
+        "driven into", "driven through", "clamped onto", "hung on",
+        "the heart of", "the backbone of", "the cornerstone",
+        "a way to", "turning into", "reduced to",
+    ])
+
+    @staticmethod
+    def _detect_metaphor_narration(narration: str) -> list:
+        """
+        Detect figurative language in narration that would produce bad visual
+        prompts if rendered literally. Returns list of metaphor keywords found
+        that also have an indicator phrase (to reduce false positives on words
+        like "game" or "fire" used literally).
+        """
+        if not narration or len(narration) < 5:
+            return []
+        text_lower = narration.lower()
+        has_indicator = any(ind in text_lower for ind in LLMInterface._METAPHOR_INDICATORS)
+        if not has_indicator:
+            return []
+        found = [kw for kw in LLMInterface.METAPHOR_TO_SCENE if kw in text_lower]
+        return found
+
+    @staticmethod
+    def _validate_visual_prompt_composition(prompt: str) -> bool:
+        """
+        Check whether a visual prompt has composition structure (foreground/background/lighting)
+        or is narration-style (flat description of a subject).
+
+        Returns True if composition-style, False if narration-style.
+        """
+        if not prompt or len(prompt.strip()) < 20:
+            return False
+        
+        p = prompt.lower()
+        
+        composition_hits = sum(1 for kw in LLMInterface._COMPOSITION_KEYWORDS if kw in p)
+        narration_hits = sum(1 for kw in LLMInterface._NARRATION_PATTERNS if kw in p)
+        
+        if narration_hits >= 2:
+            return False
+        
+        if composition_hits >= 2:
+            return True
+
+        sentences = [s.strip() for s in p.replace('!', '.').replace('?', '.').split('.') if s.strip()]
+        if len(sentences) < 2:
+            return False
+
+        has_scene_structure = any(
+            kw in p for kw in ['foreground', 'midground', 'background', 'left', 'lighting', 'camera', 'shot']
+        )
+        
+        starts_with_scene = p.strip().startswith('16-bit') or 'scene:' in p
+        
+        return has_scene_structure or starts_with_scene
+    
+    @staticmethod
+    def _ensure_visual_prompt(visual_field: str, narration: str, scene_type: str) -> str:
+        """
+        Ensure a visual prompt is non-empty and describes a visual SCENE with composition,
+        not narration-style flat descriptions.
+
+        Fallback chain:
+        1. Use the visual field if it passes composition validation
+        2. If narration contains metaphor language, convert to concrete scene elements
+        3. Convert narration to composition-style visual prompt using templates + entity extraction
+        4. Use a generic scene placeholder based on the scene type
+        """
+        if visual_field and len(visual_field.strip()) >= 15:
+            if LLMInterface._validate_visual_prompt_composition(visual_field):
+                return visual_field.strip()
+
+        if narration and len(narration.strip()) >= 10:
+            template = LLMInterface._SCENE_TYPE_TEMPLATES.get(scene_type, '16-bit isometric pixel art scene depicting')
+            lighting = {'hook': 'sunset lighting', 'mechanism': 'golden hour lighting',
+                        'truth': 'cold blue lighting', 'fallout': 'twilight atmosphere'}.get(scene_type, 'dramatic lighting')
+
+            metaphors = LLMInterface._detect_metaphor_narration(narration)
+            if metaphors:
+                scene_elements = []
+                for m in metaphors[:2]:
+                    scene_elements.extend(LLMInterface.METAPHOR_TO_SCENE.get(m, ()))
+                entities = LLMInterface._extract_key_entities(narration)
+                metaphor_words = set(LLMInterface.METAPHOR_TO_SCENE.keys())
+                geo_entities = [e for e in list(entities) if e[0].isupper() and e.lower() not in metaphor_words][:2]
+                all_parts = scene_elements + geo_entities
+                if all_parts:
+                    return f"{template} {', '.join(all_parts)}, {lighting}, atmospheric depth"
+
+            entities = LLMInterface._extract_key_entities(narration)
+            if entities:
+                entity_str = ', '.join(list(entities)[:3])
+                return f"{template} {entity_str}, {lighting}, atmospheric depth"
+            cleaned = narration.strip().rstrip('.!?')
+            if len(cleaned) > 120:
+                words = cleaned.split()
+                cleaned = ' '.join(words[:20])
+            return f"{template} {cleaned.lower()}, {lighting}, atmospheric depth"
+        
+        type_defaults = {
+            'hook': '16-bit isometric pixel art scene: dramatic wide establishing shot, military forces positioned on left, strategic landscape at sunset, atmospheric haze',
+            'mechanism': '16-bit isometric pixel art scene: tactical close-up of strategic infrastructure, detailed equipment on left side, dynamic composition at golden hour',
+            'truth': '16-bit isometric pixel art scene: somber revealing scene, civilian perspective on left, consequences visible in background, cold blue lighting',
+            'fallout': '16-bit isometric pixel art scene: forward-looking consequence scene, domino effect visible, dark horizon on left, twilight atmosphere, ominous sky',
+        }
+        return type_defaults.get(scene_type, type_defaults['hook'])
+    
     # Unified closing — The Mask persona (Truman Show inspired)
-    UNIFIED_CLOSING = "Like and share and if I don't see you. Good morning. Good afternoon. And goodnight."
+    UNIFIED_CLOSING_BASE = "Stay behind the curtains, and if I don't see you — good morning, good afternoon, and goodnight."
+
+    def _build_dynamic_closing(self, last_fallout: str = "", last_topic: str = "") -> str:
+        """
+        Build a dynamic closing that references the last story's topic,
+        creating a seamless bridge from the final fallout to the sign-off.
+        The bridge drops the manic Mask persona and transitions into melancholy.
+        """
+        if last_topic:
+            topic_clean = last_topic.strip().rstrip('.')
+            bridge = f"And that is how {topic_clean} reshapes the board. "
+        elif last_fallout:
+            words = re.findall(r'\b\w+\b', last_fallout.lower())
+            key_nouns = [w for w in words[-6:] if len(w) > 3 and w not in
+                          {'that', 'this', 'with', 'from', 'they', 'their',
+                           'have', 'been', 'will', 'would', 'could', 'what',
+                           'when', 'where', 'which', 'there', 'these', 'those'}]
+            if key_nouns:
+                bridge = f"And just like that, {key_nouns[-1]} rewrites the rules. "
+            else:
+                bridge = "And just like that, the dominoes keep falling. "
+        else:
+            bridge = "And just like that, the dominoes keep falling. "
+
+        return bridge + self.UNIFIED_CLOSING_BASE
     
     @staticmethod
     def _scrub_cta_from_field(text: str) -> str:
@@ -652,12 +947,94 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         """
         stories = script.get('stories', [])
         for i, story in enumerate(stories):
-            for field in ('part_1_narration', 'part_2_narration', 'real_talk', 'segue'):
+            for field in ('part_1_narration', 'part_2_narration', 'real_talk', 'fallout', 'segue'):
                 original = story.get(field, '')
                 cleaned = self._scrub_cta_from_field(original)
                 if cleaned != original:
                     print(f"  [CTA-SCRUB] Story {i+1} {field}: removed CTA fragment")
                     story[field] = cleaned
+        script['stories'] = stories
+        return script
+    
+    def _dedup_segue_overlap(self, script: dict) -> dict:
+        """
+        Remove duplicate phrasing between a story's segue and the next story's part_1.
+        If story N's segue starts the same phrase as story N+1's part_1, strip the
+        overlap from part_1 so the audience doesn't hear the same clause twice.
+        """
+        stories = script.get('stories', [])
+        if len(stories) < 2:
+            return script
+        
+        for i in range(len(stories) - 1):
+            segue = stories[i].get('segue', '').strip()
+            next_p1 = stories[i + 1].get('part_1_narration', '').strip()
+            
+            if not segue or not next_p1:
+                continue
+            
+            segue_words = segue.split()
+            next_words = next_p1.split()
+            
+            max_check = min(3, len(segue_words), len(next_words))
+            overlap_count = 0
+            for n in range(1, max_check + 1):
+                tail = [w.lower().rstrip('.,!?;:') for w in segue_words[-n:]]
+                head = [w.lower().rstrip('.,!?;:') for w in next_words[:n]]
+                if tail == head:
+                    overlap_count = n
+            
+            if overlap_count >= 2:
+                cleaned_p1 = ' '.join(next_words[overlap_count:]).strip()
+                if cleaned_p1 and len(cleaned_p1.split()) >= 5:
+                    print(f"  [DEDUP] Story {i+2} part_1: stripped {overlap_count} overlapping words from segue")
+                    print(f"    Removed: \"{' '.join(next_words[:overlap_count])}\"")
+                    stories[i + 1]['part_1_narration'] = cleaned_p1
+        
+        script['stories'] = stories
+        return script
+
+    def _dedup_inter_story_phrases(self, script: dict) -> dict:
+        """
+        Remove 3-gram overlap between story[i].fallout and story[i+1].part_1.
+        Also checks story[i].real_talk against story[i+1].part_1.
+        Strips overlapping words from the start of story[i+1].part_1.
+        """
+        stories = script.get('stories', [])
+        if len(stories) < 2:
+            return script
+        
+        def _trigrams(text: str) -> set:
+            words = text.lower().split()
+            return {' '.join(words[j:j+3]) for j in range(max(0, len(words) - 2))}
+        
+        for i in range(len(stories) - 1):
+            for field in ('fallout', 'real_talk'):
+                prev_text = stories[i].get(field, '').strip()
+                next_p1 = stories[i + 1].get('part_1_narration', '').strip()
+                if not prev_text or not next_p1:
+                    continue
+                
+                prev_trigrams = _trigrams(prev_text)
+                next_words = next_p1.split()
+                
+                overlap_count = 0
+                for j in range(min(4, len(next_words))):
+                    window = ' '.join(next_words[j:j+3]).lower() if j + 3 <= len(next_words) else ''
+                    window_punct = ' '.join(w.lower().rstrip('.,!?;:') for w in next_words[j:j+3]) if j + 3 <= len(next_words) else ''
+                    prev_trigrams_clean = {tg.rstrip('.,!?;:') for tg in prev_trigrams}
+                    if window_punct in prev_trigrams_clean or window in prev_trigrams:
+                        overlap_count = j + 1
+                    else:
+                        break
+                
+                if overlap_count >= 2:
+                    cleaned_p1 = ' '.join(next_words[overlap_count:]).strip()
+                    if cleaned_p1 and len(cleaned_p1.split()) >= 5:
+                        print(f"  [DEDUP-INTER] Story {i+2} part_1: stripped {overlap_count} overlapping words from story {i+1} {field}")
+                        print(f"    Removed: \"{' '.join(next_words[:overlap_count])}\"")
+                        stories[i + 1]['part_1_narration'] = cleaned_p1
+        
         script['stories'] = stories
         return script
 
@@ -690,14 +1067,15 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         cleaned = re.sub(r'  +', ' ', cleaned).strip()
         
         text_lower = cleaned.lower()
-        has_truman = 'good morning' in text_lower and 'good afternoon' in text_lower and 'goodnight' in text_lower
+        tail = text_lower[-300:] if len(text_lower) > 300 else text_lower
+        has_truman = 'good morning' in tail and 'good afternoon' in tail and 'goodnight' in tail
         
         if has_truman:
             return cleaned
         
         # Strip any existing LLM-generated closing to avoid duplication
         stripped = re.sub(
-            r'\s*\.{3,4}\s*(?:And with that|Subscribe|That\'s all|So there you have|This is Masker|I\'m Masker|see you|And these were|These were|Stay tuned|See you next|Thanks for|follow for|Stay behind|The walls|Like and share|Ssssmokin).*$',
+            r'\s*\.{3,4}\s*(?:And with that|Subscribe|That\'s all|So there you have|This is Masker|I\'m Masker|see you|And these were|These were|Stay tuned|See you next|Thanks for|follow for|Stay behind|The walls|Like and share|Ssssmokin|And that is how|And just like that).*$',
             '', cleaned, flags=re.IGNORECASE
         ).rstrip()
         
@@ -707,8 +1085,17 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             '', stripped, flags=re.IGNORECASE
         ).rstrip()
         
-        result = stripped + ' .... ' + self.UNIFIED_CLOSING
-        print(f"  [CLOSING] Injected unified closing (truman={has_truman})")
+        # Build dynamic closing referencing last story topic if available
+        if hasattr(self, '_last_story_topic') and self._last_story_topic:
+            closing = self._build_dynamic_closing(
+                last_fallout=getattr(self, '_last_fallout', ''),
+                last_topic=self._last_story_topic
+            )
+        else:
+            closing = self.UNIFIED_CLOSING_BASE
+        
+        result = stripped + ' .... ' + closing
+        print(f"  [CLOSING] Injected dynamic closing (truman={has_truman})")
         return result
     
     def synthesize_multi_news_script(
@@ -745,19 +1132,21 @@ GREETING TO USE: "{greeting}"
 CRITICAL RULES:
 - Output ONLY the JSON object. NO explanatory text before or after. NO markdown.
 - The greeting field must be EXACTLY: {greeting}
-- Each story: part_1 = THE HOOK (what happened), part_2 = THE MECHANISM (why it matters, the hidden chain), real_talk = THE TRUTH (visceral specific consequence)
-- part_2_narration must NOT contain real_talk content. They are SEPARATE fields.
+- Each story: part_1 = THE HOOK (what happened), part_2 = THE MECHANISM (why it matters, the hidden chain), real_talk = THE TRUTH (visceral specific consequence), fallout = THE FALLOUT (one concrete forward consequence, what escalates next)
+- part_2_narration must NOT contain real_talk or fallout content. They are SEPARATE fields.
 - part_2 must answer SO WHAT — name the concrete second-order consequence. NO vague abstractions.
 - real_talk must name ONE specific visceral consequence. NOT abstract principles.
+- fallout must name ONE concrete forward consequence — what happens NEXT, what escalates, the ripple effect.
 - Create ORIGINAL metaphors. These are BANNED — never use: 'erase the status quo like a bad drawing', 'old switcheroo', 'dance floor on fire', 'crashing the party', 'flip the script'
 - The ONLY approved cartoon exclamation is 'Ssssmokin''. Do NOT invent random exclamations.
-- Each non-last story must have a "segue" field that bridges BOTH stories — reference what just happened AND what comes next. Generic bridges like 'just wait!' are FORBIDDEN.
+- Each non-last story must have a "segue" field that bridges FROM this story's FALLOUT to the next story's HOOK. Reference what just escalated AND what comes next. Generic bridges like 'just wait!' are FORBIDDEN.
 - Manic, chaotic, fast-talking energy — but the facts are REAL and DENSE
 - The real_talk field is where The Mask drops the act — NO caps, NO exclamations, just flat visceral truth
-- Target: 200-280 words total for ~80-100 seconds.
-- ALL {num_stories} stories must be roughly equal word count (100-140 words each). Max 20 words difference.
+- fallout continues the real_talk tone — factual, forward-looking, no exclamations
+- Target: 150-170 words total for ~65-70 seconds.
+- ALL {num_stories} stories must be roughly equal word count (~68-78 words each). Max 15 words difference.
 - GEOGRAPHIC ANCHOR: On first mention, every country or nation MUST carry a brief regional descriptor. Examples: "the Gulf kingdom of Bahrain", "Iran, the Middle Eastern power", "Ukraine, in Eastern Europe". No bare country names on first mention.
-- CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing in narration fields is FORBIDDEN. The last story MUST end with real_talk — NOT a conclusion or summary."""
+- CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing in narration fields is FORBIDDEN. The last story MUST end with fallout — NOT a conclusion or summary."""
         
         # ── OPENAI CLOUD FIRST, LOCAL FALLBACK ──
         response = None
@@ -924,9 +1313,9 @@ CRITICAL RULES:
                 print(f"  [VALIDATE] Story {i+1} real_talk fallback injected")
         
         # ══════════════════════════════════════════════════════════════
-        # VALIDATION 3: Word count enforcement (160-280 words)
+        # VALIDATION 3: Word count enforcement (130-170 words)
         # ══════════════════════════════════════════════════════════════
-        MIN_WORDS = 160
+        MIN_WORDS = 130
         
         # Build a preliminary full_text to count words
         _prelim_parts = []
@@ -936,6 +1325,7 @@ CRITICAL RULES:
             _prelim_parts.append(s.get('part_1_narration', ''))
             _prelim_parts.append(s.get('part_2_narration', ''))
             _prelim_parts.append(s.get('real_talk', ''))
+            _prelim_parts.append(s.get('fallout', ''))
             _prelim_parts.append(s.get('segue', ''))
         _prelim_text = ' '.join(filter(None, _prelim_parts))
         _prelim_words = len(_prelim_text.split())
@@ -946,13 +1336,13 @@ CRITICAL RULES:
             for retry_attempt in range(3):
                 expand_prompt = (
                     f"The script you generated is only {_prelim_words} words. "
-                    f"It MUST be 200-280 words total. Currently it is TOO SHORT.\n\n"
+                    f"It MUST be 150-170 words total. Currently it is TOO SHORT.\n\n"
                     f"Current script JSON:\n{json.dumps(script, indent=2, ensure_ascii=False)[:3000]}\n\n"
-                    f"EXPAND each story's part_1_narration and part_2_narration to 45-60 words each. "
-                    f"EXPAND each real_talk to 15-20 words. "
+                    f"EXPAND each story's part_1_narration to 18-22 words, part_2_narration to 22-28 words. "
+                    f"EXPAND each real_talk to 12-16 words, fallout to 10-14 words. "
                     f"Add MORE specific facts, names, numbers, and original metaphors.\n"
                     f"Keep the SAME story topics and angles — just make them LONGER and MORE DETAILED.\n"
-                    f"Target: 200-280 words total. Currently: {_prelim_words} words. Need at least {MIN_WORDS - _prelim_words} more.\n\n"
+                    f"Target: 150-170 words total. Currently: {_prelim_words} words. Need at least {MIN_WORDS - _prelim_words} more.\n\n"
                     f"Return ONLY the corrected JSON with all {num_stories} stories expanded."
                 )
                 expand_response = self.generate(
@@ -974,6 +1364,7 @@ CRITICAL RULES:
                                 _exp_parts.append(s.get('part_1_narration', ''))
                                 _exp_parts.append(s.get('part_2_narration', ''))
                                 _exp_parts.append(s.get('real_talk', ''))
+                                _exp_parts.append(s.get('fallout', ''))
                                 _exp_parts.append(s.get('segue', ''))
                             _exp_words = len(' '.join(filter(None, _exp_parts)).split())
                             
@@ -987,16 +1378,116 @@ CRITICAL RULES:
                                 print(f"  [VALIDATE] Expansion retry {retry_attempt+1}: {_exp_words} words — still short")
                                 # Keep trying with updated count
                                 _prelim_words = _exp_words
-                
-            # Final word count after retries
-            _final_parts = [script.get('greeting', ''), script.get('intro_hook', '')]
-            for s in script.get('stories', []):
-                _final_parts.append(s.get('part_1_narration', ''))
-                _final_parts.append(s.get('part_2_narration', ''))
-                _final_parts.append(s.get('real_talk', ''))
-                _final_parts.append(s.get('segue', ''))
-            _final_words = len(' '.join(filter(None, _final_parts)).split())
-            print(f"  [VALIDATE] Final word count: {_final_words} words (target: {MIN_WORDS}-280)")
+        
+        # Final word count (always runs, regardless of whether expansion happened)
+        _final_parts = [script.get('greeting', ''), script.get('intro_hook', '')]
+        for s in script.get('stories', []):
+            _final_parts.append(s.get('part_1_narration', ''))
+            _final_parts.append(s.get('part_2_narration', ''))
+            _final_parts.append(s.get('real_talk', ''))
+            _final_parts.append(s.get('fallout', ''))
+            _final_parts.append(s.get('segue', ''))
+        _final_words = len(' '.join(filter(None, _final_parts)).split())
+        print(f"  [VALIDATE] Final word count: {_final_words} words (target: {MIN_WORDS}-170)")
+        
+        # ═══ VALIDATION 3b: MAX_WORDS ceiling (script too long) ═══
+        MAX_WORDS = 170
+        if _final_words > MAX_WORDS:
+            print(f"  [VALIDATE] Script too long: {_final_words} words (max {MAX_WORDS}) — requesting compression")
+            
+            for retry_attempt in range(3):
+                compress_prompt = (
+                    f"The script you generated is {_final_words} words. "
+                    f"It MUST be 150-170 words total. Currently it is TOO LONG.\n\n"
+                    f"Current script JSON:\n{json.dumps(script, indent=2, ensure_ascii=False)[:3000]}\n\n"
+                    f"COMPRESS each story to fit 150-170 words total:\n"
+                    f"- part_1_narration: trim to 18-22 words (punchy hook only)\n"
+                    f"- part_2_narration: trim to 22-28 words (mechanism, facts only)\n"
+                    f"- real_talk: keep as-is (already short)\n"
+                    f"- fallout: keep as-is (already short)\n"
+                    f"- segue: keep as-is\n\n"
+                    f"Remove filler words, redundant phrases, and any sentence that doesn't add NEW information.\n"
+                    f"Keep the SAME story topics and angles — just make every sentence SHORTER and SHARPER.\n"
+                    f"Target: 150-170 words total. Currently: {_final_words} words. Need to cut at least {_final_words - MAX_WORDS} words.\n\n"
+                    f"Return ONLY the corrected JSON with all {num_stories} stories compressed."
+                )
+                compress_response = self.generate(
+                    prompt=compress_prompt,
+                    model=self.task_models.get("multi_news_synthesizer", self.default_model),
+                    system_prompt=prompt_config["system_prompt"],
+                    temperature=prompt_config["temperature"],
+                    max_tokens=prompt_config["max_tokens"],
+                    task_name="script_synthesizer"
+                )
+                if compress_response:
+                    compress_script = self._extract_json(compress_response)
+                    if compress_script and isinstance(compress_script, dict) and compress_script.get('stories'):
+                        compress_words_parts = [compress_script.get('greeting', ''), compress_script.get('intro_hook', '')]
+                        for s in compress_script.get('stories', []):
+                            compress_words_parts.append(s.get('part_1_narration', ''))
+                            compress_words_parts.append(s.get('part_2_narration', ''))
+                            compress_words_parts.append(s.get('real_talk', ''))
+                            compress_words_parts.append(s.get('fallout', ''))
+                            compress_words_parts.append(s.get('segue', ''))
+                        compress_words = len(' '.join(filter(None, compress_words_parts)).split())
+                        
+                        if compress_words <= MAX_WORDS:
+                            # Fidelity check: ensure compressed script preserved key entities
+                            _fidelity_ok = True
+                            for ci, (orig, comp) in enumerate(zip(script.get('stories', []), compress_script.get('stories', []))):
+                                orig_body = f"{orig.get('part_1_narration','')} {orig.get('part_2_narration','')} {orig.get('real_talk','')} {orig.get('fallout','')}"
+                                comp_body = f"{comp.get('part_1_narration','')} {comp.get('part_2_narration','')} {comp.get('real_talk','')} {comp.get('fallout','')}"
+                                if orig_body and comp_body and not self._check_content_fidelity(orig_body, comp_body):
+                                    print(f"  [VALIDATE] Compression retry {retry_attempt+1}: Story {ci+1} failed fidelity check — skipping")
+                                    _fidelity_ok = False
+                                    break
+                            if not _fidelity_ok:
+                                continue
+                            
+                            script = compress_script
+                            script['greeting'] = script.get('greeting', greeting)
+                            # Re-run enforcement after compression to maintain structure
+                            script = self._enforce_segues(script)
+                            script = self._dedup_segue_overlap(script)
+                            script = self._dedup_inter_story_phrases(script)
+                            script = self._enforce_fallout(script, news_analyses)
+                            script = self._enforce_greeting(script)
+                            stories = script.get('stories', [])
+                            # Recount after enforcement
+                            _ef_parts = [script.get('greeting', ''), script.get('intro_hook', '')]
+                            for s in stories:
+                                for f in ('part_1_narration', 'part_2_narration', 'real_talk', 'fallout', 'segue'):
+                                    _ef_parts.append(s.get(f, ''))
+                            _final_words = len(' '.join(filter(None, _ef_parts)).split())
+                            print(f"  [VALIDATE] Compression retry {retry_attempt+1} success — {_final_words} words after enforcement")
+                            _final_words = compress_words
+                            break
+                        else:
+                            print(f"  [VALIDATE] Compression retry {retry_attempt+1}: {compress_words} words — still over {MAX_WORDS}")
+            
+            if _final_words > MAX_WORDS:
+                print(f"  [VALIDATE] Could not compress below {MAX_WORDS} — using best available ({_final_words} words)")
+        
+        # ═══ VALIDATION 3c: Per-segment word count enforcement ═══
+        SEGMENT_LIMITS = {
+            'part_1_narration': (15, 25),
+            'part_2_narration': (20, 32),
+            'real_talk': (10, 18),
+            'fallout': (8, 16),
+            'segue': (6, 15),
+            'greeting': (2, 15),
+            'intro_hook': (5, 15),
+        }
+        for i, story in enumerate(script.get('stories', [])):
+            for field, (lo, hi) in SEGMENT_LIMITS.items():
+                if field in ('greeting', 'intro_hook'):
+                    continue
+                text = story.get(field, '')
+                wc = len(text.split()) if text else 0
+                if wc > hi:
+                    print(f"  [VALIDATE] Story {i+1} {field}: {wc} words (max {hi}) — over segment limit")
+                elif wc > 0 and wc < lo:
+                    print(f"  [VALIDATE] Story {i+1} {field}: {wc} words (min {lo}) — under segment limit")
         
         # ── Build segment timeline from part_1/part_2 format ──
         # Each segment maps to an image: [segment_text, image_index]
@@ -1019,7 +1510,7 @@ CRITICAL RULES:
         })
         
         for i, story in enumerate(script['stories']):
-            img_base = i * 3  # Story 0 → images 0,1,2; Story 1 → images 3,4,5
+            img_base = i * 4  # Story 0 → images 0,1,2,3; Story 1 → images 4,5,6,7
             
             # Part 1 narration → image (img_base) — THE HOOK
             part_1 = story.get('part_1_narration', '')
@@ -1048,12 +1539,21 @@ CRITICAL RULES:
                     'label': f'story_{i+1}_real_talk'
                 })
             
-            # SEGUE → content bridge to next story (keep same image as real_talk)
+            # Fallout → image (img_base + 3) — THE FALLOUT (what happens next)
+            fallout = story.get('fallout', '')
+            if fallout:
+                segment_timeline.append({
+                    'text': fallout,
+                    'image_idx': img_base + 3,
+                    'label': f'story_{i+1}_fallout'
+                })
+            
+            # SEGUE → content bridge to next story (keep same image as fallout)
             segue = story.get('segue', story.get('transition', ''))
             if segue and i < len(script['stories']) - 1:
                 segment_timeline.append({
                     'text': segue,
-                    'image_idx': img_base + 2,
+                    'image_idx': img_base + 3,
                     'label': f'story_{i+1}_segue'
                 })
             
@@ -1061,17 +1561,23 @@ CRITICAL RULES:
             if i < len(script['stories']) - 1:
                 segment_timeline.append({
                     'text': '....',
-                    'image_idx': img_base + 2,
+                    'image_idx': img_base + 3,
                     'label': f'story_{i+1}_separator',
                     'is_separator': True
                 })
         
-        # Closing → ALWAYS use unified closing (never trust LLM output for this)
-        closing = self.UNIFIED_CLOSING
+        # Closing → dynamic closing referencing last story topic
+        stories = script.get('stories', [])
+        last_story = stories[-1] if stories else {}
+        last_topic = last_story.get('topic', '') or (news_analyses[-1].get('topic', '') if news_analyses else '')
+        last_fallout = last_story.get('fallout', '')
+        self._last_story_topic = last_topic
+        self._last_fallout = last_fallout
+        closing = self._build_dynamic_closing(last_fallout=last_fallout, last_topic=last_topic)
         script['closing'] = closing
         segment_timeline.append({
             'text': closing,
-            'image_idx': (len(script['stories']) - 1) * 3 + 2,
+            'image_idx': (len(script['stories']) - 1) * 4 + 3,
             'label': 'closing'
         })
         
@@ -1084,33 +1590,120 @@ CRITICAL RULES:
         script['full_text'] = full_text
         script['segment_timeline'] = segment_timeline
         
-        # Extract visual prompts from stories (part_1_visual, part_2_visual)
+        # Extract visual prompts from stories (part_1_visual, part_2_visual, real_talk_visual, fallout_visual)
+        # Fallback chain: visual field → narration-to-visual conversion → narration text
         visual_prompts = []
         for i, story in enumerate(script['stories']):
+            p1_visual = story.get('part_1_visual', '')
+            p2_visual = story.get('part_2_visual', '')
+            rt_visual = story.get('real_talk_visual', '')
+            fo_visual = story.get('fallout_visual', '')
+
+            p1_narr = story.get('part_1_narration', '')
+            p2_narr = story.get('part_2_narration', '')
+            rt_narr = story.get('real_talk', '')
+            fo_narr = story.get('fallout', '')
+
             visual_prompts.append({
                 'scene': f'story_{i+1}_part1',
-                'description': story.get('part_1_visual', story.get('mini_hook', ''))
+                'description': self._ensure_visual_prompt(p1_visual, p1_narr, 'hook')
             })
             visual_prompts.append({
                 'scene': f'story_{i+1}_part2',
-                'description': story.get('part_2_visual', story.get('body', ''))
+                'description': self._ensure_visual_prompt(p2_visual, p2_narr, 'mechanism')
             })
             visual_prompts.append({
                 'scene': f'story_{i+1}_real_talk',
-                'description': story.get('real_talk_visual', story.get('part_2_visual', ''))
+                'description': self._ensure_visual_prompt(rt_visual, rt_narr, 'truth')
+            })
+            visual_prompts.append({
+                'scene': f'story_{i+1}_fallout',
+                'description': self._ensure_visual_prompt(fo_visual, fo_narr, 'fallout')
             })
         script['all_visual_scenes'] = visual_prompts
+        
+        # ── VALIDATE VISUAL FIELDS: Rewrite narration-style prompts to composition-style ──
+        for i, story in enumerate(script['stories']):
+            for field, narr_field, scene_type in [
+                ('part_1_visual', 'part_1_narration', 'hook'),
+                ('part_2_visual', 'part_2_narration', 'mechanism'),
+                ('real_talk_visual', 'real_talk', 'truth'),
+                ('fallout_visual', 'fallout', 'fallout'),
+            ]:
+                visual = story.get(field, '').strip()
+                narration = story.get(narr_field, '').strip()
+                if visual and not LLMInterface._validate_visual_prompt_composition(visual):
+                    rewritten = LLMInterface._ensure_visual_prompt(visual, narration, scene_type)
+                    story[field] = rewritten
+                    if rewritten != visual:
+                        print(f"  [VISUAL] Story {i+1} {field}: narration-style → composition-style")
         
         # ENFORCE SEGUES: Guarantee every non-last story has a strong segue
         script = self._enforce_segues(script)
         
-        # Rebuild segment_timeline after segue enforcement
-        # (segues may have changed)
-        for seg in segment_timeline:
-            if 'segue' in seg['label']:
-                story_idx = int(seg['label'].split('_')[1]) - 1
-                if story_idx < len(script['stories']):
-                    seg['text'] = script['stories'][story_idx].get('segue', seg['text'])
+        # DEDUP SEGUE ↔ NEXT PART_1 OVERLAP
+        script = self._dedup_segue_overlap(script)
+        
+        # DEDUP INTER-STORY PHRASES: Remove 3-gram overlap across story boundaries
+        script = self._dedup_inter_story_phrases(script)
+        
+        # ENFORCE FALLOUT: Guarantee every story has a fallout field
+        script = self._enforce_fallout(script, news_analyses)
+        
+        # ENFORCE GREETING: Guarantee greeting and intro_hook are non-empty
+        script = self._enforce_greeting(script)
+        
+        # Rebuild segment_timeline after enforcement (dedup may have modified part_1, real_talk, fallout)
+        segment_timeline = []
+        greeting_seg = script.get('greeting', '')
+        if greeting_seg:
+            segment_timeline.append({
+                'text': greeting_seg,
+                'image_idx': -1,
+                'label': 'greeting'
+            })
+        intro_hook = script.get('intro_hook', '')
+        if intro_hook:
+            segment_timeline.append({
+                'text': intro_hook,
+                'image_idx': -1,
+                'label': 'intro_hook'
+            })
+        segment_timeline.append({
+            'text': '....',
+            'image_idx': -1,
+            'label': 'intro_pause',
+            'is_separator': True
+        })
+        for i, story in enumerate(script['stories']):
+            img_base = i * 4
+            for field, suffix, img_off in [
+                ('part_1_narration', 'part1', 0),
+                ('part_2_narration', 'part2', 1),
+                ('real_talk', 'real_talk', 2),
+                ('fallout', 'fallout', 3),
+            ]:
+                val = story.get(field, '')
+                if val:
+                    segment_timeline.append({
+                        'text': val,
+                        'image_idx': img_base + img_off,
+                        'label': f'story_{i+1}_{suffix}'
+                    })
+            segue = story.get('segue', story.get('transition', ''))
+            if segue and i < len(script['stories']) - 1:
+                segment_timeline.append({
+                    'text': segue,
+                    'image_idx': img_base + 3,
+                    'label': f'story_{i+1}_segue'
+                })
+            if i < len(script['stories']) - 1:
+                segment_timeline.append({
+                    'text': '....',
+                    'image_idx': img_base + 3,
+                    'label': f'story_{i+1}_separator',
+                    'is_separator': True
+                })
         
         # Rebuild full_text with enforced segues
         full_parts = [seg['text'] for seg in segment_timeline]
@@ -1137,13 +1730,14 @@ CRITICAL RULES:
         script['estimated_duration'] = int(script['word_count'] / 2.5)
         
         print(f"  [MULTI-NEWS] Script: {len(script['stories'])} stories, {script['word_count']} words, ~{script['estimated_duration']}s")
-        print(f"  [MULTI-NEWS] Timeline: {len(segment_timeline)} segments → {len(script['stories']) * 3} images")
+        print(f"  [MULTI-NEWS] Timeline: {len(segment_timeline)} segments → {len(script['stories']) * 4} images")
         for seg in segment_timeline:
             print(f"    [{seg['label']}] → img#{seg['image_idx']}: \"{seg['text'][:50]}...\"")
         
         return script
     
-    def _extract_key_entities(self, text: str) -> set:
+    @staticmethod
+    def _extract_key_entities(text: str) -> set:
         """Extract key proper nouns, country names, and numbers from text."""
         import re
         
@@ -1226,22 +1820,24 @@ CRITICAL RULES:
         """
         prompt_config = self.config["prompts"]["script_curator"]
         
-        # ── EXTRACT ONLY STORY BODIES ──
+        # ── EXTRACT ONLY STORY BODIES (including fallout) ──
         story_bodies = []
         for i, story in enumerate(script.get('stories', [])):
             p1 = story.get('part_1_narration', '')
             p2 = story.get('part_2_narration', '')
             rt = story.get('real_talk', '')
-            body = f"{p1} {p2} {rt}".strip()
+            fo = story.get('fallout', '')
+            body = f"{p1} {p2} {rt} {fo}".strip()
             story_bodies.append(body)
         
         if len(story_bodies) < 2:
             print(f"  [CURATOR] Not enough stories to curate ({len(story_bodies)}), using original")
             return script.get('full_text', '')
         
-        # Build body-only text with clear story markers
+        # Build body text with 4-part structure markers so the curator preserves them
         body_text = "\n\n---\n\n".join(
-            f"[STORY {i+1}]\n{body}" for i, body in enumerate(story_bodies)
+            f"[STORY {i+1}]\n[HOOK] {story.get('part_1_narration', '')}\n[MECHANISM] {story.get('part_2_narration', '')}\n[REAL_TALK] {story.get('real_talk', '')}\n[FALLOUT] {story.get('fallout', '')}"
+            for i, story in enumerate(script.get('stories', []))
         )
         
         prompt = f"""Transform these {len(story_bodies)} story narrations from written text into The Mask's manic spoken language.
@@ -1253,7 +1849,6 @@ RULES:
 - NEVER change facts, numbers, or country names
 - NEVER add or remove information
 - NEVER change catchphrases, exclamations, or Mask personality quirks — only fix rhythm and punctuation
-- Strip any [STORY N] markers from the output — they are internal markers, not spoken text
 - Break long sentences into short punchy ones — The Mask speaks in rapid-fire BURSTS
 - Use PERIODS for dramatic pauses before punchlines
   Example: 'Classic leverage play. Disguised as safety.' NOT 'Classic leverage play... disguised as safety.'
@@ -1263,20 +1858,27 @@ RULES:
 - Create rhythm: alternate short punchy + longer explanatory sentences
 - Before every punchline/reveal, end previous sentence with a PERIOD, start punchline as new sentence
 - After rhetorical questions, use a period before the answer
-- Balance all stories to roughly equal word count (100-140 words each)
-- Keep the [STORY N] markers exactly as they are in the input, but strip them from the output
-- Output all {len(story_bodies)} stories, one after another, separated by --- lines
+- Balance all stories to roughly equal word count (75-85 words each)
+- Output all {len(story_bodies)} stories, separated by --- lines
 
-THE MASK VOICE:
-- ALL CAPS on 5-8 KEY WORDS per story — The Mask is LOUD
-- Exclamation marks (!) after cartoon reveals
-- Phonetic emphasis: Ssssmokin', Rrrroww
-- Real Talk moments: NO caps, NO exclamations, just flat truth with periods
+    STRUCTURE AWARENESS — CRITICAL:
+Each story body has 4 distinct segments that MUST be preserved separately:
+- HOOK (part_1): manic energy, short punchy sentences
+- MECHANISM (part_2): speed-talk the facts, connecting the dots
+- REAL TALK: the mask DROPS. NO caps. NO exclamations. One flat sentence with a period.
+- FALLOUT: SAME flat tone. Forward-looking. One sentence. Period at end.
+The CONTRAST between manic (HOOK/MECHANISM) and flat (REAL TALK/FALLOUT) is the comedy. Do NOT flatten them together.
+
+Output EACH story as exactly 4 lines with these EXACT markers:
+[HOOK] curated hook text here
+[MECHANISM] curated mechanism text here
+[REAL_TALK] curated real talk text here
+[FALLOUT] curated fallout text here
+
+Separate stories with ---. No JSON. No explanations.
 
 ORIGINAL STORY NARRATIONS:
-{body_text}
-
-Output the {len(story_bodies)} curated stories as plain text. Separate stories with ---. No JSON. No explanations."""
+{body_text}"""
 
         # ── OLLAMA ONLY: Curation contains geopolitical narration
         # that triggers GLM-5's content filter (1301). No cloud fallback.
@@ -1300,30 +1902,40 @@ Output the {len(story_bodies)} curated stories as plain text. Separate stories w
             curated = curated.rsplit('```', 1)[0]
         curated = curated.strip()
         
-        # ── PARSE CURATED BODIES BACK INTO 3 STORIES ──
-        curated_bodies = self._parse_curated_stories(curated, len(story_bodies))
+        # ── PARSE CURATED BODIES BACK INTO 4-PART STRUCTURES ──
+        curated_structures = self._parse_curated_structures(curated, len(story_bodies))
         
-        if not curated_bodies or len(curated_bodies) < len(story_bodies):
-            print(f"  [CURATOR] Could not parse {len(story_bodies)} stories from response (got {len(curated_bodies) if curated_bodies else 0}), using original")
+        if not curated_structures or len(curated_structures) < len(story_bodies):
+            print(f"  [CURATOR] Could not parse {len(story_bodies)} stories from response (got {len(curated_structures) if curated_structures else 0}), using original")
             return self._reassemble_script(script, story_bodies)
         
         # ── PER-STORY FIDELITY CHECK ──
         for i in range(len(story_bodies)):
-            if not self._check_content_fidelity(story_bodies[i], curated_bodies[i]):
+            curated_body = ' '.join(v for v in curated_structures[i].values() if v)
+            if not self._check_content_fidelity(story_bodies[i], curated_body):
                 print(f"  [CURATOR] ⚠️ Story {i+1} failed fidelity check — using original narration")
-                curated_bodies[i] = story_bodies[i]
+                curated_structures[i] = {
+                    'hook': script['stories'][i].get('part_1_narration', ''),
+                    'mechanism': script['stories'][i].get('part_2_narration', ''),
+                    'real_talk': script['stories'][i].get('real_talk', ''),
+                    'fallout': script['stories'][i].get('fallout', ''),
+                }
         
-        # ── UPDATE STORY NARRATIONS WITH CURATED TEXT ──
-        import re as _re
-        for i, body in enumerate(curated_bodies):
+        # ── UPDATE STORY NARRATIONS WITH CURATED TEXT (4-PART STRUCTURE) ──
+        for i, structure in enumerate(curated_structures):
             if i < len(script.get('stories', [])):
-                sentences = _re.split(r'(?<=[.!?])\s+', body.strip())
-                mid = max(1, len(sentences) // 2)
-                script['stories'][i]['part_1_narration'] = ' '.join(sentences[:mid])
-                script['stories'][i]['part_2_narration'] = ' '.join(sentences[mid:])
+                if structure.get('hook'):
+                    script['stories'][i]['part_1_narration'] = structure['hook']
+                if structure.get('mechanism'):
+                    script['stories'][i]['part_2_narration'] = structure['mechanism']
+                if structure.get('real_talk'):
+                    script['stories'][i]['real_talk'] = structure['real_talk']
+                if structure.get('fallout'):
+                    script['stories'][i]['fallout'] = structure['fallout']
         script['_curated'] = True
 
         # ── REASSEMBLE WITH STRUCTURAL ELEMENTS ──
+        curated_bodies = [' '.join(v for v in s.values() if v) for s in curated_structures]
         result = self._reassemble_script(script, curated_bodies)
         
         total_orig = sum(len(b.split()) for b in story_bodies)
@@ -1370,6 +1982,81 @@ Output the {len(story_bodies)} curated stories as plain text. Separate stories w
         
         return None
     
+    def _parse_curated_structures(self, curated_text: str, expected_count: int) -> Optional[List[Dict[str, str]]]:
+        """
+        Parse curated LLM response back into 4-part structures per story.
+        Expects [HOOK], [MECHANISM], [REAL_TALK], [FALLOUT] markers.
+        Falls back to quarter-split if markers are absent.
+        """
+        import re
+        
+        MARKER_RE = re.compile(r'\[(HOOK|MECHANISM|REAL_TALK|FALLOUT)\]\s*', re.IGNORECASE)
+        
+        stories = []
+        raw_stories = []
+        
+        # Split by [STORY N] markers or --- separators
+        story_pattern = r'\[STORY\s+\d+\]\s*\n?'
+        parts = re.split(story_pattern, curated_text)
+        parts = [p.strip() for p in parts if p.strip()]
+        
+        if len(parts) < expected_count and '---' in curated_text:
+            parts = curated_text.split('---')
+            parts = [re.sub(r'^\[STORY\s+\d+\]\s*\n?', '', p).strip() for p in parts if p.strip()]
+        
+        if not parts:
+            return None
+        
+        for part in parts:
+            # Split by markers — capturing group includes marker names in result
+            # so filter them out before mapping to field names
+            segments = MARKER_RE.split(part)
+            marker_names = {'HOOK', 'MECHANISM', 'REAL_TALK', 'FALLOUT'}
+            content_segments = [s.strip() for s in segments if s.strip() and s.strip().upper() not in marker_names]
+            
+            if len(content_segments) >= 4:
+                structure = {
+                    'hook': content_segments[0] if len(content_segments) > 0 else '',
+                    'mechanism': content_segments[1] if len(content_segments) > 1 else '',
+                    'real_talk': content_segments[2] if len(content_segments) > 2 else '',
+                    'fallout': content_segments[3] if len(content_segments) > 3 else '',
+                }
+            elif len(content_segments) >= 2:
+                structure = {
+                    'hook': content_segments[0] if len(content_segments) > 0 else '',
+                    'mechanism': content_segments[1] if len(content_segments) > 1 else '',
+                }
+                # Fill missing fields from quarter-split of remaining text
+                remaining_text = ' '.join(s for s in content_segments if s)
+                if not structure['mechanism'] and remaining_text:
+                    sents = re.split(r'(?<=[.!?])\s+', remaining_text)
+                    q = max(1, len(sents) // 4)
+                    structure['hook'] = structure['hook'] or ' '.join(sents[:q])
+                    structure['mechanism'] = structure['mechanism'] or ' '.join(sents[q:q*2])
+                    structure['real_talk'] = structure['real_talk'] or ' '.join(sents[q*2:q*3])
+                    structure['fallout'] = structure['fallout'] or ' '.join(sents[q*3:])
+            else:
+                # No markers at all: quarter-split entire text
+                all_sents = re.split(r'(?<=[.!?])\s+', part)
+                q = max(1, len(all_sents) // 4)
+                structure = {
+                    'hook': ' '.join(all_sents[:q]),
+                    'mechanism': ' '.join(all_sents[q:q*2]),
+                    'real_talk': ' '.join(all_sents[q*2:q*3]),
+                    'fallout': ' '.join(all_sents[q*3:]),
+                }
+            stories.append(structure)
+        
+        while len(stories) < expected_count:
+            stories.append({'hook': '', 'mechanism': '', 'real_talk': '', 'fallout': ''})
+        
+        # Convert structures back to body strings for _reassemble_script compatibility
+        curated_bodies = []
+        for s in stories:
+            curated_bodies.append(' '.join(v for v in s.values() if v))
+        
+        return stories[:expected_count]
+    
     def _reassemble_script(self, script: dict, story_bodies: List[str]) -> str:
         """
         Deterministically reassemble the full script from structural elements + curated bodies.
@@ -1385,25 +2072,29 @@ Output the {len(story_bodies)} curated stories as plain text. Separate stories w
         if intro_hook:
             parts.append(intro_hook)
         
-        # Stories with real_talk and segues
+        # Stories with real_talk, fallout, and segues
         stories = script.get('stories', [])
         for i in range(len(story_bodies)):
             body = story_bodies[i]
             story = stories[i] if i < len(stories) else {}
             original_rt = story.get('real_talk', '')
+            original_fo = story.get('fallout', '')
 
+            # Strip real_talk from body if already present (avoid duplication)
             if original_rt and original_rt.strip() in body:
-                # body already contains real_talk — strip it to avoid duplication
-                # when _rebuild_timeline adds real_talk as a separate segment
                 body = body.replace(original_rt.strip(), '').strip()
                 body = re.sub(r'\s*[-—]+\s*$', '', body).strip()
-                parts.append(body)
+            
+            # Strip fallout from body if already present (avoid duplication)
+            if original_fo and original_fo.strip() in body:
+                body = body.replace(original_fo.strip(), '').strip()
+                body = re.sub(r'\s*[-—]+\s*$', '', body).strip()
+            
+            parts.append(body)
+            if original_rt:
                 parts.append(original_rt)
-            elif original_rt:
-                parts.append(body)
-                parts.append(original_rt)
-            else:
-                parts.append(body)
+            if original_fo:
+                parts.append(original_fo)
             
             # Add segue + separator after non-last stories
             if i < len(story_bodies) - 1:
@@ -1478,7 +2169,7 @@ Output the {len(story_bodies)} curated stories as plain text. Separate stories w
     def generate_visual_prompts(self, script: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """
         Generate dedicated visual prompts from curated narration text.
-        3 scenes per story (hook, mechanism, truth).
+        4 scenes per story (hook, mechanism, truth, fallout).
         
         Args:
             script: Script dict with 'stories' array
@@ -1496,14 +2187,14 @@ Output the {len(story_bodies)} curated stories as plain text. Separate stories w
             print("  [VISUAL-GEN] No stories in script, skipping")
             return None
         
-        num_scenes = len(stories) * 3
+        num_scenes = len(stories) * 4
         
-        # Build narration block — 3 segments per story (part_1, part_2, real_talk)
         narration_block = ""
         for i, story in enumerate(stories, 1):
             p1 = story.get('part_1_narration', story.get('mini_hook', ''))
             p2 = story.get('part_2_narration', story.get('body', ''))
             rt = story.get('real_talk', '')
+            fo = story.get('fallout', '')
             narration_block += f"""
 --- story_{i}_part1 (THE HOOK for Story {i}) ---
 NARRATION: "{p1}"
@@ -1513,19 +2204,33 @@ NARRATION: "{p2}"
 
 --- story_{i}_real_talk (THE TRUTH for Story {i}) ---
 NARRATION: "{rt}"
+
+--- story_{i}_fallout (THE FALLOUT for Story {i}) ---
+NARRATION: "{fo}"
 """
         
         system_prompt = prompt_config["system_prompt"]
         
+        scene_mapping_lines = []
+        for i, story in enumerate(stories, 1):
+            scene_mapping_lines.append(f"- story_{i}_part1 → THE HOOK — visually depict what Story {i} Part 1 narration describes")
+            scene_mapping_lines.append(f"- story_{i}_part2 → THE MECHANISM — visually depict what Story {i} Part 2 narration describes")
+            scene_mapping_lines.append(f"- story_{i}_real_talk → THE TRUTH — visually depict the visceral consequence from Story {i} real_talk")
+            scene_mapping_lines.append(f"- story_{i}_fallout → THE FALLOUT — visually depict the forward consequence from Story {i} fallout")
+        scene_mapping = "\n".join(scene_mapping_lines)
+        
+        scene_json_entries = []
+        for i, story in enumerate(stories, 1):
+            scene_json_entries.append(f'    {{"scene": "story_{i}_part1", "description": "..."}}')
+            scene_json_entries.append(f'    {{"scene": "story_{i}_part2", "description": "..."}}')
+            scene_json_entries.append(f'    {{"scene": "story_{i}_real_talk", "description": "..."}}')
+            scene_json_entries.append(f'    {{"scene": "story_{i}_fallout", "description": "..."}}')
+        scene_json = ",\n".join(scene_json_entries)
+        
         user_prompt = f"""You MUST generate exactly {num_scenes} visual scene descriptions. Each scene MUST depict EXACTLY what the corresponding narration says.
 
 CRITICAL MAPPING RULES — DO NOT shuffle or rearrange:
-- story_1_part1 → THE HOOK — visually depict what Story 1 Part 1 narration describes
-- story_1_part2 → THE MECHANISM — visually depict what Story 1 Part 2 narration describes
-- story_1_real_talk → THE TRUTH — visually depict the visceral consequence from Story 1 real_talk
-- story_2_part1 → THE HOOK — visually depict what Story 2 Part 1 narration describes
-- story_2_part2 → THE MECHANISM — visually depict what Story 2 Part 2 narration describes
-- story_2_real_talk → THE TRUTH — visually depict the visceral consequence from Story 2 real_talk
+{scene_mapping}
 
 NARRATION SEGMENTS:
 {narration_block}
@@ -1544,12 +2249,7 @@ Each description MUST be 2-4 FULL SENTENCES. Start with "16-bit isometric pixel 
 Output ONLY valid JSON:
 {{
   "scenes": [
-    {{"scene": "story_1_part1", "description": "..."}},
-    {{"scene": "story_1_part2", "description": "..."}},
-    {{"scene": "story_1_real_talk", "description": "..."}},
-    {{"scene": "story_2_part1", "description": "..."}},
-    {{"scene": "story_2_part2", "description": "..."}},
-    {{"scene": "story_2_real_talk", "description": "..."}}
+{scene_json}
   ]
 }}"""
         
@@ -1595,7 +2295,9 @@ Output ONLY valid JSON:
             if word_count < 5:
                 print(f"  [VISUAL-GEN] Scene {i} too short ({word_count} words), using fallback")
                 scenes[i]['description'] = '16-bit isometric pixel art scene: Geopolitical world map with highlighted regions, military assets in foreground left, dramatic sunset lighting'
-            scenes[i]['scene'] = scenes[i].get('scene', f'story_{(i//3)+1}_{"part1" if i%3==0 else "part2" if i%3==1 else "real_talk"}')
+            scene_types = ['part1', 'part2', 'real_talk', 'fallout']
+            default_name = f'story_{(i//4)+1}_{scene_types[i%4]}'
+            scenes[i]['scene'] = scenes[i].get('scene', default_name)
         
         # ── DEDUPLICATION: Detect and regenerate duplicate descriptions ──
         scenes = self._deduplicate_visual_prompts(scenes, user_prompt, system_prompt)
@@ -1604,7 +2306,7 @@ Output ONLY valid JSON:
         for s in scenes:
             print(f"    [{s['scene']}] {s.get('description', '')[:80]}...")
         
-        return scenes[:6]  # Ensure exactly 6
+        return scenes[:num_scenes]
     
     def _deduplicate_visual_prompts(self, scenes: List[Dict], user_prompt: str, system_prompt: str) -> List[Dict]:
         """Detect duplicate visual descriptions using keyword/entity overlap and regenerate them."""

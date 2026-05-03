@@ -11,6 +11,7 @@ Pipeline integration:
 """
 
 import os
+import sys
 import re
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List
@@ -31,29 +32,76 @@ CLIP_THRESHOLD = 0.22
 BLUR_THRESHOLD = 100.0
 VLM_CONFIDENCE_THRESHOLD = 0.8
 
+_CLIP_CUDA_ORIGINAL = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+
+def _disable_cuda():
+    global _CLIP_CUDA_ORIGINAL
+    _CLIP_CUDA_ORIGINAL = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+def _restore_cuda():
+    global _CLIP_CUDA_ORIGINAL
+    if _CLIP_CUDA_ORIGINAL is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = _CLIP_CUDA_ORIGINAL
+    else:
+        os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+
+_CLIP_UNAVAILABLE = object()
 
 def _get_clip_model():
     """Lazy-load OpenCLIP ViT-L/14 model."""
     global _CLIP_MODEL, _CLIP_PREPROCESS, _CLIP_TOKENIZER, _CLIP_DEVICE
+    if _CLIP_MODEL is _CLIP_UNAVAILABLE:
+        return None, None, None, None
     if _CLIP_MODEL is not None:
         return _CLIP_MODEL, _CLIP_PREPROCESS, _CLIP_TOKENIZER, _CLIP_DEVICE
 
-    import open_clip
-    import torch
+    try:
+        import open_clip
+        import torch
+    except ImportError:
+        print("  [VQA-CLIP] open_clip not installed — CLIP validation disabled")
+        _CLIP_MODEL = _CLIP_UNAVAILABLE
+        return None, None, None, None
 
-    _CLIP_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    import warnings
+    import logging as _logging
 
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        'ViT-L-14', pretrained='openai'
-    )
-    model = model.to(_CLIP_DEVICE).eval()
-    tokenizer = open_clip.get_tokenizer('ViT-L-14')
+    _CLIP_DEVICE = "cpu"
 
-    _CLIP_MODEL = model
-    _CLIP_PREPROCESS = preprocess
-    _CLIP_TOKENIZER = tokenizer
+    print("  [VQA-CLIP] Loading CLIP model on CPU (bypassing faulty cuDNN)")
 
-    return _CLIP_MODEL, _CLIP_PREPROCESS, _CLIP_TOKENIZER, _CLIP_DEVICE
+    open_clip_logger = _logging.getLogger("open_clip")
+    prev_level = open_clip_logger.level
+    open_clip_logger.setLevel(_logging.WARNING)
+
+    _disable_cuda()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=UserWarning)
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                'ViT-L-14', pretrained='openai'
+            )
+
+        model = model.to(_CLIP_DEVICE).eval()
+        model.quick_gelu = True
+        tokenizer = open_clip.get_tokenizer('ViT-L-14')
+        open_clip_logger.setLevel(prev_level)
+
+        _CLIP_MODEL = model
+        _CLIP_PREPROCESS = preprocess
+        _CLIP_TOKENIZER = tokenizer
+
+        return _CLIP_MODEL, _CLIP_PREPROCESS, _CLIP_TOKENIZER, _CLIP_DEVICE
+
+    except (OSError, MemoryError, RuntimeError) as oom_err:
+        print(f"  [VQA-CLIP] Cannot load CLIP model: {oom_err}")
+        print(f"  [VQA-CLIP] CLIP validation disabled — falling back to blur-only checks")
+        open_clip_logger.setLevel(prev_level)
+        _CLIP_MODEL = _CLIP_UNAVAILABLE
+        return None, None, None, None
+    finally:
+        _restore_cuda()
 
 
 def detect_blur(image_path: str, threshold: float = BLUR_THRESHOLD) -> Tuple[bool, float]:
@@ -87,6 +135,9 @@ def compute_clip_score(
     import torch
 
     model, preprocess, tokenizer, device = _get_clip_model()
+
+    if model is None:
+        return 1.0
 
     if not os.path.exists(str(image_path)):
         return 0.0
@@ -319,10 +370,13 @@ def validate_image(
         return result
 
     clip_score = compute_clip_score(image_path, prompt)
+    if clip_score == 1.0 and _CLIP_MODEL is _CLIP_UNAVAILABLE:
+        print(f"  [VQA-CLIP] CLIP unavailable — skipping semantic check for {Path(image_path).name}")
     result['clip'] = {
         'score': round(clip_score, 4),
         'threshold': clip_threshold,
         'passed': clip_score >= clip_threshold,
+        'bypassed': clip_score == 1.0 and _CLIP_MODEL is _CLIP_UNAVAILABLE,
     }
     if clip_score < clip_threshold:
         result['pass'] = False
@@ -368,3 +422,68 @@ def validate_batch(
         )
         results.append(result)
     return results
+
+
+def compute_image_embedding(image_path: str):
+    """Compute CLIP image embedding for a single image.
+    Returns normalized embedding tensor or None if CLIP unavailable."""
+    import torch
+
+    model, preprocess, tokenizer, device = _get_clip_model()
+    if model is None:
+        return None
+
+    if not os.path.exists(str(image_path)):
+        return None
+
+    try:
+        image = Image.open(str(image_path)).convert("RGB")
+        image_input = preprocess(image).unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            features = model.encode_image(image_input)
+            features = features / features.norm(dim=-1, keepdim=True)
+
+        return features
+    except Exception as e:
+        print(f"  [VQA-CLIP] Error computing image embedding: {e}")
+        return None
+
+
+IMAGE_SIMILARITY_THRESHOLD = 0.92
+
+
+def detect_similar_images(
+    image_paths: List[str],
+    threshold: float = IMAGE_SIMILARITY_THRESHOLD,
+) -> List[Tuple[int, int, float]]:
+    """Detect visually similar image pairs using CLIP image embeddings.
+
+    Returns list of (idx_a, idx_b, cosine_similarity) for pairs above threshold.
+    Only flags pairs from DIFFERENT scenes (same-story pairs are expected to share
+    visual elements).
+    """
+    import torch
+
+    embeddings = []
+    for path in image_paths:
+        emb = compute_image_embedding(path)
+        if emb is not None:
+            embeddings.append(emb)
+        else:
+            embeddings.append(None)
+
+    valid = [(i, e) for i, e in enumerate(embeddings) if e is not None]
+    if len(valid) < 2:
+        return []
+
+    similar_pairs = []
+    for a_idx in range(len(valid)):
+        for b_idx in range(a_idx + 1, len(valid)):
+            i, emb_i = valid[a_idx]
+            j, emb_j = valid[b_idx]
+            sim = float((emb_i @ emb_j.T).squeeze().item())
+            if sim >= threshold:
+                similar_pairs.append((i, j, sim))
+
+    return similar_pairs

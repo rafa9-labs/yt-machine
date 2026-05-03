@@ -7,7 +7,6 @@ moviepy==1.0.3
 Pillow==10.2.0
 pexels-api==1.0.1
 python-dotenv==1.0.0
-<<<<<<< HEAD
 openai>=1.14.0
 fastmcp>=0.1.0
 opencv-python>=4.9.0
@@ -76,3 +75,7 @@ safetensors>=0.4.3
 huggingface_hub>=0.24.0
 xformers>=0.0.24
 whisperx>=3.0.0
+
+# ── Visual QA ──
+open-clip-torch>=2.24.0
+faster-whisper>=1.0.0

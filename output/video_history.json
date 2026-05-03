@@ -1,150 +1,6 @@
 {
   "videos": [
     {
-      "project_id": 1777316205,
-      "topic": "Oil and gas companies raking in $30m/hour from Iran war, as UK energy bills soar",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "The oil, gas and arms companies profiting from the war on Iran",
-      "created_at": "2026-04-27 19:56:45"
-    },
-    {
-      "project_id": 1777316205,
-      "topic": "Ukraine's drone commander targets Russian oil, troops and morale",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine's drone commander has Russian oil, troops and morale in his sights",
-      "created_at": "2026-04-27 19:56:45"
-    },
-    {
-      "project_id": 1777408087,
-      "topic": "Iran War Drives Energy Prices to Post-Ukraine High",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Iran war to push energy prices to highest since Ukraine invasion: World Bank",
-      "created_at": "2026-04-28 21:28:07"
-    },
-    {
-      "project_id": 1777408087,
-      "topic": "Generational rift in Iranian-American households deepens over war perspectives",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "War deepens generational rift inside Iranian-American households",
-      "created_at": "2026-04-28 21:28:07"
-    },
-    {
-      "project_id": 1777408087,
-      "topic": "UN warns Gaza endures 'ongoing' Israeli strikes",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "UN official warns Gaza faces 'ongoing' deadly Israeli strikes",
-      "created_at": "2026-04-28 21:28:07"
-    },
-    {
-      "project_id": 1777437855,
-      "topic": "US and Latin America condemn China's economic retaliation over Panama Canal",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "US, Latin America countries criticise China\u2019s retaliation over Panama Canal",
-      "created_at": "2026-04-29 05:44:15"
-    },
-    {
-      "project_id": 1777437855,
-      "topic": "King Charles III underscores NATO unity and Ukraine support during US Congress speech",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "King Charles calls for NATO unity, Ukraine support in US Congress speech",
-      "created_at": "2026-04-29 05:44:15"
-    },
-    {
-      "project_id": 1777437855,
-      "topic": "Russia loses key Malian town and helicopter in African front",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Russia lost a town and a helicopter in Mali. It cannot handle two fronts at once \u2013 African and Ukrainian",
-      "created_at": "2026-04-29 05:44:15"
-    },
-    {
-      "project_id": 1777438666,
-      "topic": "Tehran-Moscow flights resume after two-month suspension",
-      "category": "middle_east_conflict",
-      "region": "other",
-      "article_title": "Tehran-Moscow flights resume after two-month suspension",
-      "created_at": "2026-04-29 05:57:46"
-    },
-    {
-      "project_id": 1777438666,
-      "topic": "Ukraine rebukes Israel for buying grain 'stolen' by Russia",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Ukraine's Zelenskyy rebukes Israel for buying grain 'stolen' by Russia",
-      "created_at": "2026-04-29 05:57:46"
-    },
-    {
-      "project_id": 1777438666,
-      "topic": "US and Latin America condemn China's economic retaliation over Panama Canal",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "US, Latin America countries criticise China\u2019s retaliation over Panama Canal",
-      "created_at": "2026-04-29 05:57:46"
-    },
-    {
-      "project_id": 1777470248,
-      "topic": "China's Zero-Tariff Policy for African Products Set to Take Effect in 2026",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Africa: China's Zero-Tariff for African Products Takes Effect May 1 - Envoy",
-      "created_at": "2026-04-29 14:44:08"
-    },
-    {
-      "project_id": 1777470248,
-      "topic": "Russian Attacks on Ukraine Kill Three, Injure Over 10",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "At least three killed, more than 10 injured in Russian attacks on Ukraine",
-      "created_at": "2026-04-29 14:44:08"
-    },
-    {
-      "project_id": 1777470248,
-      "topic": "Ukraine targets Druzhba pipeline to sever Russian oil, influence in EU",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Ukraine targets Druzhba pipeline to sever Russian oil, influence in EU",
-      "created_at": "2026-04-29 14:44:08"
-    },
-    {
-      "project_id": 1777470879,
-      "topic": "Pentagon chief to testify on Iran war",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Pentagon chief to testify on Iran war",
-      "created_at": "2026-04-29 14:54:39"
-    },
-    {
-      "project_id": 1777470879,
-      "topic": "China's Zero-Tariff Policy for African Products Takes Effect May 1",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Africa: China's Zero-Tariff for African Products Takes Effect May 1 - Envoy",
-      "created_at": "2026-04-29 14:54:39"
-    },
-    {
-      "project_id": 1777470879,
-      "topic": "Russian Attacks on Ukraine Cause Casualties and Damage",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "At least three killed, more than 10 injured in Russian attacks on Ukraine",
-      "created_at": "2026-04-29 14:54:39"
-    },
-    {
-      "project_id": 1777479012,
-      "topic": "Pentagon chief to testify on Iran war",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Pentagon chief to testify on Iran war",
-      "created_at": "2026-04-29 17:10:12"
-    },
-    {
       "project_id": 1777479012,
       "topic": "China's Zero-Tariff Policy for African Goods Effective May 1, 2026",
       "category": "technology_disruption",
@@ -159,7 +15,151 @@
       "region": "middle_east",
       "article_title": "US war in Iran has cost $25bn so far, says Pentagon official",
       "created_at": "2026-04-29 17:10:12"
+    },
+    {
+      "project_id": 1777582483,
+      "topic": "UAE Exits OPEC to Pursue Sovereign Energy Strategy and US Alignment",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Trump, Fox News praise UAE decision to leave Opec",
+      "created_at": "2026-04-30 21:54:43"
+    },
+    {
+      "project_id": 1777582483,
+      "topic": "US Deployment of Dark Eagle Hypersonic Missiles to Middle East",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "US may deploy new hypersonic missile against Iran as Trump weighs fresh strikes: Report",
+      "created_at": "2026-04-30 21:54:43"
+    },
+    {
+      "project_id": 1777582483,
+      "topic": "Tuapse Oil Strikes: The Rise of 'Ecocide' as a Strategic Lever",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Nuclear fury in Kremlin after Tuapse oil strikes by Kyiv, Russian exiles divided (Ukraine Battlefield update, Day 1,526)",
+      "created_at": "2026-04-30 21:54:43"
+    },
+    {
+      "project_id": 1777585226,
+      "topic": "UAE Exit from OPEC: The Rise of a Non-Aligned Energy Superpower",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Trump, Fox News praise UAE decision to leave Opec",
+      "created_at": "2026-04-30 22:40:26"
+    },
+    {
+      "project_id": 1777585226,
+      "topic": "Tuapse Refinery Strikes: The Dawn of Russian 'Ecocide' Rhetoric and Nuclear Posturing",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Nuclear fury in Kremlin after Tuapse oil strikes by Kyiv, Russian exiles divided (Ukraine Battlefield update, Day 1,526)",
+      "created_at": "2026-04-30 22:40:26"
+    },
+    {
+      "project_id": 1777585226,
+      "topic": "US Deployment of Dark Eagle Hypersonic Missiles to Counter Iranian Missile Mobility",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "US may deploy new hypersonic missile against Iran as Trump weighs fresh strikes: Report",
+      "created_at": "2026-04-30 22:40:26"
+    },
+    {
+      "project_id": 1777651132,
+      "topic": "Fragmented Sovereignty: The Rise of Non-State Air and Land Power in Latin America",
+      "category": "technology_disruption",
+      "region": "other",
+      "article_title": "On the Radar: Drug Lords, Dissident Groups, and Airstrikes in Latin America",
+      "created_at": "2026-05-01 16:58:52"
+    },
+    {
+      "project_id": 1777651132,
+      "topic": "Turkey's Emergence as the New Drone Superpower via AI-Driven Swarm Tactics",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "How Turkey's new 'kamikaze' drones may outclass Iran's Shahed",
+      "created_at": "2026-05-01 16:58:52"
+    },
+    {
+      "project_id": 1777651132,
+      "topic": "UAE's OPEC Exit: The Fracturing of the Gulf Hegemony",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "UAE's Opec exit seeks to hit Saudi Arabia where it hurts",
+      "created_at": "2026-05-01 16:58:52"
+    },
+    {
+      "project_id": 1777660057,
+      "topic": "UAE's OPEC Exit: The Fragmentation of the Gulf Hegemony",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "UAE's Opec exit seeks to hit Saudi Arabia where it hurts",
+      "created_at": "2026-05-01 19:27:37"
+    },
+    {
+      "project_id": 1777660057,
+      "topic": "China's Zero-Tariff Expansion Across African Trade Blocs",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Africa: African Nations to Benefit From China's Two-Year Zero-Tariff Regime",
+      "created_at": "2026-05-01 19:27:37"
+    },
+    {
+      "project_id": 1777665590,
+      "topic": "UAE's OPEC Exit: The Strategic Fragmentation of the Gulf Axis",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "UAE's Opec exit seeks to hit Saudi Arabia where it hurts",
+      "created_at": "2026-05-01 20:59:50"
+    },
+    {
+      "project_id": 1777665590,
+      "topic": "Iranian Psychological Warfare: The 'Crush the UAE' Strategy to Fracture the GCC",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Iran told Saudi Arabia it planned to 'crush the UAE': Report",
+      "created_at": "2026-05-01 20:59:50"
+    },
+    {
+      "project_id": 1777697204,
+      "topic": "Iran's Strategic Wedge: Targeting UAE to Fracture Gulf Alliance",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Iran told Saudi Arabia it planned to 'crush the UAE': Report",
+      "created_at": "2026-05-02 05:46:44"
+    },
+    {
+      "project_id": 1777697204,
+      "topic": "Pentagon AI Procurement Split: The Anthropic Exclusion",
+      "category": "technology_disruption",
+      "region": "other",
+      "article_title": "Pentagon inks deals with AI giants, but not Anthropic",
+      "created_at": "2026-05-02 05:46:44"
+    },
+    {
+      "project_id": 1777780549,
+      "topic": "The White Phosphorus Loophole: Legal Gray Zones in Modern Incendiary Warfare",
+      "category": "middle_east_conflict",
+      "region": "other",
+      "article_title": "What exactly is white phosphorus and why is it controversial?",
+      "created_at": "2026-05-03 04:55:49"
+    },
+    {
+      "project_id": 1777780549,
+      "topic": "The Illusion of the Gaza Ceasefire: Systematic Attrition via 'Quiet' Violence",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Months into the US-Israel 'ceasefire', Gaza remains a scene of chaos and terror",
+      "created_at": "2026-05-03 04:55:49"
+    },
+    {
+      "project_id": 1777780549,
+      "topic": "Kuwait Crude Export Paralysis Amid Strait of Hormuz Blockade",
+      "category": "middle_east_conflict",
+      "region": "other",
+      "article_title": "Kuwait halts crude exports in April as Strait of Hormuz blockade bites",
+      "created_at": "2026-05-03 04:55:49"
     }
   ],
-  "last_updated": "2026-04-29 17:10:12"
+  "last_updated": "2026-05-03 04:55:49"
 }
