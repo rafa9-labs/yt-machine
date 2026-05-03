@@ -2,9 +2,9 @@
   "version": "2.0",
   "description": "Single source of truth for image generation style. 16 geopolitical visual categories with structured prompting.",
 
-  "style_suffix": "Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), (chunky pixels:1.5), (low resolution:1.3), (8-bit color:1.2), isometric perspective, (hard pixel edges:1.2), limited color palette, flat colors, dramatic lighting",
+  "style_suffix": "Retro Pixel, true 16-bit pixel art, retro SNES style, chunky pixels, low resolution, 8-bit color, isometric perspective, hard pixel edges, limited color palette, flat colors, dramatic lighting",
 
-  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, labels, annotations, blurry, low quality, jpeg artifacts, pixelated noise, distorted proportions, photorealistic, 3D render, CGI, anime style, cartoon, sketch, pencil drawing, nsfw, gore, violence close-up, human faces distorted, smooth gradients, photorealistic details, high resolution, fine details, soft shading, anti-aliasing, peaceful landscape, nature scenery, flowers, trees without context, abstract art, food, cooking, sports, entertainment, celebrity, fashion, pets, cute animals, domestic scene, holiday, vacation, fantasy, fairy tale, romance, wedding, birthday party, music concert, dancing",
+  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, blurry, low quality, jpeg artifacts, noise, distorted proportions, photorealistic, 3D render, CGI, anime, cartoon mascot, cartoon character, character portrait, single figure, sketch, pencil drawing, watercolor, smooth gradients, soft shading, anti-aliasing, color bleed, single isolated object, object on plain background, floating object, extreme close-up, macro shot, product photo, still life, screen-within-screen, picture-in-picture, minimalist, abstract shapes, plain background, white background, centered subject without environment, scene without depth, oversize pixels on realistic base, dithering, nsfw, gore, peaceful landscape, nature scenery",
 
   "brand_colors": {
     "primary": "#0A1628",
@@ -22,15 +22,23 @@
   "generation_params": {
     "provider": "fal_ai",
     "model": "fal-ai/flux/dev",
-    "num_inference_steps": 28,
-    "guidance_scale": 3.5,
+    "num_inference_steps": 40,
+    "guidance_scale": 4.0,
     "output_format": "png",
     "enable_safety_checker": false,
-    "render_resolution": [272, 288],
+    "render_resolution": [768, 810],
     "target_resolution": [1088, 1152],
     "upscale_method": "nearest",
     "max_pixels": 1000000,
     "pixel_art_enforcement_prefix": "Clean 32-bit pixel art, high contrast news graphic, isometric style, uniform grid-aligned pixels, no anti-aliasing, no color bleeding, no soft gradients",
+    "retry_config": {
+      "max_retries": 4,
+      "scrub_on_content_policy": true,
+      "detect_solid_color": true,
+      "solid_color_std_threshold": 8.0,
+      "flat_color_channel_threshold": 5.0,
+      "progressive_scrub": true
+    },
     "size_map": {
       "PinguPlay": { "width": 512, "height": 512 },
       "PinguQuest": { "width": 768, "height": 768 },

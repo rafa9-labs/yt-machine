@@ -1,22 +1,10 @@
 {
   "current_cycle": {
-    "day_index": 2,
-    "category": "economic_warfare",
-    "date": "2026-04-30"
+    "day_index": 5,
+    "category": "climate_geopolitics",
+    "date": "2026-05-03"
   },
   "history": [
-    {
-      "date": "2026-03-21",
-      "category": "great_power_competition"
-    },
-    {
-      "date": "2026-03-22",
-      "category": "economic_warfare"
-    },
-    {
-      "date": "2026-03-23",
-      "category": "regional_flashpoints"
-    },
     {
       "date": "2026-03-27",
       "category": "middle_east_conflict"
@@ -124,6 +112,18 @@
     {
       "date": "2026-04-29",
       "category": "economic_warfare"
+    },
+    {
+      "date": "2026-04-30",
+      "category": "regional_flashpoints"
+    },
+    {
+      "date": "2026-05-01",
+      "category": "technology_disruption"
+    },
+    {
+      "date": "2026-05-02",
+      "category": "climate_geopolitics"
     }
   ]
 }

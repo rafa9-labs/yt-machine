@@ -67,57 +67,85 @@ def build_fallback_prompt(narration_text: str, story_idx: int, part_idx: int,
                           news_analyses: list) -> str:
     """
     Build a script-aware fallback visual prompt from narration text.
-    Extracts concrete nouns, locations, and entities to avoid generic prompts.
+    Produces composition-style prompts with foreground/midground/background/lighting.
     """
+    _SCENE_TYPE_DEFAULTS = {
+        0: {
+            'camera': 'wide establishing shot',
+            'fg': 'strategic forces positioned on left',
+            'bg': 'geographic landscape at horizon',
+            'lighting': 'sunset lighting, atmospheric haze',
+        },
+        1: {
+            'camera': 'tactical close-up view',
+            'fg': 'detailed equipment on left',
+            'bg': 'operational infrastructure in depth',
+            'lighting': 'golden hour lighting, sharp shadows',
+        },
+        2: {
+            'camera': 'somber revealing scene',
+            'fg': 'civilian perspective on left',
+            'bg': 'consequences visible in distance',
+            'lighting': 'cold blue lighting, heavy atmosphere',
+        },
+        3: {
+            'camera': 'forward-looking consequence scene',
+            'fg': 'domino effect starting on left',
+            'bg': 'dark horizon, spreading impact',
+            'lighting': 'twilight atmosphere, ominous sky',
+        },
+    }
+
+    defaults = _SCENE_TYPE_DEFAULTS.get(part_idx, _SCENE_TYPE_DEFAULTS[0])
+
     if not narration_text or len(narration_text) < 10:
         if story_idx < len(news_analyses):
             topic = news_analyses[story_idx].get('topic', '')
             if topic:
-                return f"Strategic overview of {topic}, geopolitical tension, dramatic scene"
-        return "Geopolitical strategic map, world leaders in tension, dramatic lighting"
-    
-    text = narration_text.lower()
-    
+                return (f"16-bit isometric pixel art scene: {defaults['camera']} of {topic}, "
+                        f"{defaults['fg']}, {defaults['bg']}, {defaults['lighting']}")
+        return (f"16-bit isometric pixel art scene: {defaults['camera']}, "
+                f"{defaults['fg']}, {defaults['bg']}, {defaults['lighting']}")
+
     locations = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', narration_text)
     skip = {'The','This','That','And','But','For','Not','In','On','At','With','It','Is',
+            'By','To','Of','As','Or','So','No','An',
             'Was','Are','Were','Has','Have','Had','Been','Will','Would','Could','Should',
             'May','Might','They','Their','There','These','Those','Each','Every','Which',
             'What','When','Where','Who','How','Why','More','Most','Some','Such','Than',
             'Then','Now','Just','Also','Very','Even','Still','Only','About','After',
             'Before','Between','Through','During','Without','Against','Another','While',
             'Last','First','Next','Both','All','Many','Much','Own','Other','New','Old',
-            'Good','Great','Big','Small'}
+            'Good','Great','Big','Small','Said','Says'}
     geo_locations = [loc for loc in locations if loc not in skip]
-    
+    geo_locations = [re.sub(r'^The\s+', '', loc) for loc in geo_locations if loc not in skip]
+
     action_words = []
+    text = narration_text.lower()
     for verb in ['strikes','attacks','blockades','deploy','signs','negotiates',
                   'collapses','surges','protests','evacuates','launches','invades',
                   'sanctions','threatens','agrees','rejects','builds','destroys']:
         if verb in text:
             action_words.append(verb)
-    
+
     numbers = re.findall(r'\b\d+[\d,]*\b', narration_text)
-    
-    parts = []
+
+    fg = defaults['fg']
+    bg = defaults['bg']
     if geo_locations:
-        parts.append(f"scene in {' '.join(geo_locations[:2])}")
+        bg = f"{', '.join(geo_locations[:2])} landscape in background"
     if action_words:
-        parts.append(f"{' '.join(action_words[:2])}")
+        fg = f"{action_words[0]} action on left, {geo_locations[0] if geo_locations else 'strategic'} forces"
     if numbers:
-        parts.append(f"involving {numbers[0]} units")
-    
-    if part_idx == 0:
-        parts.append("wide establishing shot")
-    else:
-        parts.append("dramatic close-up, tension")
-    
-    if len(parts) < 2 and story_idx < len(news_analyses):
+        fg = f"{numbers[0]} units {fg}"
+
+    topic = ''
+    if story_idx < len(news_analyses):
         topic = news_analyses[story_idx].get('topic', '')
-        if topic:
-            parts.append(topic)
-    
-    desc = ', '.join(parts)
-    if len(desc) < 20:
-        desc = "Geopolitical strategic map, world leaders in tension, dramatic lighting"
-    
-    return desc
+
+    result = (f"16-bit isometric pixel art scene: {defaults['camera']}, "
+              f"{fg}, {bg}, {defaults['lighting']}")
+    if topic and len(result) < 60:
+        result = result.replace(defaults['lighting'], f"{topic}, {defaults['lighting']}")
+
+    return result

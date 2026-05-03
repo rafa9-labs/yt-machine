@@ -167,12 +167,13 @@ class TestBuildFallbackPrompt:
     def test_empty_text(self):
         from pipeline_utils import build_fallback_prompt
         result = build_fallback_prompt("", 0, 0, [])
-        assert len(result) >= 20
+        assert "16-bit isometric pixel art scene" in result
+        assert len(result) >= 50
 
     def test_with_locations(self):
         from pipeline_utils import build_fallback_prompt
         result = build_fallback_prompt("Russia attacks Ukraine forces", 0, 0, [])
-        assert len(result) >= 20
+        assert "16-bit isometric pixel art scene" in result
 
     def test_with_numbers(self):
         from pipeline_utils import build_fallback_prompt
@@ -183,8 +184,9 @@ class TestBuildFallbackPrompt:
         from pipeline_utils import build_fallback_prompt
         r0 = build_fallback_prompt("Russia deployed missiles", 0, 0, [])
         r1 = build_fallback_prompt("Russia deployed missiles", 0, 1, [])
-        # Part 0 should mention establishing, part 1 close-up
         assert r0 != r1
+        assert "establishing" in r0
+        assert "close-up" in r1
 
 
 if __name__ == '__main__':

@@ -57,6 +57,19 @@ TOP_H = 1152
 BOTTOM_H = 768
 FPS = 30
 
+SCENE_ZOOM_PROFILES = {
+    0: {'name': 'HOOK',      'zoom_start': 1.08, 'zoom_end': 1.02, 'pan_x': 0.0},
+    1: {'name': 'MECHANISM', 'zoom_start': 1.06, 'zoom_end': 1.01, 'pan_x': 0.0},
+    2: {'name': 'TRUTH',     'zoom_start': 1.01, 'zoom_end': 1.07, 'pan_x': 0.0},
+    3: {'name': 'FALLOUT',   'zoom_start': 1.05, 'zoom_end': 1.01, 'pan_x': 0.0},
+}
+
+
+def _get_scene_profile(scene_idx: int) -> dict:
+    pos = scene_idx % 4
+    return SCENE_ZOOM_PROFILES.get(pos, SCENE_ZOOM_PROFILES[0])
+
+
 AVATAR_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "avatar_loop.mp4"
 MUSIC_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "music" / "news-yt.mp3"
 
@@ -164,10 +177,17 @@ def _render_scene_opencv(
     height: int = TOP_H,
 ) -> bool:
     """
-    Render smooth zoom using OpenCV — frame-by-frame with smootherstep easing.
+    Render smooth zoom using OpenCV — frame-by-frame with ease-out-cubic easing.
     Falls back to _render_scene_ffmpeg if OpenCV is unavailable.
 
-    Even scenes: zoom OUT (1+RANGE → 1.0). Odd scenes: zoom IN (1.0 → 1+RANGE).
+    Scene-type-aware zoom profiles:
+      HOOK (idx%4==0):      gentle zoom-in  (1.08 → 1.02)
+      MECHANISM (idx%4==1): gentle zoom-out  (1.06 → 1.01)
+      TRUTH (idx%4==2):     gentle zoom-in   (1.01 → 1.07)
+      FALLOUT (idx%4==3):   gentle zoom-out  (1.05 → 1.01)
+    
+    All zooms are center-based (pan_x=0) for smooth, cinematic Ken Burns feel.
+    Uses ease-out-cubic easing for natural deceleration.
     """
     try:
         import cv2
@@ -196,11 +216,16 @@ def _render_scene_opencv(
     crop_y = max(0, (new_h - target_h) // 2)
 
     total_frames = max(int(duration * FPS), 2)
-    ZOOM_RANGE = 0.15
 
-    def smootherstep(t):
+    profile = _get_scene_profile(scene_idx)
+    zoom_start = profile['zoom_start']
+    zoom_end = profile['zoom_end']
+    pan_x_factor = profile['pan_x']
+    scene_name = profile['name']
+
+    def ease_out_cubic(t):
         t = max(0.0, min(1.0, t))
-        return t * t * t * (t * (t * 6 - 15) + 10)
+        return 1.0 - (1.0 - t) ** 3
 
     tmp_path = output_path.replace('.mp4', '_raw.mp4')
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -210,16 +235,15 @@ def _render_scene_opencv(
 
     for frame_num in range(total_frames):
         progress = frame_num / max(total_frames - 1, 1)
-        eased = smootherstep(progress)
+        eased = ease_out_cubic(progress)
 
-        if scene_idx % 2 == 0:
-            zoom = 1.0 + ZOOM_RANGE * (1.0 - eased)
-        else:
-            zoom = 1.0 + ZOOM_RANGE * eased
+        zoom = zoom_start + (zoom_end - zoom_start) * eased
 
         crop_w = int(target_w / zoom)
         crop_h = int(target_h / zoom)
-        cx = max(0, min((new_w - crop_w) // 2, new_w - crop_w))
+
+        pan_offset_x = int(crop_w * pan_x_factor * eased)
+        cx = max(0, min((new_w - crop_w) // 2 + pan_offset_x, new_w - crop_w))
         cy = max(0, min((new_h - crop_h) // 2, new_h - crop_h))
 
         cropped = img_scaled[cy:cy + crop_h, cx:cx + crop_w]
@@ -263,8 +287,9 @@ def _render_scene_ffmpeg_fallback(
     height: int = TOP_H,
 ) -> bool:
     """
-    Fallback: render scene using ffmpeg zoompan with smootherstep easing.
+    Fallback: render scene using ffmpeg zoompan with ease-out-cubic easing.
     Used when OpenCV is unavailable.
+    Scene-type-aware zoom profiles (same as OpenCV path).
     """
     ffmpeg_exe = _find_ffmpeg()
     if not ffmpeg_exe:
@@ -290,19 +315,33 @@ def _render_scene_ffmpeg_fallback(
     crop_x = max(0, (scaled_w - target_w) // 2)
     crop_y = max(0, (scaled_h - target_h) // 2)
 
-    ZOOM_RANGE = 0.15
+    profile = _get_scene_profile(scene_idx)
+    zoom_start = profile['zoom_start']
+    zoom_end = profile['zoom_end']
+    pan_x_factor = profile['pan_x']
+    scene_name = profile['name']
+
     total_frames = int(duration * FPS)
     if total_frames < 2:
         total_frames = 2
 
     safe_total = max(total_frames - 1, 1)
+    zoom_range = zoom_end - zoom_start
 
-    if scene_idx % 2 == 0:
-        zoom_expr = f"1+{ZOOM_RANGE}-{ZOOM_RANGE}*(on-1)/{safe_total}"
+    # Ease-out cubic: 1 - (1-t)^3 where t = (on-1)/(total_frames-1)
+    # zoom = zoom_start + zoom_range * (1 - (1-t)^3)
+    # In ffmpeg expr: 1-pow(1-(on-1)/N, 3)
+    if zoom_range >= 0:
+        zoom_expr = f"{zoom_start}+{zoom_range}*(1-pow(1-(on-1)/{safe_total},3))"
     else:
-        zoom_expr = f"1+{ZOOM_RANGE}*(on-1)/{safe_total}"
+        zoom_expr = f"{zoom_start}-{abs(zoom_range)}*(1-pow(1-(on-1)/{safe_total},3))"
 
-    x_expr = "iw/2-(iw/zoom/2)"
+    if abs(pan_x_factor) > 0.001:
+        pan_expr = f"iw/2-(iw/zoom/2)+{pan_x_factor}*ow*(on-1)/{safe_total}"
+        x_expr = pan_expr
+    else:
+        x_expr = "iw/2-(iw/zoom/2)"
+
     y_expr = "ih/2-(ih/zoom/2)"
 
     vf = (
@@ -549,7 +588,7 @@ def _render_scenes_ffmpeg(
         if ok and Path(tmp_path).exists() and Path(tmp_path).stat().st_size > 0:
             clip = VideoFileClip(tmp_path).set_start(start)
             scene_clips.append(clip)
-            print(f"    Scene {idx}: ffmpeg rendered ({dur:.2f}s, zoom {'out' if idx % 2 == 0 else 'in'})")
+            print(f"    Scene {idx}: ffmpeg rendered ({dur:.2f}s, {_get_scene_profile(idx)['name']})")
         else:
             print(f"    Scene {idx}: ffmpeg failed, fallback to static image")
             clip = _resize_image_fullscreen(img_path).set_duration(dur).set_start(start)

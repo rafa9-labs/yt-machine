@@ -34,7 +34,7 @@ MAX_PIXELS = 1_300_000
 PIXEL_ART_ENFORCEMENT_PREFIX = (
     "Clean 32-bit pixel art, high contrast news graphic, isometric style, "
     "uniform grid-aligned pixels, no anti-aliasing, no color bleeding, "
-    "no soft gradients"
+    "no soft gradients, sharp focus, detailed scene composition"
 )
 
 PIXEL_ART_STRICT_NEGATIVE = (
@@ -68,7 +68,7 @@ PIXEL_ART_MODEL_CONFIG = {
 }
 
 MODEL_STEP_CONFIG = {
-    "fal-ai/flux/dev": 28,
+    "fal-ai/flux/dev": 40,
     "fal-ai/flux/schnell": 4,
     "fal-ai/flux-lora": 20,
     "fal-ai/flux-pro/v1.1-ultra": 28,
@@ -87,7 +87,83 @@ LOCAL_FLUX_COMPILE = os.getenv("LOCAL_FLUX_COMPILE", "none").lower()  # "none", 
 LOCAL_FLUX_MIN_VRAM_GB = int(os.getenv("LOCAL_FLUX_MIN_VRAM_GB", "14"))  # minimum free VRAM to load FLUX
 LOCAL_FLUX_EVICT_OLLAMA = os.getenv("LOCAL_FLUX_EVICT_OLLAMA", "true").lower() in ("true", "1", "yes")
 _KEEP_ALIVE = LOCAL_FLUX_COMPILE not in ("none", "")
+_BATCH_KEEP_ALIVE = False  # Set by ModelOrchestrator during batch image generation
 _flux_pipeline = None
+
+
+def signal_flux_keep_alive(keep_alive: bool) -> None:
+    """Signal whether the FLUX pipeline should stay loaded between image generations.
+    
+    Called by ModelOrchestrator at phase boundaries:
+      - True before batch generation (pin pipeline for all 8 images)
+      - False after batch generation (allow cleanup)
+    """
+    global _BATCH_KEEP_ALIVE
+    _BATCH_KEEP_ALIVE = keep_alive
+    effective_keep_alive = _KEEP_ALIVE or _BATCH_KEEP_ALIVE
+    print(f"  [IMG] FLUX keep_alive={keep_alive} (compile={_KEEP_ALIVE}, batch={_BATCH_KEEP_ALIVE}, effective={effective_keep_alive})")
+
+
+def preload_flux_pipeline() -> bool:
+    """Preload the FLUX pipeline onto GPU without generating an image.
+    
+    Called by ModelOrchestrator at the image_generation phase boundary
+    to eagerly load FLUX and verify it works before the generation loop.
+    
+    Returns:
+        True if pipeline loaded successfully, False otherwise.
+    """
+    global _flux_pipeline
+
+    if _flux_pipeline is not None:
+        print("  [IMG] FLUX pipeline already loaded — skipping preload")
+        return True
+
+    if not USE_LOCAL_FLUX:
+        print("  [IMG] Local FLUX disabled — skipping preload")
+        return False
+
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            print("  [IMG] CUDA not available — skipping FLUX preload")
+            return False
+    except ImportError:
+        return False
+
+    vram_ok, free_gb = _check_vram_available(LOCAL_FLUX_MIN_VRAM_GB)
+    if not vram_ok:
+        print(f"  [IMG] Insufficient VRAM for FLUX preload: {free_gb}GB free, need {LOCAL_FLUX_MIN_VRAM_GB}GB")
+        return False
+
+    print(f"  [IMG] Preloading FLUX pipeline (VRAM: {free_gb}GB free)...")
+
+    result = _generate_local_flux(
+        prompt="warmup pixel art scene, isometric perspective, test image",
+        output_path=OUTPUT_DIR / "_warmup_preload.png",
+        size={"width": 256, "height": 256},
+        seed=42,
+        steps=1,
+        guidance_scale=3.5,
+        negative_prompt=NEGATIVE_PROMPT,
+    )
+
+    if result and result.get('success'):
+        try:
+            warmup_path = OUTPUT_DIR / "_warmup_preload.png"
+            if warmup_path.exists():
+                warmup_path.unlink()
+        except Exception:
+            pass
+
+        if _BATCH_KEEP_ALIVE:
+            print("  [IMG] FLUX pipeline preloaded and PINNED for batch generation")
+        else:
+            print("  [IMG] FLUX pipeline preloaded (will be flushed after generation)")
+        return True
+    else:
+        print("  [IMG] FLUX preload failed — will attempt per-image load or fall back to cloud")
+        return False
 
 
 def _check_vram_available(min_gb: int) -> tuple:
@@ -184,8 +260,9 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
     except ImportError:
         return None
 
-    # Pre-flight VRAM check — prevent loading FLUX if GPU memory is tight
-    if _flux_pipeline is None:
+    # Pre-flight VRAM check — skip if pipeline already loaded (orchestrator preloaded it)
+    # or if _BATCH_KEEP_ALIVE is active (orchestrator manages VRAM lifecycle)
+    if _flux_pipeline is None and not _BATCH_KEEP_ALIVE:
         vram_ok, free_gb = _check_vram_available(LOCAL_FLUX_MIN_VRAM_GB)
         if not vram_ok:
             print(f"  [IMG] Insufficient VRAM: {free_gb}GB free, need {LOCAL_FLUX_MIN_VRAM_GB}GB")
@@ -201,6 +278,8 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
             print(f"  [IMG] VRAM freed: {free_gb}GB now available (needed {LOCAL_FLUX_MIN_VRAM_GB}GB)")
         else:
             print(f"  [IMG] VRAM check passed: {free_gb}GB free (need {LOCAL_FLUX_MIN_VRAM_GB}GB)")
+    elif _flux_pipeline is None and _BATCH_KEEP_ALIVE:
+        print(f"  [IMG] Batch keep-alive active — skipping VRAM check (orchestrator manages lifecycle)")
 
     try:
         from diffusers import FluxPipeline
@@ -322,8 +401,9 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
         image.save(str(output_path))
         print(f"  [IMG] Local FLUX generation complete: {output_path.name}")
 
-        if _KEEP_ALIVE:
-            print("  [IMG] Pipeline kept alive (compile mode) — VRAM still in use, call _flush_flux_pipeline() to release")
+        if _KEEP_ALIVE or _BATCH_KEEP_ALIVE:
+            effective_reason = "compile mode" if _KEEP_ALIVE else "batch mode (orchestrator)"
+            print(f"  [IMG] Pipeline kept alive ({effective_reason}) — VRAM still in use, call _flush_flux_pipeline() to release")
         elif _is_quantized:
             del _flux_pipeline
             _flux_pipeline = None
@@ -340,6 +420,22 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
             _upscale_pixel_art(str(output_path))
         except Exception as upscale_err:
             print(f"  [IMG] Warning: Upscale failed: {upscale_err}")
+
+        is_failed, fail_reason = _detect_failed_image(str(output_path))
+        if is_failed:
+            print(f"  [IMG] Detected failed image: {fail_reason}")
+            return {
+                "success": True,
+                "filename": output_path.name,
+                "path": str(output_path),
+                "prompt_used": prompt,
+                "source": "local_flux",
+                "provider": "local",
+                "width": w,
+                "height": h,
+                "steps": steps,
+                "detected_failure": fail_reason,
+            }
 
         return {
             "success": True,
@@ -418,7 +514,73 @@ def _upscale_pixel_art(input_path: str, render_size: tuple = None,
     upscaled = img.resize(target_size, Image.NEAREST)
     upscaled.save(input_path, format='PNG')
     print(f"  [IMG] Upscaled {render_size} -> {target_size} (nearest-neighbor)")
+    try:
+        _apply_sharpening(input_path)
+    except Exception as sharpen_err:
+        print(f"  [IMG] Warning: Post-sharpening failed: {sharpen_err}")
     return input_path
+
+
+def _apply_sharpening(input_path: str) -> str:
+    """
+    Apply unsharp mask sharpening to an upscaled pixel-art image.
+    Enhances edge crispness without sacrificing the pixel art aesthetic.
+    """
+    try:
+        from PIL import ImageFilter
+        img = Image.open(input_path)
+        sharpened = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+        sharpened.save(input_path, format='PNG')
+        print(f"  [IMG] Applied unsharp mask sharpening")
+        return input_path
+    except Exception as e:
+        print(f"  [IMG] Warning: Sharpening failed: {e}")
+        return input_path
+
+
+def _detect_failed_image(image_path: str) -> tuple:
+    """
+    Detect visually failed images: solid-color, near-monochrome, or extremely low variance.
+    Returns (is_failed: bool, reason: str).
+    is_failed=True means the image is likely a failed generation (not usable).
+    """
+    try:
+        import numpy as np
+        img = Image.open(image_path).convert('RGB')
+        arr = np.array(img)
+
+        std_val = arr.std()
+
+        if std_val < 8.0:
+            return True, f"near_monochrome (std={std_val:.1f})"
+
+        r_std = arr[:, :, 0].std()
+        g_std = arr[:, :, 1].std()
+        b_std = arr[:, :, 2].std()
+        if r_std < 5.0 and g_std < 5.0 and b_std < 5.0:
+            return True, f"flat_color (r_std={r_std:.1f}, g_std={g_std:.1f}, b_std={b_std:.1f})"
+
+        h, w = arr.shape[:2]
+        corners = [
+            arr[:h//8, :w//8],
+            arr[:h//8, -w//8:],
+            arr[-h//8:, :w//8],
+            arr[-h//8:, -w//8:],
+        ]
+        corner_means = [c.mean() for c in corners]
+        corner_spread = max(corner_means) - min(corner_means)
+        if corner_spread < 3.0 and std_val < 15.0:
+            return True, f"uniform_color (corner_spread={corner_spread:.1f}, std={std_val:.1f})"
+
+        edge_row_diff = np.abs(np.diff(arr[h//2, :, 0], axis=0)).mean()
+        edge_col_diff = np.abs(np.diff(arr[:, w//2, 0], axis=0)).mean()
+        if edge_row_diff < 3.0 and edge_col_diff < 3.0 and std_val < 25.0:
+            return True, f"low_detail (edge_row={edge_row_diff:.1f}, edge_col={edge_col_diff:.1f}, std={std_val:.1f})"
+
+        return False, "ok"
+    except Exception as e:
+        print(f"  [IMG] Warning: Failed image detection error: {e}")
+        return False, f"detection_error ({e})"
 
 
 def _get_pixel_art_model_headers() -> Dict[str, str]:
@@ -616,7 +778,7 @@ for _vtype, _vcfg in _lora_by_type.items():
 
 BRAND_COLORS = IMAGE_STYLE_CONFIG.get('brand_colors', {})
 
-STYLE_SUFFIX = IMAGE_STYLE_CONFIG.get('style_suffix', 'Retro Pixel, (true 16-bit pixel art:1.5), (retro SNES style:1.3), isometric perspective, (hard pixel edges:1.2), limited color palette, detailed proportions, flat colors, dramatic lighting')
+STYLE_SUFFIX = IMAGE_STYLE_CONFIG.get('style_suffix', 'Retro Pixel, true 16-bit pixel art, retro SNES style, isometric perspective, hard pixel edges, limited color palette, detailed proportions, flat colors, dramatic lighting')
 COLOR_PALETTE_PROMPT = IMAGE_STYLE_CONFIG.get('color_palette_prompt', '')
 GENERATION_PARAMS = IMAGE_STYLE_CONFIG.get('generation_params', {})
 
@@ -736,6 +898,35 @@ def _sanitize_prompt_for_api(prompt: str) -> str:
     import re
     result = prompt
     for pattern, replacement in _SAFE_SUBSTITUTIONS:
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    return result
+
+
+def _sanitize_visual_prompt(prompt: str) -> str:
+    """
+    Light content scrubbing for VISUAL prompts (image generation).
+    Only strips extreme/gore terms that FAL.ai will reject — keeps country
+    names, equipment names, and military terms that make images RELEVANT.
+    Visual prompts describe scenes, not claims, so geographic and equipment
+    specificity is essential for image-video alignment.
+    """
+    import re
+    _VISUAL_SAFE_ONLY = [
+        (r'\bgore\b', 'aftermath'),
+        (r'\bblood(?:y|ied)?\b', 'impact scene'),
+        (r'\bdead bodies\b', 'aftermath scene'),
+        (r'\bcorpse(?:s)?\b', 'aftermath scene'),
+        (r'\bmassacre\b', 'aftermath scene'),
+        (r'\bgenocide\b', 'aftermath scene'),
+        (r'\btortur(?:e|ed|ing)\b', 'confrontation'),
+        (r'\bmass\s+grave\b', 'memorial scene'),
+        (r'\bbody\s+bag(?:s)?\b', 'aftermath scene'),
+        (r'\bsuicide\b', 'incident'),
+        (r'\bnsfw\b', 'scene'),
+        (r'\bnude\b', 'scene'),
+    ]
+    result = prompt
+    for pattern, replacement in _VISUAL_SAFE_ONLY:
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
     return result
 
@@ -958,23 +1149,23 @@ def _get_adaptive_enrichment(visual_type: str) -> str:
     Supports all 16 geopolitical visual categories with per-category emphasis.
     """
     enrichments = {
-        'warfare': '(tactical positioning:1.3), (battlefield terrain:1.2), (smoke and fire:1.2), (military tension:1.2)',
-        'naval': '(naval formation:1.3), (ocean waves:1.2), (maritime flags:1.2), (fleet maneuvers:1.1)',
-        'aerial': '(altitude perspective:1.3), (contrails visible:1.2), (sky domination:1.2), (payload detail:1.1)',
-        'arms_defense': '(hardware detail:1.3), (technical markings:1.2), (defense system:1.2), (national insignia:1.1)',
-        'markets': '(market indicators visible:1.3), (price displays:1.2), (trading floor:1.2), (financial panic:1.1)',
-        'trade_sanctions': '(cargo containers:1.3), (port bottleneck:1.2), (trade barrier:1.2), (nation flags:1.1)',
-        'energy': '(industrial infrastructure:1.3), (flames and smoke:1.2), (pipeline terrain:1.2), (workers:1.1)',
-        'commodities': '(resource scarcity:1.3), (supply queue:1.2), (raw materials:1.2), (shortage indicators:1.1)',
-        'diplomacy': '(formal meeting setting:1.3), (official flags:1.2), (professional atmosphere:1.2), (summit table:1.1)',
-        'political': '(government building:1.3), (political rally:1.2), (ballot or podium:1.2), (crowd energy:1.1)',
-        'espionage': '(surveillance screens:1.3), (classified documents:1.2), (shadows and secrecy:1.2), (tech equipment:1.1)',
-        'protests': '(demonstration crowd:1.3), (protest banners:1.2), (police barricades:1.2), (city backdrop:1.1)',
-        'humanitarian': '(civilian perspective:1.3), (displacement crisis:1.2), (aid supplies:1.2), (distress indicators:1.1)',
-        'border': '(border fence:1.3), (checkpoint guards:1.2), (vehicle queue:1.2), (terrain context:1.1)',
-        'cyber': '(server infrastructure:1.3), (digital data:1.2), (warning alerts:1.2), (holographic displays:1.1)',
-        'megaprojects': '(massive construction:1.3), (heavy machinery:1.2), (engineering scale:1.2), (route maps:1.1)',
-        'general': '(dramatic composition:1.2), (strategic perspective:1.1), (balanced lighting:1.1), (professional atmosphere:1.1)'
+        'warfare': 'tactical positioning, battlefield terrain, smoke and fire, military tension',
+        'naval': 'naval formation, ocean waves, maritime flags, fleet maneuvers',
+        'aerial': 'altitude perspective, contrails visible, sky domination, payload detail',
+        'arms_defense': 'hardware detail, technical markings, defense system, national insignia',
+        'markets': 'market indicators visible, price displays, trading floor, financial panic',
+        'trade_sanctions': 'cargo containers, port bottleneck, trade barrier, nation flags',
+        'energy': 'industrial infrastructure, flames and smoke, pipeline terrain, workers',
+        'commodities': 'resource scarcity, supply queue, raw materials, shortage indicators',
+        'diplomacy': 'formal meeting setting, official flags, professional atmosphere, summit table',
+        'political': 'government building, political rally, ballot or podium, crowd energy',
+        'espionage': 'surveillance screens, classified documents, shadows and secrecy, tech equipment',
+        'protests': 'demonstration crowd, protest banners, police barricades, city backdrop',
+        'humanitarian': 'civilian perspective, displacement crisis, aid supplies, distress indicators',
+        'border': 'border fence, checkpoint guards, vehicle queue, terrain context',
+        'cyber': 'server infrastructure, digital data, warning alerts, holographic displays',
+        'megaprojects': 'massive construction, heavy machinery, engineering scale, route maps',
+        'general': 'dramatic composition, strategic perspective, balanced lighting, professional atmosphere'
     }
     
     return enrichments.get(visual_type, enrichments['general'])
@@ -1120,15 +1311,17 @@ def _build_i2i_generation_args(
     """
     args = {
         "prompt": prompt,
-        "image_url": reference_image_url,  # Reference image for I2I
+        "image_url": reference_image_url,
         "strength": strength,
         "guidance_scale": guidance_scale,
         "num_inference_steps": num_inference_steps,
-        "image_size": {"width": GENERATION_PARAMS.get('custom_width', 1088), "height": GENERATION_PARAMS.get('custom_height', 1152)},
+        "image_size": {"width": RENDER_RESOLUTION[0], "height": RENDER_RESOLUTION[1]},
         "enable_safety_checker": PIXEL_ART_MODEL_CONFIG["default_params"]["enable_safety_checker"],
         "output_format": PIXEL_ART_MODEL_CONFIG["default_params"]["output_format"],
         "num_images": 1,
     }
+    if PIXEL_ART_LORA and PIXEL_ART_LORA.get("path"):
+        args["lora"] = [{"path": PIXEL_ART_LORA["path"], "scale": PIXEL_ART_LORA.get("scale", 0.85)}]
     
     if seed is not None:
         args["seed"] = seed
@@ -1400,10 +1593,10 @@ def _extract_visual_terms_from_narration(script_text: str) -> str:
     if not found_terms:
         return ''
     
-    # Build weighted prompt fragment
+    # Build plain-text prompt fragment for FLUX (no Compel weighting)
     # Take top 4 terms max to avoid overloading
     top_terms = found_terms[:4]
-    weighted_parts = [f"({term}:{weight})" for term, weight in top_terms]
+    weighted_parts = [f"{term}" for term, weight in top_terms]
     
     return ', '.join(weighted_parts)
 
@@ -1447,6 +1640,43 @@ def _inject_geopolitical_context(prompt: str, issues: list, script_text: str) ->
     enrichment = ', '.join(enrichment_parts)
     enriched = f"{prompt}, geopolitical context: {enrichment}"
     return enriched
+
+
+def _truncate_prompt_for_resolution(prompt: str, width: int, height: int) -> str:
+    """
+    Truncate overly long prompts for small render resolutions.
+    At 272x288, FLUX needs concise prompts — 2-3 sentences max.
+    Longer prompts at tiny resolutions produce muddled, unfocused images.
+    """
+    MAX_SENTENCES_SMALL = 3
+    MAX_WORDS_SMALL = 50
+    SMALL_THRESHOLD = 400 * 400
+
+    if width * height >= SMALL_THRESHOLD:
+        return prompt
+
+    import re
+    sentences = re.split(r'(?<=[.!?])\s+', prompt)
+    sentences = [s for s in sentences if s.strip()]
+
+    if len(sentences) <= MAX_SENTENCES_SMALL:
+        word_count = len(prompt.split())
+        if word_count <= MAX_WORDS_SMALL:
+            return prompt
+
+    kept = sentences[:MAX_SENTENCES_SMALL]
+    truncated = ' '.join(kept)
+
+    words = truncated.split()
+    if len(words) > MAX_WORDS_SMALL:
+        truncated = ' '.join(words[:MAX_WORDS_SMALL])
+        if not truncated.endswith(('.', '!', '?')):
+            truncated += '.'
+
+    if len(sentences) > MAX_SENTENCES_SMALL:
+        print(f"  [IMG] Prompt truncated for {width}x{height}: {len(sentences)} → {MAX_SENTENCES_SMALL} sentences, {len(prompt.split())} → {len(truncated.split())} words")
+
+    return truncated
 
 
 def _resolve_size(target_app: str = "Default") -> Dict[str, int]:
@@ -1517,22 +1747,22 @@ def generate_pixel_art(
     specificity = _score_prompt_specificity(prompt)
     print(f"  [IMG] Specificity score: {specificity}/100")
 
-    # If too generic, try narration-grounded enrichment first, then category fallback
+    # Always enrich with narration-grounded terms when available
     enriched_prompt = prompt.strip()
-    if specificity < 35:
-        # FIRST: Extract concrete terms from narration for grounded enrichment
-        narration_enrichment = _extract_visual_terms_from_narration(script_text) if script_text else ''
-        if narration_enrichment:
-            enriched_prompt += f", {narration_enrichment}"
-            print(f"  [IMG] Low specificity — narration-grounded enrichment applied")
-        else:
-            # FALLBACK: Category-based enrichment only if narration yields nothing
-            enrichment = _get_adaptive_enrichment(visual_type)
-            enriched_prompt += f", {enrichment}"
-            print(f"  [IMG] Low specificity — {visual_type} category enrichment (no narration)")
+    narration_enrichment = _extract_visual_terms_from_narration(script_text) if script_text else ''
+    if narration_enrichment:
+        enriched_prompt += f", {narration_enrichment}"
+        print(f"  [IMG] Narration-grounded enrichment applied")
+    
+    # Additional category enrichment for very low specificity
+    if specificity < 35 and not narration_enrichment:
+        enrichment = _get_adaptive_enrichment(visual_type)
+        enriched_prompt += f", {enrichment}"
+        print(f"  [IMG] Low specificity ({specificity}/100) — {visual_type} category enrichment")
 
     # Sanitize for FAL.ai content policy before building final prompt
-    sanitized_prompt = _sanitize_prompt_for_api(enriched_prompt)
+    # Use light scrubbing for visual prompts — keep country/equipment names for relevance
+    sanitized_prompt = _sanitize_visual_prompt(enriched_prompt)
     
     # Enhance with LoRA trigger and additional prompts
     enhanced_prompt = _enhance_prompt_with_lora_trigger(sanitized_prompt, visual_type)
@@ -1569,6 +1799,11 @@ def generate_pixel_art(
     filename = f"pixel_art_{safe_name}_{hash(prompt) % 100000}.png"
     output_path = OUTPUT_DIR / filename
 
+    # Truncate overly long prompts for small render resolutions
+    render_w = RENDER_RESOLUTION[0]
+    render_h = RENDER_RESOLUTION[1]
+    full_prompt = _truncate_prompt_for_resolution(full_prompt, render_w, render_h)
+
     # ============================================================================
     # PHASE 2 & 3: Reference Image Preparation and Refinement Parameters
     # ============================================================================
@@ -1600,7 +1835,7 @@ def generate_pixel_art(
             local_size = {"width": 512, "height": 512}
 
         enforced_prompt = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {full_prompt}, vibrant colors, pixel-perfect"
-        local_steps = int(os.environ.get("LOCAL_FLUX_STEPS", "20"))
+        local_steps = int(os.environ.get("LOCAL_FLUX_STEPS", "40"))
         local_guidance = 3.5
 
         local_result = _generate_local_flux(
@@ -1641,13 +1876,13 @@ def generate_pixel_art(
             os.environ["FAL_KEY"] = FAL_KEY
 
             target_app = os.environ.get("TARGET_APP", "Default")
-            size = _resolve_size(target_app)
+            size = {"width": RENDER_RESOLUTION[0], "height": RENDER_RESOLUTION[1]}
 
             if size["width"] * size["height"] > MAX_PIXELS:
-                print(f"  [IMG] WARNING: {size['width']}x{size['height']} exceeds 1MP cost cap — clamping to 1024x768")
-                size = {"width": 1024, "height": 768}
+                print(f"  [IMG] WARNING: {size['width']}x{size['height']} exceeds 1MP cost cap — clamping to 512x512")
+                size = {"width": 512, "height": 512}
 
-            print(f"  [IMG] FAL flux/dev | {size['width']}x{size['height']} | steps={MODEL_STEP_CONFIG['fal-ai/flux/dev']} | guidance=3.5 | app={target_app}")
+            print(f"  [IMG] FAL flux/dev | {size['width']}x{size['height']} (render) → {TARGET_RESOLUTION[0]}x{TARGET_RESOLUTION[1]} (upscale) | steps={MODEL_STEP_CONFIG['fal-ai/flux/dev']} | guidance=4.0 | app={target_app}")
 
             models_to_try = [FAL_MODEL] + FAL_FALLBACK_MODELS
 
@@ -1676,11 +1911,15 @@ def generate_pixel_art(
                             "prompt": enforced_prompt,
                             "image_size": {"width": size["width"], "height": size["height"]},
                             "num_images": 1,
-                            "num_inference_steps": MODEL_STEP_CONFIG.get(model, 28),
-                            "guidance_scale": 3.5,
+                            "num_inference_steps": MODEL_STEP_CONFIG.get(model, 40),
+                            "guidance_scale": 4.0,
                             "enable_safety_checker": False,
+                            "negative_prompt": NEGATIVE_PROMPT,
                             "output_format": "png",
                         }
+                        if PIXEL_ART_LORA and PIXEL_ART_LORA.get("path"):
+                            base_args["lora"] = [{"path": PIXEL_ART_LORA["path"], "scale": PIXEL_ART_LORA.get("scale", 0.85)}]
+                            print(f"  [IMG] LoRA: {PIXEL_ART_LORA['path']} (scale={PIXEL_ART_LORA.get('scale', 0.85)})")
                         print(f"  [IMG] Dimensions: {size['width']}x{size['height']}")
                         if seed is not None:
                             base_args["seed"] = seed
@@ -1716,6 +1955,35 @@ def generate_pixel_art(
                 print(f"  [IMG] Warning: Upscale failed, using raw output: {upscale_err}")
 
             _store_prompt_cache(full_prompt, str(output_path))
+
+            is_failed, fail_reason = _detect_failed_image(str(output_path))
+            if is_failed:
+                print(f"  [IMG] Detected failed image: {fail_reason}")
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "path": str(output_path),
+                    "prompt_used": enforced_prompt,
+                    "specificity_score": specificity,
+                    "visual_type": visual_type,
+                    "source": model_used,
+                    "image_url": image_url,
+                    "output_directory": str(OUTPUT_DIR),
+                    "i2i_used": reference_image_url is not None,
+                    "i2i_params": i2i_params,
+                    "reference_image_url": reference_image_url,
+                    "pixel_art_model_used": use_pixel_art_model,
+                    "geopolitical_validation": final_geo_validation,
+                    "accuracy_score": final_geo_validation['accuracy_score'],
+                    "countries_detected": list(final_geo_validation['country_analysis'].keys()),
+                    "equipment_validated": not any(analysis['issues'] for analysis in final_geo_validation['equipment_analysis'].values()),
+                    "target_app": target_app,
+                    "provider": "fal_ai",
+                    "detected_failure": fail_reason,
+                    "width": size["width"],
+                    "height": size["height"],
+                    "steps": MODEL_STEP_CONFIG.get(model_used, 28),
+                }
 
             return {
                 "success": True,
@@ -1764,57 +2032,70 @@ def generate_pixel_art(
                     if COLOR_PALETTE_PROMPT:
                         scrubbed_full = f"{scrubbed_full}, {COLOR_PALETTE_PROMPT}"
 
-                    try:
-                        enforced_scrubbed = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {scrubbed_full}, vibrant colors, pixel-perfect"
-                        retry_args = {
-                            "prompt": enforced_scrubbed,
-                            "image_size": {"width": size["width"], "height": size["height"]},
-                            "num_images": 1,
-                            "num_inference_steps": MODEL_STEP_CONFIG.get("fal-ai/flux/schnell", 4),
-                            "enable_safety_checker": False,
-                            "output_format": "png",
-                        }
-                        if seed is not None:
-                            retry_args["seed"] = seed + scrub_level
-
-                        retry_result = fal_client.run("fal-ai/flux/schnell", arguments=retry_args)
-                        retry_image_url = retry_result["images"][0]["url"]
-
-                        img_response = requests.get(retry_image_url, timeout=30)
-                        img_response.raise_for_status()
-
-                        with open(output_path, "wb") as f:
-                            f.write(img_response.content)
-
+                    # Try FLUX/dev first for better quality, then fall to schnell
+                    for retry_model in [FAL_MODEL, "fal-ai/flux/schnell"]:
                         try:
-                            _upscale_pixel_art(str(output_path))
-                        except Exception:
-                            pass
+                            enforced_scrubbed = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {scrubbed_full}, vibrant colors, pixel-perfect"
+                            retry_args = {
+                                "prompt": enforced_scrubbed,
+                                "image_size": {"width": size["width"], "height": size["height"]},
+                                "num_images": 1,
+                                "num_inference_steps": MODEL_STEP_CONFIG.get(retry_model, 40),
+                                "guidance_scale": 4.0,
+                                "enable_safety_checker": False,
+                                "negative_prompt": NEGATIVE_PROMPT,
+                                "output_format": "png",
+                            }
+                            if PIXEL_ART_LORA and PIXEL_ART_LORA.get("path"):
+                                retry_args["lora"] = [{"path": PIXEL_ART_LORA["path"], "scale": PIXEL_ART_LORA.get("scale", 0.85)}]
+                            if seed is not None:
+                                retry_args["seed"] = seed + scrub_level
 
-                        print(f"  [IMG] Scrub level {scrub_level} succeeded — image saved")
-                        return {
-                            "success": True,
-                            "filename": filename,
-                            "path": str(output_path),
-                            "prompt_used": scrubbed_full,
-                            "original_prompt": full_prompt,
-                            "visual_type": visual_type,
-                            "source": f"fal-ai/flux/schnell (scrub level {scrub_level})",
-                            "scrub_level": scrub_level,
-                            "note": f"Content policy retry succeeded at scrub level {scrub_level}",
-                            "output_directory": str(OUTPUT_DIR),
-                            "geopolitical_validation": final_geo_validation,
-                            "i2i_used": False,
-                            "i2i_params": None,
-                            "provider": "fal_ai",
-                            "target_app": target_app,
-                            "width": size["width"],
-                            "height": size["height"],
-                        }
+                            retry_result = fal_client.run(retry_model, arguments=retry_args)
+                            retry_image_url = retry_result["images"][0]["url"]
 
-                    except Exception as retry_err:
-                        print(f"  [IMG] Scrub level {scrub_level} also failed: {str(retry_err)[:80]}")
-                        time.sleep(1)
+                            img_response = requests.get(retry_image_url, timeout=30)
+                            img_response.raise_for_status()
+
+                            with open(output_path, "wb") as f:
+                                f.write(img_response.content)
+
+                            try:
+                                _upscale_pixel_art(str(output_path))
+                            except Exception:
+                                pass
+
+                            is_retry_failed, retry_fail_reason = _detect_failed_image(str(output_path))
+                            if is_retry_failed:
+                                print(f"  [IMG] Scrub level {scrub_level} ({retry_model}) produced failed image: {retry_fail_reason}")
+                                continue
+
+                            print(f"  [IMG] Scrub level {scrub_level} succeeded with {retry_model} — image saved")
+                            return {
+                                "success": True,
+                                "filename": filename,
+                                "path": str(output_path),
+                                "prompt_used": scrubbed_full,
+                                "original_prompt": full_prompt,
+                                "visual_type": visual_type,
+                                "source": f"{retry_model} (scrub level {scrub_level})",
+                                "scrub_level": scrub_level,
+                                "note": f"Content policy retry succeeded at scrub level {scrub_level} with {retry_model}",
+                                "output_directory": str(OUTPUT_DIR),
+                                "geopolitical_validation": final_geo_validation,
+                                "i2i_used": False,
+                                "i2i_params": None,
+                                "provider": "fal_ai",
+                                "target_app": target_app,
+                                "width": size["width"],
+                                "height": size["height"],
+                            }
+
+                        except Exception as retry_model_err:
+                            print(f"  [IMG] Scrub level {scrub_level} with {retry_model} failed: {str(retry_model_err)[:80]}")
+                            continue
+
+                    time.sleep(1)
 
                 print(f"  [IMG] All scrub levels failed — falling to placeholder")
             else:

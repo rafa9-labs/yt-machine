@@ -63,3 +63,6 @@ logs/
 # Deprecated dirs
 open-viking/
 archive/
+
+# Agent skills (local only)
+.agent_skills/

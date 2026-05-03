@@ -23,7 +23,7 @@ if not source.exists():
     print(f"ERROR: {source} not found")
     sys.exit(1)
 
-NEW_CLOSING = "Stay behind the curtain. Subscribe, like. And if I don't see you. Good morning. Good afternoon. And good night."
+NEW_CLOSING = "And just like that, the dominoes keep falling. Stay behind the curtains, and if I don't see you — good morning, good afternoon, and goodnight."
 
 print(f"[RERUN] Source project: {source}")
 
