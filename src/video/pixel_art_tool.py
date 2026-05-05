@@ -397,8 +397,14 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
                     print(f"  [IMG] LoRA loaded (unfused — GGUF weights are read-only, scale applied at inference)")
 
             if _IS_GGUF:
-                _flux_pipeline.enable_model_cpu_offload()
-                print(f"  [IMG] {model_id} pipeline ready (GGUF {LOCAL_FLUX_QUANTIZE}, CPU offload enabled)")
+                _free_vram_bytes, _ = torch.cuda.mem_get_info()
+                _free_vram_gb = _free_vram_bytes / (1024 ** 3)
+                if _free_vram_gb >= 12:
+                    _flux_pipeline.to("cuda")
+                    print(f"  [IMG] {model_id} pipeline ready on GPU (GGUF {LOCAL_FLUX_QUANTIZE}, {_free_vram_gb:.1f}GB free)")
+                else:
+                    _flux_pipeline.enable_model_cpu_offload()
+                    print(f"  [IMG] {model_id} pipeline ready (GGUF {LOCAL_FLUX_QUANTIZE}, CPU offload enabled — {_free_vram_gb:.1f}GB free)")
             elif _is_quantized:
                 for name, component in _flux_pipeline.components.items():
                     if component is not None and hasattr(component, 'to'):
