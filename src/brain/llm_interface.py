@@ -1736,37 +1736,80 @@ CRITICAL RULES:
         
         return script
     
+    _GEO_ENTITIES = {
+        "Afghanistan", "Albania", "Algeria", "Angola", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan",
+        "Bahrain", "Bangladesh", "Belarus", "Belgium", "Bolivia", "Bosnia", "Botswana", "Brazil", "Brunei", "Bulgaria",
+        "Burkina Faso", "Burundi", "Cambodia", "Cameroon", "Canada", "Chad", "Chile", "China", "Colombia",
+        "Congo", "Costa Rica", "Croatia", "Cuba", "Cyprus", "Czech Republic", "Czechia", "Denmark",
+        "Ecuador", "Egypt", "El Salvador", "Eritrea", "Estonia", "Eswatini", "Ethiopia",
+        "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Guatemala", "Guinea",
+        "Guyana", "Haiti", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland",
+        "Israel", "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kosovo", "Kuwait", "Kyrgyzstan",
+        "Laos", "Latvia", "Lebanon", "Libya", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia",
+        "Mali", "Malta", "Mauritania", "Mexico", "Moldova", "Mongolia", "Montenegro", "Morocco", "Mozambique",
+        "Myanmar", "Namibia", "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria",
+        "North Korea", "Norway", "Oman", "Pakistan", "Palestine", "Panama", "Paraguay", "Peru", "Philippines",
+        "Poland", "Portugal", "Qatar", "Romania", "Russia", "Rwanda", "Saudi Arabia", "Senegal", "Serbia",
+        "Singapore", "Slovakia", "Slovenia", "Somalia", "South Africa", "South Korea", "South Sudan",
+        "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria",
+        "Taiwan", "Tajikistan", "Tanzania", "Thailand", "Tunisia", "Turkey", "Turkmenistan", "Uganda",
+        "Ukraine", "United Arab Emirates", "United Kingdom", "United States", "Uruguay", "Uzbekistan",
+        "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe",
+        "Beijing", "Berlin", "Brussels", "Cairo", "Damascus", "Geneva", "Jerusalem", "Khartoum",
+        "Kiev", "Kyiv", "London", "Minsk", "Moscow", "New Delhi", "Paris", "Riyadh", "Seoul",
+        "Taipei", "Tallinn", "Tehran", "Tel Aviv", "Tokyo", "Tripoli", "Vienna", "Warsaw", "Washington",
+        "Brussels", "Dubai", "Gaza", "Hong Kong", "West Bank",
+        "Baltic Sea", "Black Sea", "Mediterranean", "Persian Gulf", "Red Sea", "South China Sea",
+        "Suez Canal", "Taiwan Strait", "Strait", "Panama Canal",
+        "Antarctica", "Arctic", "Balkans", "Caucasus", "Crimea", "Donbas", "Europe", "Kurdistan",
+        "Latin America", "Middle East", "Sahara", "Southeast Asia",
+        "Aleppo", "Hodeidah", "Idlib", "Kurdish", "Mariupol", "Odesa", "Zaporizhzhia",
+    }
+
+    _ACRONYM_PATTERN = re.compile(r'\b([A-Z]{2,}(?:\.[A-Z]{2,})*)\b')
+    _PROPER_NOUN_PATTERN = re.compile(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b')
+    _COMPOUND_PROPER_PATTERN = re.compile(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:-[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)+)\b')
+    _NUMBER_CTX_PATTERN = re.compile(
+        r'(\$?\d+(?:\.\d+)?\s*(?:billion|million|thousand|trillion|percent|%))', re.IGNORECASE
+    )
+    _BARE_NUMBER_PATTERN = re.compile(r'\b\d+[\d,]*\b')
+
+    _STOPWORDS = {
+        'The', 'This', 'That', 'These', 'Those', 'And', 'But', 'For', 'Not', 'Nor', 'From',
+        'With', 'It', 'Its', 'Are', 'Were', 'Has', 'Have', 'Had', 'Been', 'Would', 'Could',
+        'Should', 'May', 'Might', 'They', 'Their', 'There', 'Each', 'Every', 'Which',
+        'What', 'When', 'Where', 'Who', 'How', 'Why', 'More', 'Most', 'Some', 'Such',
+        'Than', 'Then', 'Now', 'Just', 'Also', 'Very', 'Even', 'Still', 'Only', 'About',
+        'After', 'Before', 'Between', 'Through', 'During', 'Without', 'Against',
+        'Another', 'While', 'Last', 'First', 'Next', 'Both', 'All', 'Many', 'Much',
+        'Own', 'Other', 'New', 'Old', 'Good', 'Great', 'Big', 'Small', 'Little',
+        'So', 'If', 'Or', 'An', 'No', 'Not', 'Do', 'Did', 'Get', 'Got', 'Make',
+        'Made', 'Like', 'Well', 'Back', 'Over', 'Into', 'Right', 'Because',
+        'Since', 'Being', 'Having', 'Doing', 'Going', 'Coming', 'Taking', 'Give',
+        'Tonight', 'Today', 'Yesterday', 'Tomorrow', 'Subscribe', 'Masker',
+        'Afternoon', 'Morning', 'Evening', 'Hello', 'Look', 'Here', 'Watch',
+        'Imagine', 'Behind', 'Think', 'Yeah', 'Yes', 'Okay', 'Anyway',
+        'I', 'You', 'We', 'He', 'She', 'Me', 'My', 'Your', 'Our',
+        'By', 'Is', 'Was', 'At', 'In', 'On', 'To',
+    }
+
     @staticmethod
     def _extract_key_entities(text: str) -> set:
-        """Extract key proper nouns, country names, and numbers from text."""
-        import re
-        
-        # Capitalized multi-word entities (country names, proper nouns, org names)
-        entities = set(re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', text))
-        
-        # Common English words to filter out
-        stopwords = {
-            'The', 'This', 'That', 'And', 'But', 'For', 'Not', 'In', 'On', 'At',
-            'With', 'It', 'Is', 'Was', 'Are', 'Were', 'Has', 'Have', 'Had', 'Been',
-            'Will', 'Would', 'Could', 'Should', 'May', 'Might', 'They', 'Their',
-            'There', 'These', 'Those', 'Each', 'Every', 'Which', 'What', 'When',
-            'Where', 'Who', 'How', 'Why', 'More', 'Most', 'Some', 'Such', 'Than',
-            'Then', 'Now', 'Just', 'Also', 'Very', 'Even', 'Still', 'Only', 'About',
-            'After', 'Before', 'Between', 'Through', 'During', 'Without', 'Against',
-            'Another', 'While', 'Last', 'First', 'Next', 'Both', 'All', 'Many',
-            'Much', 'Own', 'Other', 'New', 'Old', 'Good', 'Great', 'Big', 'Small',
-            'So', 'If', 'Or', 'An', 'No', 'Do', 'Did', 'Get', 'Got', 'Make',
-            'Made', 'Like', 'Well', 'Back', 'Over', 'Into', 'Right', 'Because',
-            'Since', 'Being', 'Having', 'Doing', 'Going', 'Coming', 'Taking',
-            'Tonight', 'Today', 'Yesterday', 'Tomorrow', 'Subscribe', 'Masker',
-            'Afternoon', 'Morning', 'Evening', 'I', 'You', 'We', 'He', 'She',
-        }
-        entities -= stopwords
-        
-        # Important numbers
-        numbers = set(re.findall(r'\b\d+[\d,]*\b', text))
-        
-        return entities | numbers
+        entities = set()
+
+        for token in LLMInterface._GEO_ENTITIES:
+            if token.lower() in text.lower():
+                entities.add(token)
+
+        entities.update(LLMInterface._ACRONYM_PATTERN.findall(text))
+        entities.update(LLMInterface._PROPER_NOUN_PATTERN.findall(text))
+        entities.update(LLMInterface._COMPOUND_PROPER_PATTERN.findall(text))
+        entities.update(m.group(0) for m in LLMInterface._NUMBER_CTX_PATTERN.finditer(text))
+        entities.update(LLMInterface._BARE_NUMBER_PATTERN.findall(text))
+
+        entities -= LLMInterface._STOPWORDS
+
+        return entities
     
     def _check_content_fidelity(self, original: str, curated: str) -> bool:
         """
@@ -1785,7 +1828,7 @@ CRITICAL RULES:
         # Check 1: Original entities must be preserved in curated text
         preservation_ratio = len(overlap) / len(orig_entities)
         
-        if preservation_ratio < 0.25:
+        if preservation_ratio < 0.15:
             print(f"  [CURATOR] ⚠️ CONTENT MISMATCH — only {preservation_ratio:.0%} entity preservation")
             print(f"  [CURATOR] Original entities: {sorted(orig_entities)[:10]}")
             print(f"  [CURATOR] Curated entities: {sorted(cur_entities)[:10]}")

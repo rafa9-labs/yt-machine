@@ -1052,6 +1052,21 @@ def generate_voiceover(text: str, voice_tone: str = "authoritative") -> dict:
         }
 
 
+def _check_cudnn_available() -> bool:
+    """Return True if CUDA cuDNN shared library is loadable.
+    
+    CTranslate2 (faster-whisper's engine) needs libcudnn_ops_infer.so.8 to run
+    with device='cuda'.  If it's missing the process segfaults (uncatchable).
+    We detect it early here so we can safely fall back to CPU.
+    """
+    try:
+        import ctypes
+        import ctypes.util
+        return ctypes.util.find_library("cudnn_ops_infer") is not None
+    except Exception:
+        return False
+
+
 def _get_faster_whisper_timestamps(audio_path: str, text: str) -> list:
     """
     Use faster-whisper direct word timestamps for high-precision alignment.
@@ -1065,8 +1080,19 @@ def _get_faster_whisper_timestamps(audio_path: str, text: str) -> list:
     
     try:
         import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        compute_type = "float16" if device == "cuda" else "float32"
+        _cudnn_ok = _check_cudnn_available()
+        _cuda_available = torch.cuda.is_available()
+        
+        if _cuda_available and not _cudnn_ok:
+            print(f"  [TTS] CUDA available but cuDNN missing — forcing CPU (install: pip install nvidia-cudnn-cu12)")
+            device = "cpu"
+            compute_type = "int8"
+        elif _cuda_available:
+            device = "cuda"
+            compute_type = "float16"
+        else:
+            device = "cpu"
+            compute_type = "int8"
         
         # Check if real audio file exists and has content
         if not os.path.exists(audio_path):
