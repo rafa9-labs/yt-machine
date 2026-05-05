@@ -74,9 +74,13 @@ def get_connection_string() -> str:
     return f"postgresql://{user}:{password}@{host}:{port}/{database}"
 
 
-def get_connection():
-    """
-    Create and return a new PostgreSQL connection.
+def get_connection(connect_timeout: int = 10):
+    """Create and return a new PostgreSQL connection with a connect timeout.
+
+    Args:
+        connect_timeout: Seconds to wait for connection before raising
+            OperationalError. Prevents indefinite blocking if PostgreSQL
+            is down or unreachable.
 
     WHY RealDictCursor? By default, psycopg2 returns rows as tuples:
         row = ("video_123", "geopolitics", "published")
@@ -89,7 +93,11 @@ def get_connection():
     This pairs perfectly with Pydantic's .model_validate(dict) which
     accepts dicts natively.
     """
-    conn = psycopg2.connect(get_connection_string(), cursor_factory=RealDictCursor)
+    conn = psycopg2.connect(
+        get_connection_string(),
+        cursor_factory=RealDictCursor,
+        connect_timeout=connect_timeout,
+    )
     return conn
 
 

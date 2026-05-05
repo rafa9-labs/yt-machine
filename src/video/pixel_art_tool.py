@@ -12,6 +12,7 @@ load_dotenv()
 
 # Reduce CUDA memory fragmentation and prevent spill to system RAM
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:128")
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 # Load image style config — single source of truth
 _STYLE_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "image_style.json"
@@ -82,10 +83,23 @@ FAL_FALLBACK_MODELS = ["fal-ai/flux/schnell"]
 USE_LOCAL_FLUX = os.getenv("USE_LOCAL_FLUX", "auto").lower() in ("true", "1", "yes", "auto")
 LOCAL_FLUX_MODEL = os.getenv("LOCAL_FLUX_MODEL", "black-forest-labs/FLUX.1-dev")
 LOCAL_FLUX_FALLBACK_MODEL = "black-forest-labs/FLUX.1-schnell"
-LOCAL_FLUX_QUANTIZE = os.getenv("LOCAL_FLUX_QUANTIZE", "8bit").lower()  # "8bit", "4bit", or "none"
-LOCAL_FLUX_COMPILE = os.getenv("LOCAL_FLUX_COMPILE", "none").lower()  # "none", "reduce-overhead", "max-autotune"
-LOCAL_FLUX_MIN_VRAM_GB = int(os.getenv("LOCAL_FLUX_MIN_VRAM_GB", "14"))  # minimum free VRAM to load FLUX
+LOCAL_FLUX_QUANTIZE = os.getenv("LOCAL_FLUX_QUANTIZE", "gguf_q4ks").lower()
+LOCAL_FLUX_COMPILE = os.getenv("LOCAL_FLUX_COMPILE", "none").lower()
+LOCAL_FLUX_MIN_VRAM_GB = int(os.getenv("LOCAL_FLUX_MIN_VRAM_GB", "14"))
 LOCAL_FLUX_EVICT_OLLAMA = os.getenv("LOCAL_FLUX_EVICT_OLLAMA", "true").lower() in ("true", "1", "yes")
+
+_GGUF_MODEL_MAP = {
+    "gguf_q2k":  "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q2_K.gguf",
+    "gguf_q3ks": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q3_K_S.gguf",
+    "gguf_q4ks": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q4_K_S.gguf",
+    "gguf_q5ks": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q5_K_S.gguf",
+    "gguf_q6k":  "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q6_K.gguf",
+    "gguf_q8":   "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q8_0.gguf",
+    "gguf_f16":  "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-F16.gguf",
+}
+
+_IS_GGUF = LOCAL_FLUX_QUANTIZE in _GGUF_MODEL_MAP
+_IS_BNB = LOCAL_FLUX_QUANTIZE in ("8bit", "4bit")
 _KEEP_ALIVE = LOCAL_FLUX_COMPILE not in ("none", "")
 _BATCH_KEEP_ALIVE = False  # Set by ModelOrchestrator during batch image generation
 _flux_pipeline = None
@@ -231,7 +245,7 @@ def _flush_flux_pipeline() -> None:
     if _flux_pipeline is not None:
         print("  [IMG] Flushing FLUX pipeline — releasing GPU memory...")
         try:
-            if LOCAL_FLUX_QUANTIZE in ("8bit", "4bit"):
+            if _IS_BNB or _IS_GGUF:
                 del _flux_pipeline
             else:
                 _flux_pipeline.to("cpu")
@@ -284,62 +298,103 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
     try:
         from diffusers import FluxPipeline
 
-        _is_quantized = LOCAL_FLUX_QUANTIZE in ("8bit", "4bit")
+        _is_quantized = _IS_BNB
         _is_compiled = LOCAL_FLUX_COMPILE not in ("none", "")
 
         if _flux_pipeline is None:
             model_id = LOCAL_FLUX_MODEL
             print(f"  [IMG] Loading {model_id} pipeline onto GPU (quantize={LOCAL_FLUX_QUANTIZE}, compile={LOCAL_FLUX_COMPILE})...")
 
-            if _is_quantized:
-                from transformers import BitsAndBytesConfig
+            if _IS_GGUF:
+                from diffusers import GGUFQuantizationConfig, FluxTransformer2DModel
+
+                gguf_path = _GGUF_MODEL_MAP[LOCAL_FLUX_QUANTIZE]
+                print(f"  [IMG] GGUF model: {gguf_path}")
+                quant_config = GGUFQuantizationConfig(compute_dtype=torch.bfloat16)
+                transformer = FluxTransformer2DModel.from_single_file(
+                    gguf_path,
+                    quantization_config=quant_config,
+                    torch_dtype=torch.bfloat16,
+                )
+                _flux_pipeline = FluxPipeline.from_pretrained(
+                    model_id,
+                    transformer=transformer,
+                    torch_dtype=torch.bfloat16,
+                )
+            elif _is_quantized:
+                from diffusers.quantizers import PipelineQuantizationConfig
 
                 if LOCAL_FLUX_QUANTIZE == "8bit":
-                    quant_config = BitsAndBytesConfig(load_in_8bit=True)
+                    quant_config = PipelineQuantizationConfig(
+                        quant_backend="bitsandbytes_8bit",
+                        quant_kwargs={"load_in_8bit": True},
+                        components_to_quantize=["transformer", "text_encoder_2"],
+                    )
                 else:
-                    quant_config = BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_compute_dtype=torch.bfloat16,
-                        bnb_4bit_quant_type="nf4",
+                    quant_config = PipelineQuantizationConfig(
+                        quant_backend="bitsandbytes_4bit",
+                        quant_kwargs={
+                            "load_in_4bit": True,
+                            "bnb_4bit_quant_type": "nf4",
+                            "bnb_4bit_compute_dtype": "bfloat16",
+                        },
+                        components_to_quantize=["transformer", "text_encoder_2"],
                     )
 
-            try:
-                if _is_quantized:
+                try:
                     _flux_pipeline = FluxPipeline.from_pretrained(
                         model_id,
                         quantization_config=quant_config,
                         torch_dtype=torch.bfloat16,
                     )
-                else:
-                    _flux_pipeline = FluxPipeline.from_pretrained(
-                        model_id,
-                        torch_dtype=torch.bfloat16,
-                    )
-            except Exception as auth_err:
-                if "401" in str(auth_err) or "access" in str(auth_err).lower() or "gated" in str(auth_err).lower():
-                    print(f"  [IMG] {model_id} is gated or auth required — trying {LOCAL_FLUX_FALLBACK_MODEL}")
-                    model_id = LOCAL_FLUX_FALLBACK_MODEL
-                    steps = min(steps, 4)
-                    if _is_quantized:
+                except Exception as auth_err:
+                    if "401" in str(auth_err) or "access" in str(auth_err).lower() or "gated" in str(auth_err).lower():
+                        print(f"  [IMG] {model_id} is gated or auth required — trying {LOCAL_FLUX_FALLBACK_MODEL}")
+                        model_id = LOCAL_FLUX_FALLBACK_MODEL
+                        steps = min(steps, 4)
                         _flux_pipeline = FluxPipeline.from_pretrained(
                             model_id,
                             quantization_config=quant_config,
                             torch_dtype=torch.bfloat16,
                         )
                     else:
+                        raise
+            else:
+                try:
+                    _flux_pipeline = FluxPipeline.from_pretrained(
+                        model_id,
+                        torch_dtype=torch.bfloat16,
+                    )
+                except Exception as auth_err:
+                    if "401" in str(auth_err) or "access" in str(auth_err).lower() or "gated" in str(auth_err).lower():
+                        print(f"  [IMG] {model_id} is gated or auth required — trying {LOCAL_FLUX_FALLBACK_MODEL}")
+                        model_id = LOCAL_FLUX_FALLBACK_MODEL
+                        steps = min(steps, 4)
                         _flux_pipeline = FluxPipeline.from_pretrained(
                             model_id,
                             torch_dtype=torch.bfloat16,
                         )
-                else:
-                    raise
+                    else:
+                        raise
 
             if _resolved_lora_path and LORA_SCALE:
                 print(f"  [IMG] Loading LoRA: {_resolved_lora_path} (scale={LORA_SCALE})")
                 _flux_pipeline.load_lora_weights(_resolved_lora_path)
-                _flux_pipeline.fuse_lora(lora_scale=LORA_SCALE)
+                if not _IS_GGUF:
+                    _flux_pipeline.fuse_lora(lora_scale=LORA_SCALE)
+                else:
+                    print(f"  [IMG] LoRA loaded (unfused — GGUF weights are read-only, scale applied at inference)")
 
-            if _is_quantized:
+            if _IS_GGUF:
+                _flux_pipeline.enable_model_cpu_offload()
+                print(f"  [IMG] {model_id} pipeline ready (GGUF {LOCAL_FLUX_QUANTIZE}, CPU offload enabled)")
+            elif _is_quantized:
+                for name, component in _flux_pipeline.components.items():
+                    if component is not None and hasattr(component, 'to'):
+                        try:
+                            component.to('cuda')
+                        except Exception:
+                            pass
                 print(f"  [IMG] {model_id} pipeline ready on GPU (quantized: {LOCAL_FLUX_QUANTIZE})")
             else:
                 _flux_pipeline.to("cuda")
@@ -393,18 +448,28 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
             "num_inference_steps": steps,
             "guidance_scale": guidance_scale,
         }
+        if _IS_GGUF and _resolved_lora_path and LORA_SCALE:
+            gen_kwargs["joint_attention_kwargs"] = {"scale": LORA_SCALE}
         if seed is not None:
             generator = torch.Generator("cuda").manual_seed(seed)
             gen_kwargs["generator"] = generator
 
-        image = _flux_pipeline(**gen_kwargs).images[0]
+        if _IS_GGUF:
+            image = _flux_pipeline(**gen_kwargs).images[0]
+        else:
+            _cudnn_was_enabled = torch.backends.cudnn.enabled
+            try:
+                torch.backends.cudnn.enabled = False
+                image = _flux_pipeline(**gen_kwargs).images[0]
+            finally:
+                torch.backends.cudnn.enabled = _cudnn_was_enabled
         image.save(str(output_path))
         print(f"  [IMG] Local FLUX generation complete: {output_path.name}")
 
         if _KEEP_ALIVE or _BATCH_KEEP_ALIVE:
             effective_reason = "compile mode" if _KEEP_ALIVE else "batch mode (orchestrator)"
             print(f"  [IMG] Pipeline kept alive ({effective_reason}) — VRAM still in use, call _flush_flux_pipeline() to release")
-        elif _is_quantized:
+        elif _is_quantized or _IS_GGUF:
             del _flux_pipeline
             _flux_pipeline = None
             torch.cuda.empty_cache()
@@ -453,7 +518,7 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
         print("  [IMG] CUDA OOM — FLUX too large for available VRAM, falling back to cloud API")
         if _flux_pipeline is not None:
             try:
-                if not _is_quantized:
+                if not _is_quantized and not _IS_GGUF:
                     _flux_pipeline.to("cpu")
                 del _flux_pipeline
             except Exception:
@@ -462,7 +527,7 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
         torch.cuda.empty_cache()
         return None
     except Exception as e:
-        print(f"  [IMG] Local FLUX failed: {e}")
+        print(f"  [IMG] Local FLUX failed: {type(e).__name__}: {e}")
         if _flux_pipeline is not None:
             try:
                 del _flux_pipeline

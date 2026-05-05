@@ -49,6 +49,9 @@ else:
 
 load_dotenv()
 
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "1")
+
 # ══════════════════════════════════════════════════════════════════════════
 # STRUCTURED LOGGING — replaces old _TeeWriter + print() hack
 # Falls back to standard logging if structlog not available.
@@ -345,7 +348,7 @@ def _step_banner(title: str) -> None:
 
 def _step_done(step_name: str) -> None:
     duration = round(time.time() - _step_start, 1)
-    elapsed = round(time.time() - _pipeline_start, 1)
+    elapsed = round(time.time() - _PIPELINE_START, 1)
     print(f"  [{step_name}] Done in {duration}s (elapsed: {elapsed}s)")
 
 
@@ -369,30 +372,37 @@ _STATUS_MAP = {
 
 
 def _save_to_postgres(step_name: str, project_id: int, data: dict, topic: str = None):
-    """Save pipeline step results to PostgreSQL. Errors logged, never raised."""
-    try:
-        from src.db.connection import get_connection
-        conn = get_connection()
-        cursor = conn.cursor()
+    """Save pipeline step results to PostgreSQL in a background thread.
 
-        _topic = topic or data.get('topic', '') or 'pending'
-        _status = _STATUS_MAP.get(step_name, 'scraped')
-        _pid = str(project_id)
-        cursor.execute("""
-            INSERT INTO videos (project_id, status, topic, created_at, updated_at)
-            VALUES (%s, %s, %s, NOW(), NOW())
-            ON CONFLICT (project_id) DO UPDATE SET
-                status = EXCLUDED.status,
-                topic = CASE WHEN videos.topic IN ('pending', '') AND EXCLUDED.topic NOT IN ('pending', '')
-                         THEN EXCLUDED.topic ELSE videos.topic END,
-                updated_at = NOW()
-        """, (_pid, _status, _topic))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        log.debug("postgres.saved", step=step_name, status=_status, project_id=project_id)
-    except Exception as e:
-        log.warning("postgres.save_failed", step=step_name, error=str(e))
+    Never blocks the pipeline. DB errors are logged, never raised.
+    Uses connect_timeout=5 so a dead DB doesn't hang the background thread.
+    """
+    def _do_save():
+        try:
+            from src.db.connection import get_connection
+            conn = get_connection(connect_timeout=5)
+            cursor = conn.cursor()
+
+            _topic = topic or data.get('topic', '') or 'pending'
+            _status = _STATUS_MAP.get(step_name, 'scraped')
+            _pid = str(project_id)
+            cursor.execute("""
+                INSERT INTO videos (project_id, status, topic, created_at, updated_at)
+                VALUES (%s, %s, %s, NOW(), NOW())
+                ON CONFLICT (project_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    topic = CASE WHEN videos.topic IN ('pending', '') AND EXCLUDED.topic NOT IN ('pending', '')
+                             THEN EXCLUDED.topic ELSE videos.topic END,
+                    updated_at = NOW()
+            """, (_pid, _status, _topic))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            log.debug("postgres.saved", step=step_name, status=_status, project_id=project_id)
+        except Exception as e:
+            log.warning("postgres.save_failed", step=step_name, error=str(e))
+
+    threading.Thread(target=_do_save, daemon=True).start()
 
 
 def _get_adjacent_fallback(scene_idx, generated_images, image_folder, scene_name, PILImage):
@@ -601,65 +611,25 @@ log.info("step.complete", step="news_fetch", duration_s=round(_step_duration, 2)
 print(f"\n  [SCRAPER] {len(articles)} articles selected in {round(_step_duration, 1)}s")
 for i, a in enumerate(articles, 1):
     print(f"    {i}. {a.get('title', 'N/A')[:70]}")
+_step_done("FETCH NEWS")
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 1.5: VECTOR DEDUP CHECK (optional — requires pgvector)
-# Wrapped in _run_with_heartbeat so it can't block silently.
+# NOTE: Vector dedup (pgvector + nomic-embed-text) is DISABLED because
+# it loads a SECOND Ollama model into VRAM during the LLM phase, causing
+# VRAM contention on 24GB GPUs. Word-overlap dedup above is sufficient.
 # ══════════════════════════════════════════════════════════════════════════
-log.info("step.start", step="vector_dedup")
-_step_banner("VECTOR DEDUP")
-_step_start = time.time()
+log.info("dedup.skipped", reason="vector_dedup_disabled_vram_contention")
 
-def _run_vector_dedup(article_list, viral_list):
-    """Run vector dedup with progress output. Returns deduplicated article list."""
-    print("  [DEDUP] Connecting to pgvector...", flush=True)
-    from src.brain.memory.vector_store import VectorStore
-    from src.brain.memory.deduplication import DeduplicationChecker
 
-    print("  [DEDUP] Loading dedup checker...", flush=True)
-    dedup = DeduplicationChecker(threshold=0.35)
-    log.info("dedup.loaded", backend="pgvector")
-
-    deduped_articles = []
-    for i, article in enumerate(article_list, 1):
-        topic_text = article.get('title', '')
-        print(f"  [DEDUP] Checking article {i}/{len(article_list)}: {topic_text[:50]}...", end="", flush=True)
-        result = dedup.check_topic(topic_text)
-        if result.is_duplicate:
-            log.info("dedup.skip_duplicate", topic=topic_text[:60], matched=result.matched_topic)
-            print(" DUPLICATE", flush=True)
-        else:
-            deduped_articles.append(article)
-            print(" UNIQUE", flush=True)
-
-    if len(deduped_articles) < 3:
-        log.warning("dedup.few_unique", count=len(deduped_articles))
-        for a in viral_list:
-            if a not in deduped_articles and len(deduped_articles) < 3:
-                result = dedup.check_topic(a.get('title', ''))
-                if not result.is_duplicate:
-                    deduped_articles.append(a)
-
-    return deduped_articles[:3]
-
-try:
-    articles, _dedup_timed_out = _run_with_heartbeat(
-        _run_vector_dedup, "vector_dedup", 8, 60,
-        articles, viral_articles
-    )
-    if _dedup_timed_out or articles is None:
-        log.warning("dedup.timeout", action="continuing_without_dedup")
-        articles = selected[:3]
-    else:
-        log.info("dedup.complete", unique_articles=len(articles))
-except Exception as e:
-    log.warning("dedup.failed", error=str(e), action="continuing_without_dedup")
-    articles = selected[:3]
-
-_step_duration = time.time() - _step_start
-log.info("step.complete", step="vector_dedup", duration_s=round(_step_duration, 2))
-_step_done("VECTOR DEDUP")
+# ══════════════════════════════════════════════════════════════════════════
+# OLLAMA HEALTH CHECK — verify Ollama is responsive before first LLM call
+# ══════════════════════════════════════════════════════════════════════════
+if not orchestrator.check_ollama_health():
+    print("\nFATAL: Ollama is not running or unresponsive.")
+    print("Start it with: ollama serve")
+    print("Or if using a remote server, check OLLAMA_HOST in .env")
+    sys.exit(1)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -792,6 +762,7 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="trending_context", duration_s=round(_step_duration, 2))
+_step_done("TRENDING CONTEXT")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -940,6 +911,8 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_enforcement", duration_s=round(_step_duration, 2))
+_step_done("SCRIPT ENFORCEMENT")
+
 # ══════════════════════════════════════════════════════════════════════════
 _step_banner("VISUAL PROMPTS (LLM)")
 log.info("step.start", step="visual_prompts")
@@ -1091,8 +1064,13 @@ log.info("step.complete", step="script_evaluation", duration_s=round(_step_durat
 _step_done("SCRIPT EVALUATION")
 
 
-# ── GPU MODEL LIFECYCLE: Transition to image generation phase ──
-log.info("orchestrator.transition", phase="image_gen", note="Evicting Ollama, preloading FLUX")
+# ── GPU MODEL LIFECYCLE: Clean up LLM phase before loading FLUX ──
+log.info("orchestrator.transition", phase="image_gen", note="Force cleanup, then evict Ollama + preload FLUX")
+orchestrator.force_cleanup()
+if not orchestrator.verify_clean_state():
+    print("\nWARNING: GPU state not clean before image generation. Proceeding anyway...")
+    log.warning("orchestrator.dirty_state_before_image_gen")
+
 flux_preloaded = orchestrator.phase_image_generation()
 if flux_preloaded:
     log.info("orchestrator.flux_preloaded", note="FLUX pipeline loaded and pinned for batch generation")
@@ -1309,21 +1287,12 @@ log.info("step.complete", step="pixel_art", duration_s=round(_step_duration, 2),
          images=len(generated_images))
 _step_done("PIXEL ART")
 
-# ── GPU MODEL LIFECYCLE: Flush FLUX after batch generation ──
+# ── GPU MODEL LIFECYCLE: Flush FLUX after batch generation, then transition to TTS ──
 orchestrator.phase_image_generation_done()
 log.info("orchestrator.transition", phase="post_image", note="FLUX pipeline flushed, VRAM released")
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# STEP 6: VIDEO FOOTAGE (SKIP — using pixel art only)
-# ══════════════════════════════════════════════════════════════════════════
-log.info("step.skip", step="video_footage", reason="using_pixel_art_only")
-downloaded_files = []
-
-
-# ── GPU MODEL LIFECYCLE: Transition to TTS phase ──
+orchestrator.force_cleanup()
 orchestrator.phase_tts()
-log.info("orchestrator.transition", phase="tts", note="FLUX flushed, Kokoro will load on demand")
+log.info("orchestrator.transition", phase="tts", note="VRAM cleaned, Kokoro will load on demand")
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 7: VOICE GENERATION
@@ -1695,19 +1664,26 @@ except Exception as e:
 _video_topic = news_analyses[0].get('topic', '') if news_analyses else ''
 _save_to_postgres("completed", project_id, {"manifest_path": str(manifest_path)}, topic=_video_topic or None)
 
-# ── Store topic vectors for future dedup ──
+# ── Store topic vectors for future dedup (deferred — non-blocking) ──
 try:
     from src.brain.memory.vector_store import VectorStore
-    store = VectorStore()
+    from src.brain.memory.embedder import Embedder
+    embedder = Embedder()
+    store = VectorStore(embedder=embedder)
     for i, analysis in enumerate(news_analyses):
         topic = analysis.get('topic', '')
         category = analysis.get('category', 'general')
         if topic:
-            store.store_embedding_from_text(
-                project_id=str(project_id),
-                topic=topic,
-                category=category,
-            )
+            try:
+                vector = embedder.embed(topic)
+                store.store_embedding(
+                    project_id=str(project_id),
+                    topic=topic,
+                    category=category,
+                    vector=vector,
+                )
+            except Exception as emb_e:
+                log.warning("vector_topics.embed_failed", topic=topic[:40], error=str(emb_e))
     log.info("vector_topics.stored", count=len(news_analyses))
 except Exception as e:
     log.warning("vector_topics.failed", error=str(e))
@@ -1739,6 +1715,15 @@ except Exception:
 # ── GPU MODEL LIFECYCLE: Final cleanup ──
 orchestrator.phase_cleanup()
 log.info("orchestrator.cleanup", note="All GPU models evicted")
+_step_done("PROJECT SUMMARY")
+
+total_elapsed = round(time.time() - _PIPELINE_START, 1)
+
+print(f"\n{'='*60}")
+print(f"  PIPELINE COMPLETE")
+print(f"  Elapsed: {total_elapsed}s")
+print(f"  Project: {project_folder}")
+orchestrator.heartbeat("pipeline_complete")
 
 log.info("pipeline.complete",
          project_id=project_id,

@@ -15,6 +15,8 @@ import pytest
 import numpy as np
 from PIL import Image
 
+from src.video.model_orchestrator import ModelOrchestrator
+
 
 # ════════════════════════════════════════════════════════════════
 # 1. MODEL ORCHESTRATOR TESTS
@@ -550,6 +552,76 @@ class TestPipelinePhaseOrder:
         mock_signal.assert_any_call(True)   # Keep alive during image gen
         mock_signal.assert_any_call(False)   # Clear keep alive after batch
         mock_evict.assert_called()           # Ollama evicted before image gen
+
+
+class TestForceCleanup:
+    """Verify force_cleanup() properly resets all model tracking and VRAM."""
+
+    def test_force_cleanup_clears_all_models(self):
+        from src.video.model_orchestrator import ModelOrchestrator
+        orch = ModelOrchestrator()
+        orch._register_model('ollama')
+        orch._register_model('flux_dev_8bit')
+        assert len(orch.loaded_models) == 2
+
+        with patch.object(orch, '_evict_ollama'), \
+             patch.object(orch, '_flush_flux_if_loaded'):
+            orch.force_cleanup()
+
+        assert len(orch.loaded_models) == 0
+        assert orch._flux_loaded is False
+        assert orch._ollama_evicted is True
+        assert orch._inference_active is None
+
+    def test_force_cleanup_resets_memory_fraction(self):
+        from src.video.model_orchestrator import ModelOrchestrator
+        orch = ModelOrchestrator()
+        orch._memory_fraction_set = True
+
+        with patch.object(orch, '_evict_ollama'), \
+             patch.object(orch, '_flush_flux_if_loaded'):
+            orch.force_cleanup()
+        assert orch._memory_fraction_set is False
+
+
+class TestVerifyCleanState:
+    """Verify verify_clean_state() detects GPU state issues."""
+
+    def test_verify_clean_state_passes_with_clean_gpu(self):
+        orch = ModelOrchestrator()
+        orch._current_phase = 'ready'
+        with patch.object(orch, '_get_free_vram', return_value=22.0):
+            assert orch.verify_clean_state() is True
+
+    def test_verify_clean_state_fails_with_low_vram(self):
+        orch = ModelOrchestrator()
+        orch._current_phase = 'ready'
+        with patch.object(orch, '_get_free_vram', return_value=5.0):
+            assert orch.verify_clean_state() is False
+
+
+class TestOllamaHealthCheck:
+    """Verify check_ollama_health() works correctly."""
+
+    @patch('requests.get')
+    def test_ollama_health_check_healthy(self, mock_get):
+        mock_get.return_value = MagicMock(status_code=200, json=lambda: {"models": []})
+        orch = ModelOrchestrator()
+        assert orch.check_ollama_health() is True
+
+    @patch('requests.get')
+    def test_ollama_health_check_not_running(self, mock_get):
+        import requests as real_requests
+        mock_get.side_effect = real_requests.exceptions.ConnectionError()
+        orch = ModelOrchestrator()
+        assert orch.check_ollama_health() is False
+
+    @patch('requests.get')
+    def test_ollama_health_check_timeout(self, mock_get):
+        import requests as real_requests
+        mock_get.side_effect = real_requests.exceptions.Timeout()
+        orch = ModelOrchestrator()
+        assert orch.check_ollama_health() is False
 
 
 if __name__ == '__main__':

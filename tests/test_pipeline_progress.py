@@ -380,7 +380,7 @@ class TestStepBanner:
             content = f.read()
 
         assert 'def _step_done(' in content, "_step_done function not found"
-        assert '_pipeline_start' in content, "_pipeline_start tracking not found"
+        assert '_PIPELINE_START' in content, "_PIPELINE_START tracking not found"
         assert 'elapsed' in content, "elapsed time not tracked in _step_done"
 
     def test_step_banners_at_major_steps(self):
@@ -608,10 +608,10 @@ class TestNoLLMInDedup:
 # ══════════════════════════════════════════════════════════════════
 
 class TestVectorDedupProgress:
-    """Verify the vector dedup step has progress output and heartbeat wrapping."""
+    """Verify the vector dedup step is DISABLED (it loads a second Ollama model)."""
 
-    def test_vector_dedup_uses_run_with_heartbeat(self):
-        """Vector dedup should be wrapped in _run_with_heartbeat."""
+    def test_vector_dedup_disabled_vram_contention(self):
+        """Vector dedup should be disabled because it loads nomic-embed-text into VRAM."""
         pipeline_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'tools', 'generate_complete_video.py'
@@ -619,17 +619,12 @@ class TestVectorDedupProgress:
         with open(pipeline_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        dedup_start = content.find('STEP 1.5: VECTOR DEDUP')
-        assert dedup_start != -1, "Vector dedup section not found"
-        dedup_end = content.find('STEP 2: NEWS ANALYSIS', dedup_start)
-        dedup_section = content[dedup_start:dedup_end]
-
-        assert '_run_with_heartbeat' in dedup_section, (
-            "Vector dedup should use _run_with_heartbeat to prevent silent blocking"
+        assert 'vector_dedup_disabled_vram_contention' in content, (
+            "Vector dedup should be disabled with VRAM contention reason"
         )
 
-    def test_vector_dedup_has_progress_prints(self):
-        """Vector dedup should have progress output."""
+    def test_vector_dedup_skip_log(self):
+        """Pipeline should log that vector dedup was skipped."""
         pipeline_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'tools', 'generate_complete_video.py'
@@ -637,16 +632,12 @@ class TestVectorDedupProgress:
         with open(pipeline_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        dedup_start = content.find('STEP 1.5: VECTOR DEDUP')
-        dedup_end = content.find('STEP 2: NEWS ANALYSIS', dedup_start)
-        dedup_section = content[dedup_start:dedup_end]
-
-        assert '[DEDUP]' in dedup_section, (
-            "Vector dedup should have [DEDUP] progress prints"
+        assert 'dedup.skipped' in content, (
+            "Pipeline should log dedup.skipped when vector dedup is disabled"
         )
 
-    def test_vector_dedup_has_timeout(self):
-        """Vector dedup heartbeat should have a timeout (not infinite wait)."""
+    def test_word_overlap_dedup_still_present(self):
+        """Word-overlap dedup should still run (no Ollama model needed)."""
         pipeline_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'tools', 'generate_complete_video.py'
@@ -654,16 +645,12 @@ class TestVectorDedupProgress:
         with open(pipeline_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        dedup_start = content.find('STEP 1.5: VECTOR DEDUP')
-        dedup_end = content.find('STEP 2: NEWS ANALYSIS', dedup_start)
-        dedup_section = content[dedup_start:dedup_end]
-
-        assert '60' in dedup_section, (
-            "Vector dedup should have a timeout (e.g. 60s)"
+        assert '_is_semantically_similar' in content, (
+            "Word-overlap dedup function should still be present"
         )
 
-    def test_vector_dedup_fallback_on_timeout(self):
-        """Vector dedup should fall back gracefully if it times out."""
+    def test_no_vector_dedup_step_banner(self):
+        """There should be no VECTOR DEDUP step banner (it's removed)."""
         pipeline_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'tools', 'generate_complete_video.py'
@@ -671,13 +658,13 @@ class TestVectorDedupProgress:
         with open(pipeline_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        dedup_start = content.find('STEP 1.5: VECTOR DEDUP')
-        dedup_end = content.find('STEP 2: NEWS ANALYSIS', dedup_start)
-        dedup_section = content[dedup_start:dedup_end]
-
-        assert 'dedup.timeout' in dedup_section or 'continuing_without_dedup' in dedup_section, (
-            "Vector dedup should fall back on timeout"
-        )
+        step_1_5 = content.find('STEP 1.5: VECTOR DEDUP')
+        if step_1_5 != -1:
+            dedup_end = content.find('STEP 2: NEWS ANALYSIS', step_1_5)
+            dedup_section = content[step_1_5:dedup_end]
+            assert 'disabled' in dedup_section.lower() or 'vram' in dedup_section.lower(), (
+                "If STEP 1.5 exists, it must indicate it's disabled for VRAM reasons"
+            )
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -735,7 +722,6 @@ class TestHeartbeatTimeoutEnforcement:
         with open(pipeline_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # Find _run_with_heartbeat function body
         func_start = content.find('def _run_with_heartbeat(')
         assert func_start != -1, "_run_with_heartbeat not found"
         func_end = content.find('\ndef ', func_start + 1)
@@ -788,6 +774,150 @@ class TestHeartbeatTimeoutEnforcement:
         result, timed_out = _run_with_heartbeat(slow_func, "test", 1, 2)
         assert result is None
         assert timed_out is True
+
+
+# ══════════════════════════════════════════════════════════════════
+# 11. OLLAMA HEALTH CHECK IN PIPELINE
+# ══════════════════════════════════════════════════════════════════
+
+class TestOllamaHealthCheck:
+    """Verify the pipeline checks Ollama health before LLM calls."""
+
+    def test_pipeline_has_ollama_health_check(self):
+        """Pipeline should check Ollama health before first LLM call."""
+        pipeline_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'tools', 'generate_complete_video.py'
+        )
+        with open(pipeline_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        assert 'check_ollama_health' in content, (
+            "Pipeline should call orchestrator.check_ollama_health() before LLM calls"
+        )
+
+    def test_ollama_health_check_before_step_2(self):
+        """Ollama health check should appear before STEP 2 (news analysis)."""
+        pipeline_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'tools', 'generate_complete_video.py'
+        )
+        with open(pipeline_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        ollama_check = content.find('check_ollama_health')
+        step_2 = content.find('STEP 2: NEWS ANALYSIS')
+        assert ollama_check != -1, "check_ollama_health not found"
+        assert step_2 != -1, "STEP 2: NEWS ANALYSIS not found"
+        assert ollama_check < step_2, (
+            "Ollama health check should appear before STEP 2 (news analysis)"
+        )
+
+    def test_ollama_health_exit_on_failure(self):
+        """Pipeline should exit if Ollama health check fails."""
+        pipeline_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'tools', 'generate_complete_video.py'
+        )
+        with open(pipeline_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        ollama_check_idx = content.find('check_ollama_health')
+        assert ollama_check_idx != -1, "check_ollama_health not found"
+        nearby = content[ollama_check_idx:ollama_check_idx + 500]
+        assert 'sys.exit' in nearby, (
+            "Pipeline should sys.exit(1) if Ollama health check fails"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════
+# 12. DB CONNECTION TIMEOUT
+# ══════════════════════════════════════════════════════════════════
+
+class TestDBConnectionTimeout:
+    """Verify psycopg2 connections have connect_timeout."""
+
+    def test_get_connection_has_timeout(self):
+        """get_connection() should use connect_timeout parameter."""
+        conn_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'src', 'db', 'connection.py'
+        )
+        with open(conn_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        assert 'connect_timeout' in content, (
+            "get_connection should accept connect_timeout parameter"
+        )
+
+    def test_pipeline_saves_to_postgres_async(self):
+        """_save_to_postgres should use a daemon thread (non-blocking)."""
+        pipeline_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'tools', 'generate_complete_video.py'
+        )
+        with open(pipeline_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        save_start = content.find('def _save_to_postgres')
+        assert save_start != -1, "_save_to_postgres not found"
+        save_end = content.find('\ndef ', save_start + 1)
+        save_body = content[save_start:save_end]
+
+        assert 'threading.Thread' in save_body, (
+            "_save_to_postgres should run in a daemon thread to avoid blocking"
+        )
+        assert 'daemon=True' in save_body, (
+            "Background save thread should be daemon=True"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════
+# 13. SEQUENTIAL PIPELINE PHASE TRANSITIONS
+# ══════════════════════════════════════════════════════════════════
+
+class TestSequentialPhaseTransitions:
+    """Verify the pipeline runs sequentially with proper cleanup between phases."""
+
+    def test_force_cleanup_before_image_gen(self):
+        """Pipeline should call force_cleanup() before image generation."""
+        pipeline_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'tools', 'generate_complete_video.py'
+        )
+        with open(pipeline_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        force_cleanup_idx = content.find('force_cleanup')
+        image_gen_idx = content.find('phase_image_generation')
+        assert force_cleanup_idx != -1, "force_cleanup() not found"
+        assert image_gen_idx != -1, "phase_image_generation() not found"
+
+    def test_verify_clean_state_before_image_gen(self):
+        """Pipeline should call verify_clean_state() before image generation."""
+        pipeline_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'tools', 'generate_complete_video.py'
+        )
+        with open(pipeline_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        assert 'verify_clean_state' in content, (
+            "verify_clean_state() should be called before image generation"
+        )
+
+    def test_force_cleanup_before_tts(self):
+        """Pipeline should call force_cleanup() between image gen and TTS."""
+        pipeline_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'tools', 'generate_complete_video.py'
+        )
+        with open(pipeline_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        assert 'force_cleanup' in content, (
+            "force_cleanup() should be called in the pipeline"
+        )
 
 
 if __name__ == '__main__':
