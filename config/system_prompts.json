@@ -64,7 +64,7 @@
     "base_url": "http://localhost:11434",
     "timeout": 300,
     "retry_attempts": 3,
-    "num_ctx": 16384,
+    "num_ctx": 32768,
     "note": "Single-model architecture. Gemma 4 26B A4B (uncensored) handles all tasks — JSON/text extraction, analysis, and creative script writing. num_ctx=16384.",
     "task_models": {
       "multi_news_synthesizer": "hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest",

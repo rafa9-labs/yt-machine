@@ -114,6 +114,23 @@ class LLMInterface:
         # Last resort: auto-close incomplete JSON by counting unclosed delimiters
         try:
             json_str = response[json_start:]
+
+            # Close any trailing unclosed string literal
+            quotes = 0
+            _in_string = False
+            _escaped = False
+            for ch in json_str:
+                if _escaped:
+                    _escaped = False
+                    continue
+                if ch == '\\':
+                    _escaped = True
+                    continue
+                if ch == '"':
+                    _in_string = not _in_string
+            if _in_string:
+                json_str += '"'
+
             open_braces = json_str.count('{') - json_str.count('}')
             open_brackets = json_str.count('[') - json_str.count(']')
 
@@ -1166,13 +1183,13 @@ CRITICAL RULES:
         script = self._extract_json(response)
         if not script or not isinstance(script, dict):
             print(f"Failed to parse multi-news script JSON (attempt 1)")
-            print(f"Raw response: {response[:500]}")
-            
-            # Retry with doubled max_tokens and explicit no-thinking instruction
+            print(f"Raw response: {response[:300]}...")
+
             retry_max = prompt_config["max_tokens"] * 2
             print(f"  [MULTI-NEWS] Retrying with max_tokens={retry_max}")
-            no_think_prefix = "DO NOT think or reason. Start your response immediately with {"
-            retry_prompt = f"{no_think_prefix}\n\n{prompt}"
+
+            retry_prompt = prompt + "\n\nCRITICAL: Your previous response was truncated. Write SHORTER narration — 18-22 words per segment MAXIMUM. Output ONLY valid JSON."
+
             retry_response = self.generate(
                 prompt=retry_prompt,
                 model=task_model,
@@ -1186,7 +1203,7 @@ CRITICAL RULES:
                 if script and isinstance(script, dict):
                     response = retry_response
                     print(f"  [MULTI-NEWS] Retry succeeded")
-            
+
             if not script or not isinstance(script, dict):
                 print(f"Failed to parse multi-news script JSON (attempt 2)")
                 return None
