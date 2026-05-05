@@ -166,9 +166,9 @@ def _apply_outro_tts_settings(voice_settings: dict, is_outro: bool = False) -> d
 
 def _apply_outro_reverb(audio_path: str) -> str:
     """
-    Apply subtle reverb tail to outro audio for melancholy atmosphere.
+    Apply subtle reverb tail ONLY to the last ~5 seconds (outro segment).
+    Leaves the rest of the audio untouched.
     ffmpeg aecho: 0.8 gain, 0.88 feedback, 60ms delay, 0.4 decay.
-    Note: fade-out is handled by the video assembler, not here.
     """
     ffmpeg_exe = _get_ffmpeg()
     if not ffmpeg_exe:
@@ -176,16 +176,28 @@ def _apply_outro_reverb(audio_path: str) -> str:
 
     ext = audio_path.rsplit('.', 1)[-1] if '.' in audio_path else 'wav'
     output_path = audio_path.rsplit('.', 1)[0] + '_outro_reverb.' + ext
+
     try:
         import subprocess
+        import json
+
+        probecmd = [ffmpeg_exe, '-v', 'quiet', '-print_format', 'json', '-show_format', audio_path]
+        probe = subprocess.run(probecmd, capture_output=True, timeout=15, text=True)
+        duration = float(json.loads(probe.stdout)['format']['duration'])
+        split_at = max(0, duration - 5)
+
         cmd = [
             ffmpeg_exe, '-y',
             '-i', audio_path,
-            '-af', 'aecho=0.8:0.88:60:0.4',
+            '-filter_complex',
+            f'[0:a]atrim=0:{split_at},asetpts=PTS-STARTPTS[body];'
+            f'[0:a]atrim=start={split_at},aecho=0.8:0.88:60:0.4,asetpts=PTS-STARTPTS[outro];'
+            f'[body][outro]concat=n=2:v=0:a=1[out]',
+            '-map', '[out]',
             '-ar', '44100',
             output_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, timeout=30, text=True)
+        result = subprocess.run(cmd, capture_output=True, timeout=60, text=True)
         if result.returncode == 0 and Path(output_path).exists():
             try:
                 Path(audio_path).unlink()
@@ -236,31 +248,48 @@ def _get_ffmpeg() -> Optional[str]:
 
 def _apply_audio_mastering(input_path: Path) -> bool:
     """
-    Apply professional audio mastering to an audio file.
-    Normalises loudness and ensures consistent levels.
-    Uses soundfile for reliable WAV I/O (avoids moviepy array stacking issues).
-
-    Args:
-        input_path: Path to the audio file to master in-place
-
-    Returns:
-        True if mastering was applied, False if skipped
+    Apply professional audio mastering using ffmpeg built-in DSP filters.
+    Uses proper bandpass filtering (not crude FFT), compressor with attack/release
+    (not hard sample limiter), and loudness normalization to -16 LUFS.
     """
     try:
-        import numpy as np
-        import soundfile as sf
-        import tempfile
-        import subprocess
-
-        # Read audio directly with soundfile (supports WAV/FLAC/OGG, not MP3)
-        # For MP3 files, fall back to ffmpeg → WAV → process → MP3
-        suffix = input_path.suffix.lower()
-        
-        # Resolve ffmpeg path
         ffmpeg = _get_ffmpeg()
         if not ffmpeg:
             print(f"  [TTS] Mastering skipped: ffmpeg not available")
             return False
+
+        import subprocess
+
+        suffix = input_path.suffix.lower()
+        tmp_path = input_path.with_suffix('.master_tmp' + suffix)
+
+        filter_chain = (
+            'highpass=f=80:t=0.7071,'
+            'equalizer=f=4000:t=q:w=1.2:g=2,'
+            'acompressor=threshold=0.125:ratio=2:attack=10:release=100:knee=4:makeup=1,'
+            'loudnorm=I=-16:LRA=11:TP=-1.5'
+        )
+
+        cmd = [
+            ffmpeg, '-y',
+            '-i', str(input_path),
+            '-af', filter_chain,
+            '-ar', '44100',
+            str(tmp_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=60, text=True)
+
+        if result.returncode == 0 and tmp_path.exists():
+            input_path.unlink(missing_ok=True)
+            tmp_path.rename(input_path)
+            return True
+        else:
+            tmp_path.unlink(missing_ok=True)
+            return False
+
+    except Exception as e:
+        print(f"  [TTS] Mastering failed ({e}) — using unprocessed audio")
+        return False
         
         if suffix == '.mp3':
             # Convert MP3 → temp WAV with ffmpeg for reliable reading
