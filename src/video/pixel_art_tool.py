@@ -90,14 +90,19 @@ LOCAL_FLUX_MIN_VRAM_GB = int(os.getenv("LOCAL_FLUX_MIN_VRAM_GB", "14"))
 LOCAL_FLUX_EVICT_OLLAMA = os.getenv("LOCAL_FLUX_EVICT_OLLAMA", "true").lower() in ("true", "1", "yes")
 
 _GGUF_MODEL_MAP = {
-    "gguf_q2k":  "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q2_K.gguf",
-    "gguf_q3ks": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q3_K_S.gguf",
-    "gguf_q4ks": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q4_K_S.gguf",
-    "gguf_q5ks": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q5_K_S.gguf",
-    "gguf_q6k":  "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q6_K.gguf",
-    "gguf_q8":   "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q8_0.gguf",
-    "gguf_f16":  "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-F16.gguf",
+    "gguf_q2k":  ("city96/FLUX.1-dev-gguf", "flux1-dev-Q2_K.gguf"),
+    "gguf_q3ks": ("city96/FLUX.1-dev-gguf", "flux1-dev-Q3_K_S.gguf"),
+    "gguf_q4ks": ("city96/FLUX.1-dev-gguf", "flux1-dev-Q4_K_S.gguf"),
+    "gguf_q5ks": ("city96/FLUX.1-dev-gguf", "flux1-dev-Q5_K_S.gguf"),
+    "gguf_q6k":  ("city96/FLUX.1-dev-gguf", "flux1-dev-Q6_K.gguf"),
+    "gguf_q8":   ("city96/FLUX.1-dev-gguf", "flux1-dev-Q8_0.gguf"),
+    "gguf_f16":  ("city96/FLUX.1-dev-gguf", "flux1-dev-F16.gguf"),
 }
+
+def _resolve_gguf_path() -> str:
+    repo_id, gguf_filename = _GGUF_MODEL_MAP[LOCAL_FLUX_QUANTIZE]
+    from huggingface_hub import hf_hub_download
+    return hf_hub_download(repo_id=repo_id, filename=gguf_filename)
 
 _IS_GGUF = LOCAL_FLUX_QUANTIZE in _GGUF_MODEL_MAP
 _IS_BNB = LOCAL_FLUX_QUANTIZE in ("8bit", "4bit")
@@ -314,7 +319,7 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
             if _IS_GGUF:
                 from diffusers import GGUFQuantizationConfig, FluxTransformer2DModel
 
-                gguf_path = _GGUF_MODEL_MAP[LOCAL_FLUX_QUANTIZE]
+                gguf_path = _resolve_gguf_path()
                 print(f"  [IMG] GGUF model: {gguf_path}")
                 quant_config = GGUFQuantizationConfig(compute_dtype=torch.bfloat16)
                 transformer = FluxTransformer2DModel.from_single_file(
