@@ -1916,7 +1916,7 @@ def generate_pixel_art(
         if local_size["width"] * local_size["height"] > MAX_PIXELS:
             local_size = {"width": 512, "height": 512}
 
-        enforced_prompt = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {full_prompt}, vibrant colors, pixel-perfect"
+        enforced_prompt = f"{full_prompt}, {PIXEL_ART_ENFORCEMENT_PREFIX}, vibrant colors, pixel-perfect"
         local_steps = int(os.environ.get("LOCAL_FLUX_STEPS", "40"))
         local_guidance = 3.5
 
@@ -1988,7 +1988,7 @@ def generate_pixel_art(
                         )
                         print(f"  [IMG] I2I params: strength={i2i_params['strength']:.2f}, guidance={i2i_params['guidance_scale']:.1f}")
                     else:
-                        enforced_prompt = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {full_prompt}, vibrant colors, pixel-perfect"
+                        enforced_prompt = f"{full_prompt}, {PIXEL_ART_ENFORCEMENT_PREFIX}, vibrant colors, pixel-perfect"
                         base_args = {
                             "prompt": enforced_prompt,
                             "image_size": {"width": size["width"], "height": size["height"]},
