@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
@@ -283,11 +284,16 @@ def _generate_local_flux(prompt: str, output_path: Path, size: dict, seed: int,
             if LOCAL_FLUX_EVICT_OLLAMA:
                 print("  [IMG] Attempting to free VRAM by evicting Ollama models...")
                 _evict_ollama_models()
-                import time
-                time.sleep(2)
-                vram_ok, free_gb = _check_vram_available(LOCAL_FLUX_MIN_VRAM_GB)
+                print("  [IMG] Waiting for GPU memory to reclaim (polling)...")
+                deadline = time.time() + 15
+                while time.time() < deadline:
+                    time.sleep(2)
+                    vram_ok, free_gb = _check_vram_available(LOCAL_FLUX_MIN_VRAM_GB)
+                    print(f"  [IMG]   VRAM poll: {free_gb:.1f}GB free / {LOCAL_FLUX_MIN_VRAM_GB}GB needed")
+                    if vram_ok:
+                        break
             if not vram_ok:
-                print(f"  [IMG] Still only {free_gb}GB free after eviction — falling back to fal.ai")
+                print(f"  [IMG] Still only {free_gb:.1f}GB free after {15}s — falling back to fal.ai")
                 return None
             print(f"  [IMG] VRAM freed: {free_gb}GB now available (needed {LOCAL_FLUX_MIN_VRAM_GB}GB)")
         else:
