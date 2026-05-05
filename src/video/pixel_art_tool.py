@@ -1423,24 +1423,17 @@ def _select_style_lora(visual_type: str) -> Dict[str, Any]:
 
 
 def _enhance_prompt_with_lora_trigger(prompt: str, visual_type: str) -> str:
-    """
-    Enhance prompt with LoRA-specific trigger words and additional prompts.
-    Uses uniform trigger word for style consistency across all scenes in a batch.
-    Per-visual-type additional prompts are kept for content enrichment.
-    """
     lora_config = _select_style_lora(visual_type)
     default_lora = IMAGE_STYLE_CONFIG.get('lora_defaults', {})
     trigger = default_lora.get('trigger_word', 'Retro Pixel')
     additional = lora_config.get('additional_prompts', '')
-    
-    # Add uniform trigger if not already present
-    if trigger.lower() not in prompt.lower():
-        prompt = f"{trigger}, {prompt}"
-    
-    # Add additional prompts if specified (content enrichment, not style)
+
     if additional and additional.lower() not in prompt.lower():
         prompt = f"{prompt}, {additional}"
-    
+
+    if trigger.lower() not in prompt.lower():
+        prompt = f"{prompt}, {trigger}"
+
     return prompt
 
 
