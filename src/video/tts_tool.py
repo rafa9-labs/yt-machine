@@ -168,7 +168,7 @@ def _apply_outro_reverb(audio_path: str) -> str:
     """
     Apply subtle reverb tail to outro audio for melancholy atmosphere.
     ffmpeg aecho: 0.8 gain, 0.88 feedback, 60ms delay, 0.4 decay.
-    Also applies a 1-second fade-out at the end.
+    Note: fade-out is handled by the video assembler, not here.
     """
     ffmpeg_exe = _get_ffmpeg()
     if not ffmpeg_exe:
@@ -181,7 +181,7 @@ def _apply_outro_reverb(audio_path: str) -> str:
         cmd = [
             ffmpeg_exe, '-y',
             '-i', audio_path,
-            '-af', 'aecho=0.8:0.88:60:0.4,afade=t=out:st=0:d=1',
+            '-af', 'aecho=0.8:0.88:60:0.4',
             '-ar', '44100',
             output_path,
         ]

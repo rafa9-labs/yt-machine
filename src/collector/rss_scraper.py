@@ -215,8 +215,11 @@ class RSScraper:
         if url:
             try:
                 import trafilatura
-                # trafilatura.fetch_url uses requests internally — text-only, no JS
-                downloaded = trafilatura.fetch_url(url)
+                import configparser
+                # trafilatura 2.0+ uses config parameter instead of timeout kwarg
+                config = configparser.ConfigParser()
+                config['DEFAULT']['download_timeout'] = str(timeout)
+                downloaded = trafilatura.fetch_url(url, config=config)
                 if downloaded:
                     # Cap raw HTML size before extraction to avoid processing huge pages
                     if len(downloaded) > max_chars * 3:

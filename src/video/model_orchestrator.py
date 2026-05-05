@@ -6,18 +6,20 @@ to prevent contention and eliminate redundant model loading.
 
 Phase transitions:
   idle → llm          (Ollama loads naturally — NO memory cap, full GPU available)
-  llm → image_gen     (evict Ollama, set 85% memory cap, preload FLUX, pin for batch)
-  image_gen → post    (flush FLUX, REMOVE memory cap — Kokoro needs full GPU)
-  post → tts          (Kokoro loads lazily — no memory cap)
-  tts → cleanup       (flush all, remove cap)
+  llm → image_gen     (evict Ollama, preload FLUX with GGUF/CPU offload, pin for batch)
+  image_gen → post    (flush FLUX, Kokoro loads lazily)
+  post → tts          (Kokoro loads lazily)
+  tts → cleanup       (flush all)
 
-Memory fraction cap lifecycle:
-  - phase_pre_pipeline(): Does NOT set the cap. Ollama needs full GPU access.
-  - phase_image_generation(): Sets cap to 85% (20.4GB) AFTER evicting Ollama,
-    BEFORE loading FLUX. This prevents PyTorch from spilling into system RAM.
-  - phase_image_generation_done(): REMOVES the cap (resets to 100%) so
-    Kokoro and subsequent phases can use the full GPU.
-  - This ensures Ollama can load during LLM phase (needs ~14GB, no cap blocking it).
+Quantization backends:
+  - GGUF (recommended): Pre-quantized files, no bitsandbytes, Windows-safe
+    Peak VRAM: Q4_K_S ~12.5GB, Q8_0 ~20.5GB
+  - bitsandbytes 8/4-bit: ⚠️ Segfaults on Windows during loading
+  - bf16 (none): ❌ OOM on 24GB GPU (needs ~36GB)
+
+Memory fraction cap:
+  DISABLED — set_per_process_memory_fraction causes segfaults with bitsandbytes
+  on Windows. GGUF mode with CPU offload is memory-safe without the cap.
 
 Performance impact:
   Before: 8x FLUX load/unload cycle (~12 min overhead)
@@ -26,22 +28,26 @@ Performance impact:
 VRAM budget (24GB GPU):
   Model weights (resident):
     - Ollama (gemma-4-26B-A4B Q4):  ~14.0 GB
-    - FLUX.1-dev (8-bit quantized):  ~12.5 GB
-    - FLUX.1-dev (bf16 full):        ~24.0 GB
-    - FLUX.1-schnell (8-bit):        ~12.0 GB
+    - FLUX.1-dev (GGUF Q4_K_S):      ~7.0 GB  (recommended, Windows-safe)
+    - FLUX.1-dev (GGUF Q5_K_S):      ~8.5 GB
+    - FLUX.1-dev (GGUF Q8_0):        ~13.0 GB
+    - FLUX.1-dev (8-bit bnb):        ~12.5 GB  ⚠️ segfaults on Windows
+    - FLUX.1-dev (bf16 full):        ~24.0 GB  ❌ OOM on 24GB GPU
     - Kokoro TTS:                    ~0.2 GB
     - PyTorch/CUDA base overhead:    ~1.5 GB (always present)
 
   Inference overhead (transient, on top of weights):
-    - FLUX dev 8-bit @ 768x810/40steps:  ~5.5 GB (VAE buffers, attention maps, activations)
-    - FLUX dev 8-bit @ 256x256/1step:     ~2.0 GB (warmup only)
-    - Ollama inference:                   ~2.0 GB (KV cache, attention)
-    - Kokoro inference:                   ~0.1 GB (small model)
+    - FLUX GGUF Q4_K_S @ 768x810/40steps:  ~4.0 GB
+    - FLUX GGUF Q5_K_S @ 768x810/40steps:  ~5.0 GB
+    - FLUX dev 8-bit @ 768x810/40steps:     ~5.5 GB
+    - Ollama inference:                      ~2.0 GB (KV cache, attention)
+    - Kokoro inference:                      ~0.1 GB (small model)
 
   Peak VRAM scenarios:
-    - FLUX 8-bit load + inference:  1.5 + 12.5 + 5.5 = 19.5 GB  ✅ fits 24GB (with 85% cap = 20.4GB)
-    - Ollama load + inference:      1.5 + 14.0 + 2.0 = 17.5 GB  ✅ fits 24GB (NO cap during LLM phase)
-    - Ollama + FLUX (both loaded):  1.5 + 14.0 + 12.5 = 28.0 GB ❌ OOM!
+    - FLUX GGUF Q4_K_S + inference: 1.5 + 7.0 + 4.0 = 12.5 GB  ✅ fits 24GB easily
+    - FLUX GGUF Q8_0 + inference:   1.5 + 13.0 + 6.0 = 20.5 GB  ✅ fits 24GB
+    - Ollama load + inference:       1.5 + 14.0 + 2.0 = 17.5 GB  ✅ fits 24GB
+    - Ollama + FLUX (both loaded):   1.5 + 14.0 + 7.0 = 22.5 GB ⚠️ tight, sequential preferred
 
   RULE: Only one heavy model (Ollama OR FLUX) on GPU at a time.
   RULE: Before loading FLUX, confirm enough VRAM for weights + inference overhead.
@@ -54,11 +60,13 @@ import gc
 import logging
 from typing import Optional
 
+import requests
+
 log = logging.getLogger(__name__)
 
 GPU_TOTAL_GB = 24.0
 GPU_BASE_OVERHEAD_GB = 1.5
-MEMORY_FRACTION = 0.85
+MEMORY_FRACTION = 0.95
 
 os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'max_split_size_mb:128')
 
@@ -75,6 +83,9 @@ class ModelOrchestrator:
 
     VRAM_ESTIMATES = {
         'ollama': 14.0,
+        'flux_dev_gguf_q4ks': 8.5,
+        'flux_dev_gguf_q5ks': 10.0,
+        'flux_dev_gguf_q8': 15.0,
         'flux_dev_8bit': 12.5,
         'flux_dev_bf16': 24.0,
         'flux_schnell_8bit': 12.0,
@@ -83,6 +94,9 @@ class ModelOrchestrator:
     }
 
     INFERENCE_OVERHEAD = {
+        'flux_dev_gguf_q4ks': 4.0,
+        'flux_dev_gguf_q5ks': 5.0,
+        'flux_dev_gguf_q8': 6.0,
         'flux_dev_8bit': 5.5,
         'flux_dev_8bit_warmup': 2.0,
         'flux_dev_bf16': 8.0,
@@ -220,25 +234,13 @@ class ModelOrchestrator:
     def _set_memory_fraction(self) -> bool:
         """Set PyTorch's per-process CUDA memory fraction cap.
 
-        This is a HARD LIMIT — PyTorch will throw a catchable CUDA OOM error
-        instead of spilling into system RAM and crashing the PC.
-        Returns True if set successfully, False if CUDA unavailable.
+        DISABLED: set_per_process_memory_fraction causes segfaults with bitsandbytes
+        on Windows during quantized weight loading. Instead, we rely on explicit VRAM
+        checks and torch.cuda.empty_cache() to prevent OOM.
         """
-        try:
-            import torch
-            if not torch.cuda.is_available():
-                log.info("orchestrator.memory_fraction — CUDA not available, skipping")
-                return False
-
-            torch.cuda.set_per_process_memory_fraction(self._memory_fraction, device=0)
-            cap_gb = self._gpu_total_gb * self._memory_fraction
-            log.info(f"orchestrator.memory_fraction — SET to {self._memory_fraction:.0%} ({cap_gb:.1f}GB cap on {self._gpu_total_gb:.0f}GB GPU)")
-            print(f"  CUDA memory cap: {self._memory_fraction:.0%} ({cap_gb:.1f}GB / {self._gpu_total_gb:.0f}GB)", flush=True)
-            self._memory_fraction_set = True
-            return True
-        except Exception as e:
-            log.warning(f"orchestrator.memory_fraction — failed to set: {e}")
-            return False
+        log.info("orchestrator.memory_fraction — SKIPPED (disabled for bitsandbytes compatibility)")
+        print("  CUDA memory cap: DISABLED (bitsandbytes compatibility)", flush=True)
+        return True
 
     def _reset_memory_fraction(self) -> None:
         """Reset PyTorch's CUDA memory fraction to 100% (no cap).
@@ -251,13 +253,14 @@ class ModelOrchestrator:
         if not self._memory_fraction_set:
             return
 
+        self._memory_fraction_set = False
+
         try:
             import torch
             if not torch.cuda.is_available():
                 return
 
             torch.cuda.set_per_process_memory_fraction(1.0, device=0)
-            self._memory_fraction_set = False
             gc.collect()
             torch.cuda.empty_cache()
             log.info("orchestrator.memory_fraction — RESET to 100% (cap removed)")
@@ -354,11 +357,19 @@ class ModelOrchestrator:
         # which would crash the PC by spilling into system RAM.
         self._set_memory_fraction()
 
-        from .pixel_art_tool import signal_flux_keep_alive, preload_flux_pipeline
+        from .pixel_art_tool import signal_flux_keep_alive, preload_flux_pipeline, LOCAL_FLUX_QUANTIZE, _IS_GGUF
 
         signal_flux_keep_alive(True)
 
-        flux_key = 'flux_dev_8bit'
+        _QUANT_TO_FLUX_KEY = {
+            "gguf_q4ks": "flux_dev_gguf_q4ks",
+            "gguf_q5ks": "flux_dev_gguf_q5ks",
+            "gguf_q8":   "flux_dev_gguf_q8",
+            "8bit":      "flux_dev_8bit",
+            "4bit":      "flux_dev_8bit",
+            "none":      "flux_dev_bf16",
+        }
+        flux_key = _QUANT_TO_FLUX_KEY.get(LOCAL_FLUX_QUANTIZE, "flux_dev_gguf_q4ks")
         peak_needed = self.peak_vram_for_model(flux_key)
 
         if not self.can_load_model_with_inference(flux_key):
@@ -512,6 +523,101 @@ class ModelOrchestrator:
         free_gb = self._get_free_vram()
         log.warning(f"orchestrator.vram_timeout — free={free_gb:.2f}GB required={required_gb:.1f}GB after {timeout}s")
         return False
+
+    def force_cleanup(self) -> None:
+        """Aggressively free all GPU memory. Call between phase transitions.
+
+        Evicts Ollama, flushes FLUX, runs gc.collect() + torch.cuda.empty_cache(),
+        and resets the memory fraction cap to 100%. Ensures a clean GPU state
+        before loading the next model.
+        """
+        print("  [ORCHESTRATOR] Force cleanup — freeing all GPU memory...", flush=True)
+        self._evict_ollama()
+        self._flush_flux_if_loaded()
+        self._reset_memory_fraction()
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                free_gb = self._get_free_vram()
+                print(f"  [ORCHESTRATOR] Clean state: {free_gb:.1f}GB free / {self._gpu_total_gb:.1f}GB total", flush=True)
+                log.info(f"orchestrator.force_cleanup — free={free_gb:.1f}GB total={self._gpu_total_gb:.1f}GB")
+        except ImportError:
+            print("  [ORCHESTRATOR] CUDA not available — skipping empty_cache", flush=True)
+        self._clear_all_models()
+        self._inference_active = None
+
+    def verify_clean_state(self, required_free_gb: float = None) -> bool:
+        """Verify GPU is in a clean state before a phase transition.
+
+        Checks:
+        1. No stale model registrations
+        2. Sufficient free VRAM
+        3. Memory fraction cap is not set (or explicitly expected)
+
+        Args:
+            required_free_gb: Minimum free VRAM required. If None, uses min FLUX budget.
+
+        Returns:
+            True if state is clean and ready, False if issues detected.
+        """
+        if required_free_gb is None:
+            required_free_gb = GPU_BASE_OVERHEAD_GB + self.VRAM_ESTIMATES['flux_dev_8bit'] + self.INFERENCE_OVERHEAD['flux_dev_8bit']
+
+        free_gb = self._get_free_vram()
+        issues = []
+
+        if self._loaded_models and self._current_phase not in ('llm', 'image_gen', 'tts'):
+            issues.append(f"Stale models registered: {list(self._loaded_models.keys())}")
+
+        if free_gb >= 0 and free_gb < required_free_gb:
+            issues.append(f"Insufficient VRAM: {free_gb:.1f}GB free, need {required_free_gb:.1f}GB")
+
+        if self._memory_fraction_set and self._current_phase != 'image_gen':
+            issues.append(f"Memory fraction cap active outside image_gen phase")
+
+        if issues:
+            log.warning(f"orchestrator.verify_clean_state — issues: {issues}")
+            print(f"  [ORCHESTRATOR] Clean state issues: {'; '.join(issues)}", flush=True)
+            return False
+
+        print(f"  [ORCHESTRATOR] Clean state verified: {free_gb:.1f}GB free, phase={self._current_phase}", flush=True)
+        return True
+
+    def check_ollama_health(self, timeout: int = 10) -> bool:
+        """Check if Ollama is responsive before making LLM calls.
+
+        Sends a lightweight GET to /api/ps. Returns True if Ollama is
+        reachable and responsive within `timeout` seconds.
+
+        This prevents the pipeline from hanging on a dead Ollama process.
+        """
+        try:
+            base_url = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+            resp = requests.get(f"{base_url}/api/ps", timeout=timeout)
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                model_names = [m.get("name", m.get("model", "")) for m in models]
+                print(f"  [ORCHESTRATOR] Ollama healthy — loaded models: {model_names or 'none'}", flush=True)
+                log.info(f"orchestrator.ollama_healthy — models={model_names}")
+                return True
+            else:
+                print(f"  [ORCHESTRATOR] Ollama unhealthy — HTTP {resp.status_code}", flush=True)
+                log.warning(f"orchestrator.ollama_unhealthy — status={resp.status_code}")
+                return False
+        except requests.exceptions.ConnectionError:
+            print("  [ORCHESTRATOR] Ollama NOT RUNNING — start it with: ollama serve", flush=True)
+            log.error("orchestrator.ollama_not_running — ConnectionError")
+            return False
+        except requests.exceptions.Timeout:
+            print(f"  [ORCHESTRATOR] Ollama UNRESPONSIVE — no response after {timeout}s", flush=True)
+            log.error(f"orchestrator.ollama_timeout — {timeout}s")
+            return False
+        except Exception as e:
+            print(f"  [ORCHESTRATOR] Ollama check failed: {e}", flush=True)
+            log.warning(f"orchestrator.ollama_check_failed — {e}")
+            return False
 
     def heartbeat(self, context: str = "") -> dict:
         """Print and log current VRAM status. Call during long-running phases.

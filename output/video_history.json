@@ -1,78 +1,6 @@
 {
   "videos": [
     {
-      "project_id": 1777479012,
-      "topic": "China's Zero-Tariff Policy for African Goods Effective May 1, 2026",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Africa: China's Zero-Tariff for African Products Takes Effect May 1 - Envoy",
-      "created_at": "2026-04-29 17:10:12"
-    },
-    {
-      "project_id": 1777479012,
-      "topic": "Pentagon reveals $25 billion cost of US war in Iran",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "US war in Iran has cost $25bn so far, says Pentagon official",
-      "created_at": "2026-04-29 17:10:12"
-    },
-    {
-      "project_id": 1777582483,
-      "topic": "UAE Exits OPEC to Pursue Sovereign Energy Strategy and US Alignment",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Trump, Fox News praise UAE decision to leave Opec",
-      "created_at": "2026-04-30 21:54:43"
-    },
-    {
-      "project_id": 1777582483,
-      "topic": "US Deployment of Dark Eagle Hypersonic Missiles to Middle East",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "US may deploy new hypersonic missile against Iran as Trump weighs fresh strikes: Report",
-      "created_at": "2026-04-30 21:54:43"
-    },
-    {
-      "project_id": 1777582483,
-      "topic": "Tuapse Oil Strikes: The Rise of 'Ecocide' as a Strategic Lever",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Nuclear fury in Kremlin after Tuapse oil strikes by Kyiv, Russian exiles divided (Ukraine Battlefield update, Day 1,526)",
-      "created_at": "2026-04-30 21:54:43"
-    },
-    {
-      "project_id": 1777585226,
-      "topic": "UAE Exit from OPEC: The Rise of a Non-Aligned Energy Superpower",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "Trump, Fox News praise UAE decision to leave Opec",
-      "created_at": "2026-04-30 22:40:26"
-    },
-    {
-      "project_id": 1777585226,
-      "topic": "Tuapse Refinery Strikes: The Dawn of Russian 'Ecocide' Rhetoric and Nuclear Posturing",
-      "category": "technology_disruption",
-      "region": "great_power",
-      "article_title": "Nuclear fury in Kremlin after Tuapse oil strikes by Kyiv, Russian exiles divided (Ukraine Battlefield update, Day 1,526)",
-      "created_at": "2026-04-30 22:40:26"
-    },
-    {
-      "project_id": 1777585226,
-      "topic": "US Deployment of Dark Eagle Hypersonic Missiles to Counter Iranian Missile Mobility",
-      "category": "middle_east_conflict",
-      "region": "middle_east",
-      "article_title": "US may deploy new hypersonic missile against Iran as Trump weighs fresh strikes: Report",
-      "created_at": "2026-04-30 22:40:26"
-    },
-    {
-      "project_id": 1777651132,
-      "topic": "Fragmented Sovereignty: The Rise of Non-State Air and Land Power in Latin America",
-      "category": "technology_disruption",
-      "region": "other",
-      "article_title": "On the Radar: Drug Lords, Dissident Groups, and Airstrikes in Latin America",
-      "created_at": "2026-05-01 16:58:52"
-    },
-    {
       "project_id": 1777651132,
       "topic": "Turkey's Emergence as the New Drone Superpower via AI-Driven Swarm Tactics",
       "category": "middle_east_conflict",
@@ -159,7 +87,79 @@
       "region": "other",
       "article_title": "Kuwait halts crude exports in April as Strait of Hormuz blockade bites",
       "created_at": "2026-05-03 04:55:49"
+    },
+    {
+      "project_id": 1777906546,
+      "topic": "Erosion of NPT Credibility via Iran Security Dilemma",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Opinion: War on Iran has triggered a fundamental crisis of trust in the nuclear non-proliferation treaty",
+      "created_at": "2026-05-04 15:55:46"
+    },
+    {
+      "project_id": 1777906546,
+      "topic": "Unidentified Explosion on HMM Vessel in Strait of Hormuz",
+      "category": "middle_east_conflict",
+      "region": "regional",
+      "article_title": "South Korea reports \u2018explosion and fire\u2019 on ship in Hormuz, cause unclear",
+      "created_at": "2026-05-04 15:55:46"
+    },
+    {
+      "project_id": 1777906546,
+      "topic": "Armenia's Strategic Pivot: EU Summit Signals Departure from Russian Orbit",
+      "category": "technology_disruption",
+      "region": "great_power",
+      "article_title": "Armenia hosts major EU summits in pivot away from Russia",
+      "created_at": "2026-05-04 15:55:46"
+    },
+    {
+      "project_id": 1777910381,
+      "topic": "Erosion of NPT Credibility via Iran Security Dilemma",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Opinion: War on Iran has triggered a fundamental crisis of trust in the nuclear non-proliferation treaty",
+      "created_at": "2026-05-04 16:59:41"
+    },
+    {
+      "project_id": 1777910381,
+      "topic": "Unidentified Explosion on HMM Vessel in Strait of Hormuz",
+      "category": "middle_east_conflict",
+      "region": "regional",
+      "article_title": "South Korea reports \u2018explosion and fire\u2019 on ship in Hormuz, cause unclear",
+      "created_at": "2026-05-04 16:59:41"
+    },
+    {
+      "project_id": 1777910381,
+      "topic": "The Rise of the Israeli-Emirati Axis and the Fragmentation of Gulf Unity",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Saudi Arabia and its allies must curb the growing Israeli-Emirati axis",
+      "created_at": "2026-05-04 16:59:41"
+    },
+    {
+      "project_id": 1777985982,
+      "topic": "Somalia-UAE Diplomatic Friction and Information Warfare",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Somalia: Somalia Denies Expulsion of UAE Ambassador, Warns Against Misinformation",
+      "created_at": "2026-05-05 13:59:42"
+    },
+    {
+      "project_id": 1777985982,
+      "topic": "Israel's 'Silent Strangulation' Strategy in Southern Syria",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "Smart borders, military gates and land seizures: How Israel is encroaching in southern Syria",
+      "created_at": "2026-05-05 13:59:42"
+    },
+    {
+      "project_id": 1777985982,
+      "topic": "Lebanese State Subcontracting Israeli Counter-Insurgency",
+      "category": "middle_east_conflict",
+      "region": "middle_east",
+      "article_title": "How Lebanon's leaders are enabling Israel's war on their own country",
+      "created_at": "2026-05-05 13:59:42"
     }
   ],
-  "last_updated": "2026-05-03 04:55:49"
+  "last_updated": "2026-05-05 13:59:42"
 }
