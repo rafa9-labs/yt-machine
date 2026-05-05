@@ -43,47 +43,30 @@ class LLMInterface:
     
     @staticmethod
     def _strip_thinking_tokens(text: str) -> str:
-        """Strip thinking tokens from LLM response.
-
-        Handles model families:
-          Gemma 4 Heretic: <|channel>thought<channel|>...<|channel>output<channel|>
-          DeepSeek-R1 / misc: <think...</think
-        These consume output budget and break JSON parsing.
-        """
         import re
 
-        # Gemma 4 Heretic: <|channel>output<channel|> (output marker present)
-        output_match = re.search(r'<\|?channel\|?>\s*output\s*<\|?channel\|?>', text)
-        if output_match:
-            text = text[output_match.end():]
-        else:
-            # Gemma 4 Heretic: <|channel>thought<channel|> (only thought marker, no output marker)
-            thought_match = re.search(r'<\|?channel\|?>\s*thought\s*<\|?channel\|?>', text)
-            if thought_match:
-                json_start = re.search(r'[{]', text[thought_match.end():])
-                if json_start:
-                    text = text[thought_match.end() + json_start.start():]
-
-        # DeepSeek-R1 / misc: <think...</think
-        think_match = re.search(r'<think\b', text)
-        if think_match:
-            close_match = re.search(r'</think\s*>?', text)
-            if close_match:
-                text = text[close_match.end():]
-            else:
-                json_start = re.search(r'[{]', text[think_match.start():])
-                if json_start:
-                    text = text[think_match.start() + json_start.start():]
-
-        # If nothing matched but text starts with non-JSON, find first {
-        if not text.strip().startswith('{') and not text.strip().startswith('['):
-            json_start = re.search(r'[{]', text)
-            if json_start:
-                text = text[json_start.start():]
-
-        # Clean remaining stray special tokens
+        text = re.sub(
+            r'<\|\s*channel\s*(?:\|?\s*)?>\s*thought\s*<\s*channel\s*(?:\|?\s*)?>',
+            '', text, flags=re.DOTALL | re.IGNORECASE
+        )
+        text = re.sub(
+            r'<\|\s*channel\s*(?:\|?\s*)?>\s*output\s*<\s*channel\s*(?:\|?\s*)?>',
+            '', text, flags=re.DOTALL | re.IGNORECASE
+        )
+        text = re.sub(
+            r'<\|\s*channel\s*(?:\|?\s*)?>',
+            '', text, flags=re.IGNORECASE
+        )
+        text = re.sub(r'<think\b.*?</think\s*>?', '', text, flags=re.DOTALL)
         text = re.sub(r'</?think[^>]*>?', '', text)
-        text = re.sub(r'<\|?[^>]*\|?>', '', text)
+
+        text = re.sub(r'```(?:json)?\s*', '', text)
+        text = re.sub(r'```\s*', '', text)
+
+        json_start = re.search(r'[{\[]', text)
+        if json_start:
+            text = text[json_start.start():]
+
         return text.strip()
 
     def _extract_json(self, response: str) -> Optional[Dict[str, Any]]:

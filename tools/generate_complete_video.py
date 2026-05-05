@@ -304,6 +304,13 @@ from src.video.model_orchestrator import ModelOrchestrator
 # ── GPU MODEL ORCHESTRATOR ──
 orchestrator = ModelOrchestrator()
 
+# ── DATABASE INIT ──
+try:
+    from src.db.connection import init_db
+    init_db()
+except Exception as _db_err:
+    log.warning("db.init_failed", error=str(_db_err))
+
 
 # ── CHECKPOINT HELPER ──
 def _save_checkpoint(step_name, project_folder, data=None):

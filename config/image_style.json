@@ -26,7 +26,7 @@
     "guidance_scale": 4.0,
     "output_format": "png",
     "enable_safety_checker": false,
-    "render_resolution": [768, 810],
+    "render_resolution": [768, 816],
     "target_resolution": [1088, 1152],
     "upscale_method": "nearest",
     "max_pixels": 1000000,
