@@ -581,9 +581,32 @@ if len(viral_articles) < 3:
 # ── Topic diversity selection (word overlap — no LLM calls) ──
 def _is_semantically_similar(title_a: str, title_b: str) -> bool:
     """Fast word-overlap dedup. No LLM call — titles don't need semantic analysis."""
-    words_a = frozenset(title_a.lower().split()[:6])
-    words_b = frozenset(title_b.lower().split()[:6])
+    words_a = froset(title_a.lower().split()[:6])
+    words_b = froset(title_b.lower().split()[:6])
     return len(words_a & words_b) >= 3
+
+
+def _build_video_title(analyses, script):
+    """Build a 4-8 word video title from story topics. Extracts proper nouns."""
+    import re
+    entities = []
+    for a in (analyses or []):
+        topic = a.get('topic', '')
+        proper_nouns = re.findall(r'\b[A-Z][a-z]{2,}\b', topic)
+        entities.extend(proper_nouns[:3])
+    seen = set()
+    unique = []
+    for e in entities:
+        if e.lower() not in seen:
+            seen.add(e.lower())
+            unique.append(e)
+    if len(unique) >= 2:
+        return f"{unique[0]}, {unique[1]}, and the Shift"
+    elif unique:
+        return f"{unique[0]} — The Shift"
+    else:
+        last = analyses[-1] if analyses else {}
+        return last.get('topic', 'Geopolitical Update')[:60]
 
 selected = []
 for i, article in enumerate(viral_articles):
@@ -1524,12 +1547,8 @@ try:
     else:
         log.warning("assembly.no_timeline", reason="missing segment_timeline or word_timestamps")
 
-    # Title from most important story
-    last_analysis = news_analyses[-1] if news_analyses else {}
-    hook_text = last_analysis.get('topic', '') or last_analysis.get('angle', '')
-    if not hook_text:
-        hooks = [s.get('part_1_narration', s.get('mini_hook', '')) for s in script.get('stories', [])]
-        hook_text = hooks[-1] if hooks else ''
+    # Build a clean 4-8 word video title from story topics
+    hook_text = _build_video_title(news_analyses, script)
     log.info("assembly.hook_text", text=hook_text[:60])
 
     # Hook card: DISABLED — cut straight to content
