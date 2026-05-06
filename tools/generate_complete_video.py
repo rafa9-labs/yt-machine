@@ -581,8 +581,8 @@ if len(viral_articles) < 3:
 # ── Topic diversity selection (word overlap — no LLM calls) ──
 def _is_semantically_similar(title_a: str, title_b: str) -> bool:
     """Fast word-overlap dedup. No LLM call — titles don't need semantic analysis."""
-    words_a = froset(title_a.lower().split()[:6])
-    words_b = froset(title_b.lower().split()[:6])
+    words_a = frozenset(title_a.lower().split()[:6])
+    words_b = frozenset(title_b.lower().split()[:6])
     return len(words_a & words_b) >= 3
 
 
