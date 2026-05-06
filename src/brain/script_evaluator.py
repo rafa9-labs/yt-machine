@@ -213,7 +213,7 @@ CRITICAL RULES:
 - part_2 = THE PAYOFF (speed-talk facts, dense information)
 - real_talk = SERIOUS drop-the-act moment (NO caps, NO exclamations, flat truth)
 - fallout = WHAT HAPPENS NEXT — the second-order consequence, the domino that falls after (10-14 words)
-- segue = frantic cartoonish transition to next story, bridging FROM fallout (8-15 words). MUST name the next story's specific subject — NOT vague buildup
+- segue = bridge FROM fallout TO next story (8-12 words). MUST contain a proper noun from the next story — NOT vague buildup like 'ANOTHER domino falls'. Name the next subject.
 - GEOGRAPHIC ANCHOR: Every location on first mention MUST carry its country — plain name only, NO descriptors. Format: "City, Country". Examples: "Misrata, Libya", "New York, USA", "Lisbon, Portugal", "Tehran, Iran" (NOT "Iran, the Middle Eastern power"). Multiple cities from one country → "Libyan cities of X and Y". No bare location names. No regional labels ("Middle Eastern power", "European nation", "Asian giant") — always use the country name.
 - CTA QUARANTINE: NO subscribe/like/share/sign-off text in any narration field
 - Target: 18-22 words per part_1, 22-28 words per part_2, 12-16 words for real_talk, 10-14 words for fallout

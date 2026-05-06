@@ -547,14 +547,14 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         else:
             return "Ssssmokin'! Good evening, folks! It's SHOWTIME!"
     
-    # ── SEGUE TEMPLATES: The Mask-style frantic cartoonish bridges ──
+    # ── SEGUE TEMPLATES: topic-aware bridges that NAME the next subject ──
     _SEGUE_TEMPLATES = [
-        "But WAIT—hold onto your lobsters! That's not even the CRAZIEST part!",
-        "Oh we are JUST getting started, baby!",
-        "And if you thought THAT was wild... just WAIT!",
-        "You think that's something? You ain't seen NOTHING yet!",
-        "But here's where it gets REALLY interesting, folks!",
-        "And believe it or not, it gets even CRAZIER.",
+        "And while that plays out — {next_subject} is already making moves.",
+        "And while that sinks in — {next_subject} just took a sharp turn.",
+        "And while that domino falls — {next_subject} is next in line.",
+        "And while that unfolds — {next_subject} just changed the game.",
+        "And before that even lands — {next_subject} is already in motion.",
+        "And while that echoes — {next_subject} just rewrote the rules.",
     ]
     
     INTRO_HOOK_TEMPLATES = [
@@ -624,35 +624,61 @@ Synthesize into a compelling 60-80 second professional news narration script wit
     def _enforce_segues(self, script: dict) -> dict:
         """
         GUARANTEE: Every non-last story MUST have a non-empty segue (8-15 words).
-        If the LLM generated a weak/empty segue, inject a template one.
+        Segue MUST contain a proper noun or entity from the next story.
+        If the LLM generated a weak/empty segue, inject a topic-aware template.
         """
-        import random
+        import re
         stories = script.get('stories', [])
         if len(stories) < 2:
             return script
-        
+
         for i, story in enumerate(stories):
             if i >= len(stories) - 1:
                 # Last story — segue must be empty
                 story['segue'] = ''
                 continue
-            
+
             segue = story.get('segue', '').strip()
-            
-            # Check if segue is valid: non-empty, 5+ words, creates anticipation
+            next_story = stories[i + 1]
+            next_narration = next_story.get('part_1_narration', '')
+
+            # Extract next_subject: first 1-3 capitalized proper nouns from next story
+            next_subject = self._extract_next_subject(next_narration)
+
+            # Validate: segue must be 5+ words AND contain at least one word from next story
             words = segue.split()
-            is_valid = len(words) >= 5 and any(
-                kw in segue.lower() for kw in ['but', 'and', 'now', 'wait', 'that', 'here', 'check', 'sneaky', 'wild', 'crazy', 'insane', 'believe', 'next', 'last', "won't believe", 'lobsters', 'baby', 'folks', 'showtime', 'hold']
-            )
-            
+            next_words = set(w.lower() for w in next_narration.split() if len(w) > 3)
+            segue_words = set(w.lower().strip('.,!?;:') for w in words)
+            has_next_entity = bool(segue_words & next_words)
+            is_valid = len(words) >= 5 and has_next_entity
+
             if not is_valid:
                 # Pick a template (rotated based on story index to avoid repetition)
                 template_idx = (i + hash(str(story.get('part_1_narration', '')))) % len(self._SEGUE_TEMPLATES)
-                new_segue = self._SEGUE_TEMPLATES[template_idx]
+                template = self._SEGUE_TEMPLATES[template_idx]
+                new_segue = template.format(next_subject=next_subject or 'something else')
                 story['segue'] = new_segue
-                print(f"  [SEGUE] Story {i+1} segue was weak/empty, injected: \"{new_segue}\"")
-        
+                print(f"  [SEGUE] Story {i+1} segue was weak, injected: \"{new_segue}\"")
+
         return script
+
+    def _extract_next_subject(self, narration: str) -> str:
+        """Extract the first 1-3 capitalized proper nouns from narration text."""
+        import re
+        if not narration:
+            return ''
+        # Find capitalized words (proper nouns) that are 3+ chars
+        proper_nouns = re.findall(r'\b[A-Z][a-z]{2,}\b', narration)
+        # Deduplicate while preserving order
+        seen = set()
+        unique = []
+        for noun in proper_nouns:
+            if noun.lower() not in seen and noun.lower() not in {'The', 'This', 'That', 'These', 'Those', 'What', 'When', 'Where', 'Which', 'While', 'After', 'Before', 'Under', 'Over', 'With', 'From', 'Into', 'Upon', 'About', 'Among', 'Between', 'Through', 'During', 'Without', 'Against', 'Around', 'Behind', 'Below', 'Beneath', 'Beside', 'Beyond', 'Inside', 'Nearby', 'Outside', 'Within', 'Across', 'Along', 'Around', 'Around', 'Around'}:
+                seen.add(noun.lower())
+                unique.append(noun)
+        # Return first 1-3 nouns joined
+        result = ' and '.join(unique[:2]) if len(unique) >= 2 else (unique[0] if unique else '')
+        return result
     
     def _enforce_fallout(self, script: dict, analyses: list = None) -> dict:
         """Ensure every story has a non-empty fallout field and a valid fallout_visual.
@@ -1131,7 +1157,7 @@ CRITICAL RULES:
 - fallout must name ONE concrete forward consequence — what happens NEXT, what escalates, the ripple effect.
 - Create ORIGINAL metaphors. These are BANNED — never use: 'erase the status quo like a bad drawing', 'old switcheroo', 'dance floor on fire', 'crashing the party', 'flip the script'
 - The ONLY approved cartoon exclamation is 'Ssssmokin''. Do NOT invent random exclamations.
-- Each non-last story must have a "segue" field that bridges FROM this story's FALLOUT to the next story's HOOK. The segue MUST name the next story's specific subject — NOT vague buildup like 'a different kind of X is brewing'. NAME the next event directly. Generic bridges like 'just wait!' are FORBIDDEN.
+- Each non-last story must have a "segue" field that bridges FROM this story's FALLOUT to the next story's HOOK. The segue's second clause MUST contain a PROPER NOUN or SPECIFIC ENTITY from the next story. BAD: 'And while THAT domino falls, ANOTHER one just got pushed...' (names nothing). GOOD: 'And while dams reshape the Horn of Africa — Tehran and Beijing just sealed a twenty-year pact.' Generic bridges like 'just wait!' or 'hold onto your lobsters!' are FORBIDDEN.
 - Manic, chaotic, fast-talking energy — but the facts are REAL and DENSE
 - The real_talk field is where The Mask drops the act — NO caps, NO exclamations, just flat visceral truth
 - fallout continues the real_talk tone — factual, forward-looking, no exclamations
