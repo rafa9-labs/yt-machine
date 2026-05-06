@@ -211,13 +211,15 @@ def publish_video(video_path: str = None, platforms: list = None) -> list:
 
 def schedule_task(run_time: str = None) -> bool:
     task_name = "GeopoliticalSentinel_DailyVideo"
-    script_path = str(PROJECT_ROOT / "automate.py")
+    wsl_user = os.getenv("WSL_USER", os.getenv("USERNAME", "rafa")).lower()
+    wsl_script = f"/home/{wsl_user}/yt-machine/tools/run_daily.sh"
 
     cmd = [
         "schtasks", "/Create",
         "/TN", task_name,
-        "/TR", f'"{sys.executable}" "{script_path}" --generate',
+        "/TR", f'wsl -e bash {wsl_script}',
         "/SC", "DAILY",
+        "/RL", "HIGHEST",
         "/F",
     ]
 
@@ -227,12 +229,14 @@ def schedule_task(run_time: str = None) -> bool:
         cmd.extend(["/ST", "0800"])
 
     _log(f"Creating scheduled task: {task_name}")
+    _log(f"WSL script: {wsl_script}")
     _log(f"Command: {' '.join(cmd)}")
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode == 0:
             _log(f"Scheduled task created: {task_name}")
+            _log("IMPORTANT: Open Task Scheduler → task Properties → Conditions → check 'Wake the computer to run this task'")
             return True
         else:
             _log(f"schtasks failed: {result.stderr}", "ERROR")
