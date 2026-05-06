@@ -568,9 +568,8 @@ Synthesize into a compelling 60-80 second professional news narration script wit
 
     def _enforce_greeting(self, script: dict) -> dict:
         """
-        GUARANTEE: Every script MUST have a non-empty greeting and intro_hook.
-        If LLM returns empty strings, generate from templates.
-        Never derive intro_hook from part_1_narration — that creates repetition.
+        GUARANTEE: Every script MUST have a non-empty greeting.
+        Intro_hook is optional — short greetings don't need it.
         """
         import random
         
@@ -587,21 +586,9 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             script['greeting'] = random.choice(GREETING_TEMPLATES)
             print(f"  [GREETING] Generated greeting: \"{script['greeting']}\"")
         
-        if not script.get('intro_hook', '').strip():
-            stories = script.get('stories', [])
-            if stories:
-                topics = []
-                for story in stories:
-                    topic = story.get('topic', '') or story.get('part_1_narration', '').split('.')[0]
-                    if topic and len(topic.split()) <= 6:
-                        topics.append(topic)
-                if topics:
-                    script['intro_hook'] = random.choice(self.INTRO_HOOK_TEMPLATES)
-                else:
-                    script['intro_hook'] = random.choice(self.INTRO_HOOK_TEMPLATES)
-            else:
-                script['intro_hook'] = random.choice(self.INTRO_HOOK_TEMPLATES)
-            print(f"  [GREETING] Generated intro_hook: \"{script['intro_hook'][:60]}\"")
+        # intro_hook is optional — clear if present to avoid redundancy with short greetings
+        if script.get('intro_hook', '').strip():
+            script['intro_hook'] = ''
         
         return script
     
@@ -613,35 +600,24 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         """
         full_text = script.get('full_text', '').strip()
         greeting = script.get('greeting', '').strip()
-        intro_hook = script.get('intro_hook', '').strip()
         
         if not full_text or not greeting:
             return script
         
-        # Normalize for fuzzy comparison
         ft_lower = full_text.lower()
         g_lower = greeting.lower()
         g_first_word = greeting.split()[0].lower() if greeting.split() else ''
         
-        # Already starts with greeting (fuzzy: case-insensitive, punctuation-tolerant)
         if ft_lower.startswith(g_lower) or ft_lower.startswith(g_lower.rstrip('.,!?')):
             return script
         
-        # Check if first 20 chars already contain the greeting content
         ft_prefix = ft_lower[:len(g_lower) + 5]
         if g_lower in ft_prefix:
-            return script  # Greeting content already present (maybe with different case/punct)
+            return script
         
-        # Check if full_text starts with intro_hook (missing greeting)
-        ih_lower = intro_hook[:15].lower() if intro_hook else ''
-        if ih_lower and ft_lower.startswith(ih_lower):
+        if g_first_word and g_first_word not in ft_lower[:len(g_lower) + 10]:
             script['full_text'] = f"{greeting} {full_text}"
             print(f"  [GREETING] Prepended missing greeting to full_text")
-        elif g_first_word and g_first_word not in ft_lower[:len(g_lower) + 10]:
-            # Neither greeting nor intro_hook at start — prepend both
-            prefix = f"{greeting} {intro_hook}".strip()
-            script['full_text'] = f"{prefix} {full_text}"
-            print(f"  [GREETING] Prepended greeting + intro_hook to full_text")
         
         return script
     
@@ -895,13 +871,29 @@ Synthesize into a compelling 60-80 second professional news narration script wit
 
     def _build_dynamic_closing(self, last_fallout: str = "", last_topic: str = "") -> str:
         """
-        Build a dynamic closing that references the last story's topic,
-        creating a seamless bridge from the final fallout to the sign-off.
+        Build a dynamic closing that echoes the last story's fallout,
+        creating a seamless bridge from fallout to sign-off.
         The bridge drops the manic Mask persona and transitions into melancholy.
+        NEVER dumps a headline — extracts 2-3 key words from the topic.
         """
+        bridge = ""
         if last_topic:
+            # Strip headline format: "China-Iran Beijing Summit: Beijing Formalizes..."
+            # becomes just the key concept before the colon
             topic_clean = last_topic.strip().rstrip('.')
-            bridge = f"And that is how {topic_clean} reshapes the board. "
+            if ':' in topic_clean:
+                topic_clean = topic_clean.split(':')[0].strip()
+            # Extract 2-3 content words (skip common/topic-structure words)
+            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',
+                          'to', 'for', 'of', 'with', 'by', 'from', 'is', 'are',
+                          'was', 'were', 'be', 'been', 'being', 'have', 'has',
+                          'had', 'do', 'does', 'did', 'will', 'would', 'could',
+                          'should', 'may', 'might', 'can', 'shall', 'this', 'that',
+                          'these', 'those', 'it', 'its', 'not', 'no', 'new', 'how'}
+            words = [w for w in re.findall(r'\b\w+\b', topic_clean.lower())
+                      if w not in stop_words and len(w) > 2]
+            key_concept = ' '.join(words[:3]) if words else 'the board'
+            bridge = f"And while {key_concept} reshapes the board... "
         elif last_fallout:
             words = re.findall(r'\b\w+\b', last_fallout.lower())
             key_nouns = [w for w in words[-6:] if len(w) > 3 and w not in
@@ -909,11 +901,11 @@ Synthesize into a compelling 60-80 second professional news narration script wit
                            'have', 'been', 'will', 'would', 'could', 'what',
                            'when', 'where', 'which', 'there', 'these', 'those'}]
             if key_nouns:
-                bridge = f"And just like that, {key_nouns[-1]} rewrites the rules. "
+                bridge = f"And while {key_nouns[-1]} reshapes the board... "
             else:
-                bridge = "And just like that, the dominoes keep falling. "
+                bridge = "And just like that... "
         else:
-            bridge = "And just like that, the dominoes keep falling. "
+            bridge = "And just like that... "
 
         return bridge + self.UNIFIED_CLOSING_BASE
     
@@ -1131,7 +1123,7 @@ GREETING TO USE: "{greeting}"
 
 CRITICAL RULES:
 - Output ONLY the JSON object. NO explanatory text before or after. NO markdown.
-- The greeting field must be EXACTLY: {greeting}
+- The greeting field must be EXACTLY: {greeting} (3-6 words MAX, one exclamatory phrase only, no intro_hook)
 - Each story: part_1 = THE HOOK (what happened), part_2 = THE MECHANISM (why it matters, the hidden chain), real_talk = THE TRUTH (visceral specific consequence), fallout = THE FALLOUT (one concrete forward consequence, what escalates next)
 - part_2_narration must NOT contain real_talk or fallout content. They are SEPARATE fields.
 - part_2 must answer SO WHAT — name the concrete second-order consequence. NO vague abstractions.
@@ -1139,14 +1131,15 @@ CRITICAL RULES:
 - fallout must name ONE concrete forward consequence — what happens NEXT, what escalates, the ripple effect.
 - Create ORIGINAL metaphors. These are BANNED — never use: 'erase the status quo like a bad drawing', 'old switcheroo', 'dance floor on fire', 'crashing the party', 'flip the script'
 - The ONLY approved cartoon exclamation is 'Ssssmokin''. Do NOT invent random exclamations.
-- Each non-last story must have a "segue" field that bridges FROM this story's FALLOUT to the next story's HOOK. Reference what just escalated AND what comes next. Generic bridges like 'just wait!' are FORBIDDEN.
+- Each non-last story must have a "segue" field that bridges FROM this story's FALLOUT to the next story's HOOK. The segue MUST name the next story's specific subject — NOT vague buildup like 'a different kind of X is brewing'. NAME the next event directly. Generic bridges like 'just wait!' are FORBIDDEN.
 - Manic, chaotic, fast-talking energy — but the facts are REAL and DENSE
 - The real_talk field is where The Mask drops the act — NO caps, NO exclamations, just flat visceral truth
 - fallout continues the real_talk tone — factual, forward-looking, no exclamations
 - Target: 150-170 words total for ~65-70 seconds.
 - ALL {num_stories} stories must be roughly equal word count (~68-78 words each). Max 15 words difference.
 - GEOGRAPHIC ANCHOR: Every location on first mention MUST carry a WHERE-IS-IT descriptor. Examples: "Misrata, in Libya", "New Jersey, in the United States". When multiple cities share the same country, group them: "Libyan cities of Misrata and Benghazi". Anchor a city by its country — never by another city. No bare location names.
-- CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing in narration fields is FORBIDDEN. The last story MUST end with fallout — NOT a conclusion or summary."""
+- CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing in narration fields is FORBIDDEN. The last story MUST end with fallout — NOT a conclusion or summary.
+- CLOSING: The closing bridge must echo the LAST STORY'S FALLOUT using 2-3 plain words — NEVER dump a headline or topic title. NEVER introduce topics not in the stories. The closing only echoes what was already said."""
         
         # ── OPENAI CLOUD FIRST, LOCAL FALLBACK ──
         response = None
@@ -1494,7 +1487,9 @@ CRITICAL RULES:
         segment_timeline = []
         
         # Intro segment → image 0 (first story, part 1)
-        intro_text = f"{greeting} {script.get('intro_hook', '')}".strip()
+        intro_hook = script.get('intro_hook', '').strip()
+        greeting = script.get('greeting', '').strip()
+        intro_text = f"{greeting} {intro_hook}".strip() if intro_hook else greeting
         segment_timeline.append({
             'text': intro_text,
             'image_idx': 0,
@@ -1711,13 +1706,6 @@ CRITICAL RULES:
                 'text': greeting_seg,
                 'image_idx': -1,
                 'label': 'greeting'
-            })
-        intro_hook = script.get('intro_hook', '')
-        if intro_hook:
-            segment_timeline.append({
-                'text': intro_hook,
-                'image_idx': -1,
-                'label': 'intro_hook'
             })
         segment_timeline.append({
             'text': '....',
