@@ -783,6 +783,14 @@ def _generate_elevenlabs_tts(structural_chunks: list, voice_tone: str, filepath:
             if current_batch:
                 batches.append(' '.join(current_batch))
             
+            # Merge last batch if it's a micro-fragment (< 4 words) into previous
+            if len(batches) >= 2:
+                last_wc = len(batches[-1].split())
+                if last_wc < 4:
+                    batches[-2] = f"{batches[-2]} {batches[-1]}"
+                    batches.pop()
+                    print(f"  [ELEVENLABS] Merged trailing micro-batch ({last_wc} words) into previous")
+            
             start_idx = len(all_batches)
             all_batches.extend(batches)
             end_idx = len(all_batches)

@@ -861,6 +861,7 @@ for _vtype, _vcfg in _lora_by_type.items():
 BRAND_COLORS = IMAGE_STYLE_CONFIG.get('brand_colors', {})
 
 STYLE_SUFFIX = IMAGE_STYLE_CONFIG.get('style_suffix', 'Retro Pixel, true 16-bit pixel art, retro SNES style, isometric perspective, hard pixel edges, limited color palette, detailed proportions, flat colors, dramatic lighting')
+CLIP_STYLE_TAG = IMAGE_STYLE_CONFIG.get('clip_style_tag', '16-bit isometric pixel art, isometric perspective, vibrant colors')
 COLOR_PALETTE_PROMPT = IMAGE_STYLE_CONFIG.get('color_palette_prompt', '')
 GENERATION_PARAMS = IMAGE_STYLE_CONFIG.get('generation_params', {})
 
@@ -1428,11 +1429,11 @@ def _enhance_prompt_with_lora_trigger(prompt: str, visual_type: str) -> str:
     trigger = default_lora.get('trigger_word', 'Retro Pixel')
     additional = lora_config.get('additional_prompts', '')
 
+    if trigger.lower() not in prompt.lower():
+        prompt = f"{trigger}, {prompt}"
+
     if additional and additional.lower() not in prompt.lower():
         prompt = f"{prompt}, {additional}"
-
-    if trigger.lower() not in prompt.lower():
-        prompt = f"{prompt}, {trigger}"
 
     return prompt
 
@@ -1842,10 +1843,11 @@ def generate_pixel_art(
     # Enhance with LoRA trigger and additional prompts
     enhanced_prompt = _enhance_prompt_with_lora_trigger(sanitized_prompt, visual_type)
     
-    # Build final prompt: style suffix + brand color palette
-    full_prompt = f"{enhanced_prompt}, {STYLE_SUFFIX}"
+    # Build final prompt: clip_style_tag first (CLIP 77-token window), then color palette + full style suffix (T5 sees all)
+    full_prompt = f"{enhanced_prompt}, {CLIP_STYLE_TAG}"
     if COLOR_PALETTE_PROMPT:
         full_prompt = f"{full_prompt}, {COLOR_PALETTE_PROMPT}"
+    full_prompt = f"{full_prompt}, {STYLE_SUFFIX}"
     
     # Final geopolitical validation — log warnings, retry enrichment if score is low
     final_geo_validation = geo_validator.validate_prompt_geopolitical_accuracy(full_prompt, script_text)
@@ -1909,12 +1911,11 @@ def generate_pixel_art(
         if local_size["width"] * local_size["height"] > MAX_PIXELS:
             local_size = {"width": 512, "height": 512}
 
-        enforced_prompt = f"{full_prompt}, {PIXEL_ART_ENFORCEMENT_PREFIX}, vibrant colors, pixel-perfect"
         local_steps = int(os.environ.get("LOCAL_FLUX_STEPS", "40"))
         local_guidance = 3.5
 
         local_result = _generate_local_flux(
-            prompt=enforced_prompt,
+            prompt=full_prompt,
             output_path=output_path,
             size=local_size,
             seed=seed,
@@ -1981,9 +1982,8 @@ def generate_pixel_art(
                         )
                         print(f"  [IMG] I2I params: strength={i2i_params['strength']:.2f}, guidance={i2i_params['guidance_scale']:.1f}")
                     else:
-                        enforced_prompt = f"{full_prompt}, {PIXEL_ART_ENFORCEMENT_PREFIX}, vibrant colors, pixel-perfect"
                         base_args = {
-                            "prompt": enforced_prompt,
+                            "prompt": full_prompt,
                             "image_size": {"width": size["width"], "height": size["height"]},
                             "num_images": 1,
                             "num_inference_steps": MODEL_STEP_CONFIG.get(model, 40),
@@ -2038,7 +2038,7 @@ def generate_pixel_art(
                     "success": True,
                     "filename": filename,
                     "path": str(output_path),
-                    "prompt_used": enforced_prompt,
+                    "prompt_used": full_prompt,
                     "specificity_score": specificity,
                     "visual_type": visual_type,
                     "source": model_used,
@@ -2064,7 +2064,7 @@ def generate_pixel_art(
                 "success": True,
                 "filename": filename,
                 "path": str(output_path),
-                "prompt_used": enforced_prompt,
+                "prompt_used": full_prompt,
                 "specificity_score": specificity,
                 "visual_type": visual_type,
                 "source": model_used,
@@ -2103,16 +2103,16 @@ def generate_pixel_art(
                         enriched_prompt, visual_type, level=scrub_level
                     )
                     scrubbed_enhanced = _enhance_prompt_with_lora_trigger(scrubbed, visual_type)
-                    scrubbed_full = f"{scrubbed_enhanced}, {STYLE_SUFFIX}"
+                    scrubbed_full = f"{scrubbed_enhanced}, {CLIP_STYLE_TAG}"
                     if COLOR_PALETTE_PROMPT:
                         scrubbed_full = f"{scrubbed_full}, {COLOR_PALETTE_PROMPT}"
+                    scrubbed_full = f"{scrubbed_full}, {STYLE_SUFFIX}"
 
                     # Try FLUX/dev first for better quality, then fall to schnell
                     for retry_model in [FAL_MODEL, "fal-ai/flux/schnell"]:
                         try:
-                            enforced_scrubbed = f"{PIXEL_ART_ENFORCEMENT_PREFIX}, {scrubbed_full}, vibrant colors, pixel-perfect"
                             retry_args = {
-                                "prompt": enforced_scrubbed,
+                                "prompt": scrubbed_full,
                                 "image_size": {"width": size["width"], "height": size["height"]},
                                 "num_images": 1,
                                 "num_inference_steps": MODEL_STEP_CONFIG.get(retry_model, 40),
