@@ -4,7 +4,9 @@
 
   "style_suffix": "Retro Pixel, true 16-bit pixel art, retro SNES style, chunky pixels, low resolution, 8-bit color, isometric perspective, hard pixel edges, limited color palette, flat colors, dramatic lighting",
 
-  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, blurry, low quality, jpeg artifacts, noise, distorted proportions, photorealistic, 3D render, CGI, anime, cartoon mascot, cartoon character, character portrait, single figure, sketch, pencil drawing, watercolor, smooth gradients, soft shading, anti-aliasing, color bleed, single isolated object, object on plain background, floating object, extreme close-up, macro shot, product photo, still life, screen-within-screen, picture-in-picture, minimalist, abstract shapes, plain background, white background, centered subject without environment, scene without depth, oversize pixels on realistic base, dithering, nsfw, gore, peaceful landscape, nature scenery",
+  "clip_style_tag": "16-bit isometric pixel art, isometric perspective, vibrant colors",
+
+  "negative_prompt": "text, words, letters, watermark, signature, logo, UI elements, HUD, speech bubbles, captions, subtitles, blurry, low quality, jpeg artifacts, noise, distorted proportions, photorealistic, 3D render, 3D rendered, CGI, anime, cartoon mascot, cartoon character, character portrait, single figure, sketch, pencil drawing, watercolor, smooth gradients, soft shading, anti-aliasing, color bleed, blended colors, smooth shading, realistic lighting, single isolated object, object on plain background, floating object, extreme close-up, macro shot, product photo, still life, screen-within-screen, picture-in-picture, minimalist, abstract shapes, plain background, white background, centered subject without environment, scene without depth, oversize pixels on realistic base, dithering, nsfw, gore, peaceful landscape, nature scenery",
 
   "brand_colors": {
     "primary": "#0A1628",

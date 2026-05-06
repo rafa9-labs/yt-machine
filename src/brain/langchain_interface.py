@@ -32,6 +32,7 @@ IMPORT IN YOUR CODE:
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Optional, Type, TypeVar
 
@@ -66,6 +67,33 @@ class LangChainInterface:
         """Load system_prompts.json — same config your old code reads."""
         with open(self.config_path, 'r', encoding='utf-8') as f:
             return json.load(f)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Token Cleaning — Strip model thinking tokens before parsing
+    # ──────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _strip_thinking_tokens(text: str) -> str:
+        """Strip model thinking/special tokens from LLM output."""
+        text = re.sub(
+            r'<\|\s*channel\s*(?:\|?\s*)?>\s*thought\s*<\s*channel\s*(?:\|?\s*)?>',
+            '', text, flags=re.DOTALL | re.IGNORECASE
+        )
+        text = re.sub(
+            r'<\|\s*channel\s*(?:\|?\s*)?>\s*output\s*<\s*channel\s*(?:\|?\s*)?>',
+            '', text, flags=re.DOTALL | re.IGNORECASE
+        )
+        text = re.sub(r'<think\b.*?</think\s*>?', '', text, flags=re.DOTALL)
+        text = re.sub(r'</?think[^>]*>?', '', text)
+        text = re.sub(r'<\|\s*channel\s*(?:\|?\s*)?>', '', text, flags=re.IGNORECASE)
+        return text.strip()
+
+    @classmethod
+    def _clean_llm_output(cls, msg):
+        """Strip thinking tokens from AIMessage.content before parsing."""
+        if hasattr(msg, 'content'):
+            msg.content = cls._strip_thinking_tokens(msg.content)
+        return msg
 
     # ──────────────────────────────────────────────────────────────────
     # LLM Instance Factory
@@ -148,6 +176,7 @@ class LangChainInterface:
     def build_structured_chain(self, pydantic_model: Type[T], task_name: str):
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import PydanticOutputParser
+        from langchain_core.runnables import RunnableLambda
 
         config = self.get_prompt_config(task_name)
 
@@ -166,13 +195,14 @@ class LangChainInterface:
             max_tokens=config["max_tokens"],
         )
 
-        chain = prompt | llm | parser
+        chain = prompt | llm | RunnableLambda(self._clean_llm_output) | parser
 
         return chain
 
     def build_text_chain(self, task_name: str):
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import StrOutputParser
+        from langchain_core.runnables import RunnableLambda
 
         config = self.get_prompt_config(task_name)
 
@@ -189,5 +219,5 @@ class LangChainInterface:
             max_tokens=config["max_tokens"],
         )
 
-        chain = prompt | llm | StrOutputParser()
+        chain = prompt | llm | RunnableLambda(self._clean_llm_output) | StrOutputParser()
         return chain

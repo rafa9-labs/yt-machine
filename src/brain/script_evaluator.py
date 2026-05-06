@@ -214,7 +214,7 @@ CRITICAL RULES:
 - real_talk = SERIOUS drop-the-act moment (NO caps, NO exclamations, flat truth)
 - fallout = WHAT HAPPENS NEXT — the second-order consequence, the domino that falls after (10-14 words)
 - segue = frantic cartoonish transition to next story, bridging FROM fallout (8-15 words)
-- GEOGRAPHIC ANCHOR: every country name on first mention must carry a regional descriptor
+- GEOGRAPHIC ANCHOR: Every location on first mention MUST carry a WHERE-IS-IT descriptor. Multiple cities from one country → "Libyan cities of X and Y". Anchor to country, not another city. No bare location names.
 - CTA QUARANTINE: NO subscribe/like/share/sign-off text in any narration field
 - Target: 18-22 words per part_1, 22-28 words per part_2, 12-16 words for real_talk, 10-14 words for fallout
 - NEVER repeat topics from existing stories"""

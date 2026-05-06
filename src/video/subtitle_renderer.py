@@ -393,6 +393,19 @@ def _split_into_phrases(words: List[Dict], max_words: int = 7, min_words: int = 
             phrase_end = phrase_words[-1]['end']
             phrases.append((start_idx, end_idx, phrase_start, phrase_end))
     
+    # Phase 4: Merge any phrase with < 0.8s display duration into previous
+    MIN_DISPLAY_SECONDS = 0.8
+    _p = len(phrases) - 1
+    while _p > 0:
+        _start_idx, _end_idx, _p_start, _p_end = phrases[_p]
+        if _p_end - _p_start < MIN_DISPLAY_SECONDS:
+            prev_start, prev_end, prev_ps, prev_pe = phrases[_p - 1]
+            prev_end = _end_idx
+            prev_pe = _p_end
+            phrases[_p - 1] = (prev_start, prev_end, prev_ps, prev_pe)
+            phrases.pop(_p)
+        _p -= 1
+    
     return phrases
 
 

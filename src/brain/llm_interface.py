@@ -1145,7 +1145,7 @@ CRITICAL RULES:
 - fallout continues the real_talk tone — factual, forward-looking, no exclamations
 - Target: 150-170 words total for ~65-70 seconds.
 - ALL {num_stories} stories must be roughly equal word count (~68-78 words each). Max 15 words difference.
-- GEOGRAPHIC ANCHOR: On first mention, every country or nation MUST carry a brief regional descriptor. Examples: "the Gulf kingdom of Bahrain", "Iran, the Middle Eastern power", "Ukraine, in Eastern Europe". No bare country names on first mention.
+- GEOGRAPHIC ANCHOR: Every location on first mention MUST carry a WHERE-IS-IT descriptor. Examples: "Misrata, in Libya", "New Jersey, in the United States". When multiple cities share the same country, group them: "Libyan cities of Misrata and Benghazi". Anchor a city by its country — never by another city. No bare location names.
 - CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing in narration fields is FORBIDDEN. The last story MUST end with fallout — NOT a conclusion or summary."""
         
         # ── OPENAI CLOUD FIRST, LOCAL FALLBACK ──
@@ -1580,6 +1580,56 @@ CRITICAL RULES:
             'image_idx': (len(script['stories']) - 1) * 4 + 3,
             'label': 'closing'
         })
+        
+        # ═══ VALIDATION 3d: Merge broken-off trailing fragments ═══
+        # LLM sometimes produces fallout/segue that is a grammatical continuation
+        # of the previous segment rather than a standalone thought. Detect these
+        # short fragments and merge them back into the preceding segment.
+        CONTINUATION_STARTERS = {
+            'and', 'but', 'or', 'so', 'yet', 'which', 'that', 'who',
+            'where', 'when', 'how', 'while', 'because', 'since', 'until',
+            'although', 'though', 'if', 'unless', 'whether'
+        }
+        
+        _idx = 1  # start from 1 since segment 0 is always intro
+        while _idx < len(segment_timeline):
+            seg = segment_timeline[_idx]
+            prev_seg = segment_timeline[_idx - 1]
+            
+            if seg.get('is_separator') or prev_seg.get('is_separator'):
+                _idx += 1
+                continue
+            
+            _text = seg['text'].strip()
+            _prev_text = prev_seg['text'].strip()
+            
+            if not _text or not _prev_text:
+                _idx += 1
+                continue
+            
+            _first_word = re.sub(r'[^a-zA-Z]', '', _text.split()[0]).lower()
+            _wc = len(_text.split())
+            _is_fragment = _first_word in CONTINUATION_STARTERS and _wc < 5
+            
+            _prev_tail = re.sub(r'[^a-zA-Z]', '', _prev_text).split()[-2:]
+            _curr_head = re.sub(r'[^a-zA-Z]', '', _text).split()[:2]
+            _prev_tail_lower = [w.lower() for w in _prev_tail]
+            _curr_head_lower = [w.lower() for w in _curr_head]
+            _is_overlap = (
+                len(_prev_tail_lower) > 0 and len(_curr_head_lower) > 0
+                and (
+                    _prev_tail_lower[-1:] == _curr_head_lower[-1:]
+                    or _prev_tail_lower == _curr_head_lower
+                )
+            )
+            
+            if _is_fragment or _is_overlap:
+                prev_seg['text'] = f"{_prev_text} {_text}"
+                segment_timeline.pop(_idx)
+                print(f"  [VALIDATE] Merged {'overlap' if _is_overlap else 'fragment'} into {prev_seg['label']}: '{_text[:50]}'")
+                continue
+            
+            _idx += 1
         
         # Build full_text from timeline (includes segues and separators)
         full_parts = []
