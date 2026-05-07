@@ -1719,7 +1719,21 @@ if final_video_path and not args.no_telegram:
     try:
         from tools.telegram_sender import send_video_to_telegram
         today_str = datetime.now().strftime('%b %d, %Y')
-        caption = f"📹 The Mask Daily News — {today_str}"
+        video_title = hook_text or 'Geopolitical Update'
+        if isinstance(video_title, str) and len(video_title) > 60:
+            video_title = video_title[:57] + '...'
+        caption = f"<b>{video_title}</b>\n{today_str}"
+        if platform_metadata:
+            yt = platform_metadata.get('youtube', {})
+            if yt.get('description'):
+                desc_lines = yt['description'].split('\n')[:3]
+                caption += '\n\n' + '\n'.join(desc_lines)
+            common_tags = platform_metadata.get('common_hashtags', [])
+            if common_tags:
+                hashtag_str = ' '.join(f'#{t.replace(" ", "").replace("-", "")}' for t in common_tags[:8])
+                caption += '\n\n' + hashtag_str
+        if len(caption) > 1024:
+            caption = caption[:1021] + '...'
         result = send_video_to_telegram(video_path=final_video_path, caption=caption)
         success = result.get("success", False)
         if success:
