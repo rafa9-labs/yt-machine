@@ -952,7 +952,7 @@ try:
     print("\n  [LLM] Generating visual prompts (this may take 15-60s)...", flush=True)
     dedicated_visuals, _visual_timed_out = _run_with_heartbeat(
         llm.generate_visual_prompts, "visual_prompts", 8, 300,
-        script
+        script, articles, news_analyses
     )
     if _visual_timed_out:
         log.error("visual_prompts.timeout", timeout_s=300)
