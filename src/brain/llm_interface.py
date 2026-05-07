@@ -1163,7 +1163,7 @@ CRITICAL RULES:
 - fallout continues the real_talk tone — factual, forward-looking, no exclamations
 - Target: 150-170 words total for ~65-70 seconds.
 - ALL {num_stories} stories must be roughly equal word count (~68-78 words each). Max 15 words difference.
-- GEOGRAPHIC ANCHOR: Every location on first mention MUST carry its country — plain name only, NO descriptors. Format: "City, Country". Examples: "Misrata, Libya", "New York, USA", "Lisbon, Portugal", "Tehran, Iran" (NOT "Iran, the Middle Eastern power"). When multiple cities share the same country, group them: "Libyan cities of Misrata and Benghazi". No bare location names. No regional labels ("Middle Eastern power", "European nation", "Asian giant") — always use the country name.
+- GEOGRAPHIC ANCHOR: Mention each country or location ONCE — do not repeat it. Use plain names only: "Iran", "Lisbon", "New York". No descriptors like "the Middle Eastern power" or "the European nation". Just the name, once, move on.
 - CTA QUARANTINE: Subscribe, like, share, or sign-off text may ONLY appear in the dedicated "closing" field. ANY CTA-like phrasing in narration fields is FORBIDDEN. The last story MUST end with fallout — NOT a conclusion or summary.
 - CLOSING: The closing bridge must echo the LAST STORY'S FALLOUT using 2-3 plain words — NEVER dump a headline or topic title. NEVER introduce topics not in the stories. The closing only echoes what was already said."""
         
