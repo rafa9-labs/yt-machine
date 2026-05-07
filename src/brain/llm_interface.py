@@ -2273,13 +2273,15 @@ ORIGINAL STORY NARRATIONS:
             print(f"  [OPENAI] API call failed: {e}, falling back to local model")
             return None
     
-    def generate_visual_prompts(self, script: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    def generate_visual_prompts(self, script: Dict[str, Any], articles: Optional[List[Dict]] = None, news_analyses: Optional[List[Dict]] = None) -> Optional[List[Dict[str, Any]]]:
         """
         Generate dedicated visual prompts from curated narration text.
         4 scenes per story (hook, mechanism, truth, fallout).
         
         Args:
             script: Script dict with 'stories' array
+            articles: Optional list of article dicts with 'title' key
+            news_analyses: Optional list of analysis dicts with 'topic' key
             
         Returns:
             List of dict: [{'scene': 'story_N_partM', 'description': '...'}, ...]
@@ -2298,21 +2300,31 @@ ORIGINAL STORY NARRATIONS:
         
         narration_block = ""
         for i, story in enumerate(stories, 1):
+            article_idx = i - 1
+            art_title = ''
+            analysis_topic = ''
+            if articles and article_idx < len(articles):
+                art_title = articles[article_idx].get('title', '')
+            if news_analyses and article_idx < len(news_analyses):
+                analysis_topic = news_analyses[article_idx].get('topic', '')
+            context_line = ""
+            if art_title or analysis_topic:
+                context_line = f"STORY CONTEXT: Article=\"{art_title}\" | Topic=\"{analysis_topic}\"\n"
             p1 = story.get('part_1_narration', story.get('mini_hook', ''))
             p2 = story.get('part_2_narration', story.get('body', ''))
             rt = story.get('real_talk', '')
             fo = story.get('fallout', '')
             narration_block += f"""
---- story_{i}_part1 (THE HOOK for Story {i}) ---
+{context_line}--- story_{i}_part1 (THE HOOK for Story {i}) ---
 NARRATION: "{p1}"
 
---- story_{i}_part2 (THE MECHANISM for Story {i}) ---
+{context_line}--- story_{i}_part2 (THE MECHANISM for Story {i}) ---
 NARRATION: "{p2}"
 
---- story_{i}_real_talk (THE TRUTH for Story {i}) ---
+{context_line}--- story_{i}_real_talk (THE TRUTH for Story {i}) ---
 NARRATION: "{rt}"
 
---- story_{i}_fallout (THE FALLOUT for Story {i}) ---
+{context_line}--- story_{i}_fallout (THE FALLOUT for Story {i}) ---
 NARRATION: "{fo}"
 """
         
@@ -2406,8 +2418,11 @@ Output ONLY valid JSON:
             default_name = f'story_{(i//4)+1}_{scene_types[i%4]}'
             scenes[i]['scene'] = scenes[i].get('scene', default_name)
         
+        # ── RELEVANCE VALIDATION: Detect hallucinated scenes with no story context ──
+        scenes = self._validate_visual_relevance(scenes, stories, articles, news_analyses)
+        
         # ── DEDUPLICATION: Detect and regenerate duplicate descriptions ──
-        scenes = self._deduplicate_visual_prompts(scenes, user_prompt, system_prompt)
+        scenes = self._deduplicate_visual_prompts(scenes, stories, articles, news_analyses)
         
         print(f"  [VISUAL-GEN] Generated {len(scenes)} visual prompts")
         for s in scenes:
@@ -2415,7 +2430,89 @@ Output ONLY valid JSON:
         
         return scenes[:num_scenes]
     
-    def _deduplicate_visual_prompts(self, scenes: List[Dict], user_prompt: str, system_prompt: str) -> List[Dict]:
+    def _validate_visual_relevance(self, scenes: List[Dict], stories: List[Dict], 
+                                    articles: Optional[List[Dict]], 
+                                    news_analyses: Optional[List[Dict]]) -> List[Dict]:
+        """Check that each scene's description contains entities from its story context.
+        If a scene has 0 matching context entities, fall back to the inline visual prompt."""
+        import re
+        
+        def _extract_context_entities(idx: int) -> set:
+            entities = set()
+            if articles and idx < len(articles):
+                title = articles[idx].get('title', '')
+                for word in re.findall(r'\b[A-Z][a-zA-Z]{2,}\b', title):
+                    entities.add(word.lower())
+            if news_analyses and idx < len(news_analyses):
+                topic = news_analyses[idx].get('topic', '')
+                for word in re.findall(r'\b[A-Z][a-zA-Z]{2,}\b', topic):
+                    entities.add(word.lower())
+            if idx < len(stories):
+                for field in ['part_1_narration', 'part_2_narration', 'real_talk', 'fallout']:
+                    text = stories[idx].get(field, '')
+                    for word in re.findall(r'\b[A-Z][a-zA-Z]{2,}\b', text):
+                        entities.add(word.lower())
+            common = {'the', 'and', 'for', 'but', 'not', 'with', 'this', 'that', 'new', 'has',
+                      'was', 'are', 'its', 'from', 'into', 'will', 'can', 'may', 'all', 'how',
+                      'who', 'our', 'way', 'now', 'just', 'also', 'than', 'them', 'over', 'been',
+                      'being', 'had', 'his', 'her', 'their', 'they', 'would', 'could', 'should',
+                      'which', 'these', 'those', 'other', 'about', 'after', 'before', 'between',
+                      'through', 'during', 'without', 'within', 'while', 'where', 'there', 'here'}
+            entities -= common
+            return entities
+        
+        hallucinated_count = 0
+        for i, scene in enumerate(scenes):
+            story_idx = i // 4
+            scene_name = scene.get('scene', '')
+            desc = scene.get('description', '')
+            
+            context_entities = _extract_context_entities(story_idx)
+            if not context_entities:
+                continue
+            
+            desc_lower = desc.lower()
+            desc_words = set(re.findall(r'\b[a-z]{3,}\b', desc_lower))
+            matched = desc_words & context_entities
+            
+            if not matched and context_entities:
+                hallucinated_count += 1
+                print(f"  [VISUAL-GEN] \u26a0\ufe0f Relevance FAIL: {scene_name} — no context entities in description")
+                print(f"    Context entities: {sorted(context_entities)[:10]}")
+                print(f"    Description entities: {sorted(desc_words)[:10]}")
+                
+                inline_key = ''
+                if i % 4 == 0:
+                    inline_key = 'part_1_visual'
+                elif i % 4 == 1:
+                    inline_key = 'part_2_visual'
+                elif i % 4 == 2:
+                    inline_key = 'real_talk_visual'
+                elif i % 4 == 3:
+                    inline_key = 'fallout_visual'
+                
+                story = stories[story_idx] if story_idx < len(stories) else {}
+                inline_visual = story.get(inline_key, '')
+                
+                if inline_visual and len(inline_visual.split()) > 5:
+                    scene['description'] = inline_visual
+                    print(f"    \u2705 Replaced with inline visual: {inline_visual[:80]}...")
+                else:
+                    narration_key = ['part_1_narration', 'part_2_narration', 'real_talk', 'fallout'][i % 4]
+                    narration = story.get(narration_key, '')
+                    if narration:
+                        scene['description'] = f'16-bit isometric pixel art scene: {narration}'
+                        print(f"    \u2705 Replaced with narration fallback")
+        
+        if hallucinated_count == 0:
+            print(f"  [VISUAL-GEN] \u2705 All scenes are contextually relevant")
+        else:
+            print(f"  [VISUAL-GEN] \u26a0\ufe0f Fixed {hallucinated_count} hallucinated scene(s)")
+        
+        return scenes
+    def _deduplicate_visual_prompts(self, scenes: List[Dict], stories: List[Dict],
+                                    articles: Optional[List[Dict]] = None,
+                                    news_analyses: Optional[List[Dict]] = None) -> List[Dict]:
         """Detect duplicate visual descriptions using keyword/entity overlap and regenerate them."""
         from difflib import SequenceMatcher
         import re
@@ -2428,6 +2525,24 @@ Output ONLY valid JSON:
             text_lower = text.lower()
             found_geo = {g for g in geo_terms if g in text_lower}
             return set(words) | found_geo
+        
+        def _get_story_context(story_idx: int) -> str:
+            parts = []
+            if articles and story_idx < len(articles):
+                title = articles[story_idx].get('title', '')
+                if title:
+                    parts.append(f"Article: {title}")
+            if news_analyses and story_idx < len(news_analyses):
+                topic = news_analyses[story_idx].get('topic', '')
+                if topic:
+                    parts.append(f"Topic: {topic}")
+            if story_idx < len(stories):
+                story = stories[story_idx]
+                for field in ['part_1_narration', 'part_2_narration', 'real_talk', 'fallout']:
+                    text = story.get(field, '')
+                    if text:
+                        parts.append(f"{field}: {text}")
+            return '\n'.join(parts) if parts else ''
         
         duplicates_found = False
         for i in range(len(scenes)):
@@ -2448,6 +2563,9 @@ Output ONLY valid JSON:
                     print(f"  [VISUAL-GEN] \u26a0\ufe0f Duplicate detected: {scenes[i]['scene']} \u2194 {scenes[j]['scene']} (text={text_similarity:.0%}, entity={entity_overlap:.0%}, shared={shared})")
                     duplicates_found = True
                     
+                    story_idx_j = j // 4
+                    story_context = _get_story_context(story_idx_j)
+                    
                     diff_prompt = f"""You previously generated this visual description:
 
 SCENE A ({scenes[i]['scene']}): {desc_i}
@@ -2457,15 +2575,19 @@ It uses these entities: {', '.join(sorted(entities_i))}.
 Now generate a COMPLETELY DIFFERENT description for SCENE B ({scenes[j]['scene']}).
 CRITICAL RULES:
 - Do NOT reuse ANY of these entities: {', '.join(sorted(entities_i))}
-- Pick a DIFFERENT geographic location, DIFFERENT country, DIFFERENT equipment
-- The new scene must depict a totally different moment in a different place
+- Stay within the SAME story context — use the SAME countries and locations from the story
+- Emphasize a DIFFERENT visual element (different action, camera angle, time of day, equipment)
+- The new scene must depict a different moment but belong to the same story
 - Still follow the pixel art style requirements
+
+STORY CONTEXT for Scene B:
+{story_context}
 
 Output ONLY JSON: {{"scene": "{scenes[j]['scene']}", "description": "..."}}"""
                     
                     retry = self.generate(
                         prompt=diff_prompt,
-                        system_prompt="You are a pixel art scene designer. Generate visually and geographically distinct scenes.",
+                        system_prompt="You are a pixel art scene designer. Generate visually distinct scenes that stay within the SAME story context and country. Never invent unrelated locations.",
                         temperature=0.6,
                         max_tokens=300,
                         task_name="visual_prompt_generator"
