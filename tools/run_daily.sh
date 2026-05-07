@@ -17,8 +17,9 @@ elif [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
-# Run the full automation: generate + publish to YouTube + TikTok
-python src/automate.py --publish youtube,tiktok
+# Run the pipeline: generate video and send via Telegram
+# Switch to --publish youtube,tiktok once API credentials are configured
+python src/automate.py --generate
 
 EXIT_CODE=$?
 
