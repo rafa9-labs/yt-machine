@@ -1225,7 +1225,26 @@ CRITICAL RULES:
 
             if not script or not isinstance(script, dict):
                 print(f"Failed to parse multi-news script JSON (attempt 2)")
-                return None
+                
+                retry3_max = retry_max * 2
+                print(f"  [MULTI-NEWS] Final retry with max_tokens={retry3_max}")
+                retry3_prompt = prompt + "\n\nCRITICAL: Your previous response was truncated or malformed. Output ONLY valid JSON. Keep narrations under 20 words each. Do NOT include any text outside the JSON object."
+                retry3_response = self.generate(
+                    prompt=retry3_prompt,
+                    model=task_model,
+                    system_prompt="Output ONLY valid JSON. No explanatory text before or after the JSON object.",
+                    temperature=max(0.5, prompt_config["temperature"] - 0.3),
+                    max_tokens=retry3_max,
+                    task_name="script_synthesizer"
+                )
+                if retry3_response:
+                    script = self._extract_json(retry3_response)
+                    if script and isinstance(script, dict):
+                        print(f"  [MULTI-NEWS] Final retry succeeded")
+                
+                if not script or not isinstance(script, dict):
+                    print(f"Failed to parse multi-news script JSON (attempt 3)")
+                    return None
         
         # Ensure greeting is set correctly
         script['greeting'] = greeting

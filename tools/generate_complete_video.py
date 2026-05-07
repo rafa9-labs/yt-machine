@@ -805,10 +805,15 @@ _step_start = time.time()
 try:
     log.info("script.generating", format="multi_news_3_stories")
     print("\n  [LLM] Generating script (this may take 30-120s)...", flush=True)
-    script, _synth_timed_out = _run_with_heartbeat(
-        llm.synthesize_multi_news_script, "script_synthesis", 8, 600,
-        news_analyses
-    )
+    script = None
+    for _synth_attempt in range(3):
+        script, _synth_timed_out = _run_with_heartbeat(
+            llm.synthesize_multi_news_script, "script_synthesis", 8, 600,
+            news_analyses, NUM_STORIES
+        )
+        if script and not _synth_timed_out:
+            break
+        print(f"  [LLM] Script synthesis attempt {_synth_attempt+1} failed, retrying...")
 
     if _synth_timed_out or not script:
         log.error("script.synthesis_failed", reason="timeout" if _synth_timed_out else "empty_result")
