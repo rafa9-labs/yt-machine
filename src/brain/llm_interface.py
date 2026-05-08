@@ -2323,27 +2323,33 @@ ORIGINAL STORY NARRATIONS:
         # Closing (always preserved) — strip fallout echo duplication
         closing = script.get('closing', '')
         if closing and stories:
-            last_fallout = stories[-1].get('fallout', '') if len(stories) > 0 else ''
+            last_fallout = stories[-1].get('fallout', '').strip().lower()
             if last_fallout:
-                fo_lower = last_fallout.lower().strip().rstrip('.')
-                cl_lower = closing.lower().strip()
-                overlap_len = 0
-                for l in range(min(len(fo_lower), len(cl_lower)), 2, -1):
-                    if fo_lower[:l] in cl_lower and l / len(fo_lower) > 0.3:
-                        overlap_len = l
+                closing_lower = closing.lower()
+                fo_words = last_fallout.split()
+                best_phrase = None
+                best_len = 0
+                for wcount in range(min(len(fo_words), 5), 1, -1):
+                    for start in range(len(fo_words) - wcount + 1):
+                        phrase = ' '.join(fo_words[start:start + wcount])
+                        if phrase in closing_lower and wcount > best_len:
+                            best_phrase = phrase
+                            best_len = wcount
+                    if best_phrase:
                         break
-                if overlap_len > 10:
-                    fo_words = last_fallout.lower().split()
-                    for wcount in range(min(len(fo_words), 4), 0, -1):
-                        phrase = ' '.join(fo_words[:wcount])
-                        if phrase in closing.lower() and wcount >= 2:
-                            idx = closing.lower().index(phrase)
-                            prefix = closing[:idx].strip()
-                            rest = closing[idx + len(phase):].strip()
-                            if not prefix or prefix.lower() in ('and', 'and while', 'while'):
-                                closing = rest
-                                print(f"  [REASSEMBLE] Stripped fallout echo from closing: kept \"{rest[:60]}...\"")
-                                break
+                if best_phrase and best_len >= 2:
+                    idx = closing_lower.index(best_phrase)
+                    after = closing[idx + len(best_phrase):].strip()
+                    prefix = closing[:idx].strip().lower()
+                    if prefix in ('', 'and', 'and while', 'while'):
+                        if after:
+                            fo_last = fo_words[-1].rstrip('.,;:')
+                            after_words = after.split()
+                            if after_words and after_words[0].lower().rstrip('.,;:').rstrip('.') == fo_last:
+                                after = ' '.join(after_words[1:]).strip()
+                            if after:
+                                closing = after
+                                print(f"  [REASSEMBLE] Stripped fallout echo from closing")
         if closing:
             parts.append(closing)
         
