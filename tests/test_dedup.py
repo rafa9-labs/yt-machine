@@ -333,6 +333,41 @@ class TestRebuildTimeline:
         # The closing should contain the trademark
         assert 'good morning' in closing_seg.lower() and 'goodnight' in closing_seg.lower()
 
+    def test_segue_prefix_overlap_stripped_in_timeline(self):
+        """_rebuild_timeline should strip prefix overlap between segue and next part_1"""
+        from src.brain.script_evaluator import _rebuild_timeline
+        script = {
+            'greeting': 'Baby you are not ready for this!',
+            'intro_hook': '',
+            'closing': 'Stay behind the curtains, and if I don\'t see you \u2014 good morning, good afternoon, and goodnight.',
+            'stories': [
+                {
+                    'part_1_narration': 'India and Turkey just rebooted.',
+                    'part_2_narration': 'New routes avoid the stalled IMEC.',
+                    'real_talk': 'trade routes are just new ways to ignore old enemies.',
+                    'fallout': 'Turkey becomes the gatekeeper for shipments.',
+                    'segue': 'And before that even lands \u2014 Brent and Israel is already in motion.',
+                },
+                {
+                    'part_1_narration': 'And before that even lands \u2014 the forces behind Brent and Israel are already in motion.',
+                    'part_2_narration': 'Goldman Sachs saw fees jump.',
+                    'real_talk': 'trading gains are a deceptive veneer.',
+                    'fallout': 'banks will lobby for regime change.',
+                },
+            ],
+            'segment_timeline': [{'text': 'x', 'image_idx': 0, 'label': 'test'}],
+            'all_visual_scenes': [],
+        }
+        _rebuild_timeline(script)
+        p1_seg = None
+        for seg in script['segment_timeline']:
+            if seg.get('label') == 'story_2_part1':
+                p1_seg = seg['text']
+                break
+        assert p1_seg is not None, "No story_2_part1 in timeline"
+        assert 'And before that even lands' not in p1_seg, f"Prefix overlap NOT stripped in timeline: {p1_seg}"
+        assert 'forces behind' in p1_seg, f"Content after overlap missing: {p1_seg}"
+
 
 # ══════════════════════════════════════════════════════════════
 # 6. _enforce_greeting — trademark enforcement

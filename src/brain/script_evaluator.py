@@ -462,6 +462,25 @@ def _rebuild_timeline(script: dict) -> None:
         img_base = i * 4
 
         part_1 = story.get('part_1_narration', '')
+
+        # Strip prefix overlap with previous story's segue
+        if i > 0 and part_1:
+            prev_segue = stories[i - 1].get('segue', '').strip()
+            if prev_segue:
+                prev_segue_words = [w.lower().rstrip('.,!?;:') for w in prev_segue.split()]
+                part_1_words = [w.lower().rstrip('.,!?;:') for w in part_1.split()]
+                prefix_overlap = 0
+                for n in range(min(len(prev_segue_words), len(part_1_words))):
+                    if prev_segue_words[n] == part_1_words[n]:
+                        prefix_overlap = n + 1
+                    else:
+                        break
+                if prefix_overlap >= 4:
+                    cleaned = ' '.join(part_1.split()[prefix_overlap:]).strip()
+                    if cleaned and len(cleaned.split()) >= 5:
+                        print(f"  [REBUILD-TIMELINE] Stripped {prefix_overlap}-word prefix overlap from story {i+1} part_1")
+                        part_1 = cleaned
+
         if part_1:
             timeline.append({'text': part_1, 'image_idx': img_base, 'label': f'story_{i+1}_part1'})
 
