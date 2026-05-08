@@ -494,6 +494,42 @@ def _rebuild_timeline(script: dict) -> None:
         if i < len(stories) - 1:
             timeline.append({'text': '....', 'image_idx': img_base + 3, 'label': f'story_{i+1}_separator', 'is_separator': True})
 
+    # Strip fallout echo duplication from closing (same logic as _reassemble_script)
+    if closing and stories:
+        closing_stripped = closing.strip()
+        is_bridge = closing_stripped.lower().startswith('and while') or closing_stripped.lower().startswith('while ')
+        if not is_bridge:
+            last_fallout = stories[-1].get('fallout', '').strip().lower()
+            if last_fallout:
+                closing_lower = closing.lower()
+                fo_words = last_fallout.split()
+                best_phrase = None
+                best_len = 0
+                for wcount in range(min(len(fo_words), 5), 1, -1):
+                    for start in range(len(fo_words) - wcount + 1):
+                        phrase = ' '.join(fo_words[start:start + wcount])
+                        if phrase in closing_lower and wcount > best_len:
+                            best_phrase = phrase
+                            best_len = wcount
+                    if best_phrase:
+                        break
+                if best_phrase and best_len >= 2:
+                    idx = closing_lower.index(best_phrase)
+                    after_raw = closing[idx + len(best_phrase):]
+                    after = after_raw.lstrip('. ').strip()
+                    prefix = closing[:idx].strip().lower()
+                    if prefix in ('', 'and', 'and while', 'while', 'a', 'the', 'an'):
+                        if after:
+                            fo_last = fo_words[-1].rstrip('.,;:')
+                            after_words = after.split()
+                            if after_words and after_words[0].lower().rstrip('.,;:') == fo_last:
+                                after = ' '.join(after_words[1:]).strip()
+                            if after and not after.startswith('...'):
+                                after = '... ' + after
+                            if after:
+                                closing = after
+                                print(f"  [REBUILD-TIMELINE] Stripped fallout echo from closing")
+
     timeline.append({'text': closing, 'image_idx': (len(stories) - 1) * 4 + 3, 'label': 'closing'})
 
     script['segment_timeline'] = timeline

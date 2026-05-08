@@ -1075,6 +1075,15 @@ try:
         # that curation strips out. This prevents losing segues/outro.
         curated_bodies = llm._parse_curated_stories(curated_text, len(script.get('stories', [])))
         if curated_bodies:
+            # Build original bodies for fidelity validation
+            orig_bodies = []
+            for story in script.get('stories', []):
+                p1 = story.get('part_1_narration', '')
+                p2 = story.get('part_2_narration', '')
+                rt = story.get('real_talk', '')
+                fo = story.get('fallout', '')
+                orig_bodies.append(f"{p1} {p2} {rt} {fo}".strip())
+            curated_bodies = llm._validate_curation_fidelity(curated_bodies, orig_bodies)
             reassembled = llm._reassemble_script(script, curated_bodies)
             script['full_text'] = reassembled
             full_script = reassembled
