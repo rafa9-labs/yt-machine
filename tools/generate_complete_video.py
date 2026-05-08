@@ -881,7 +881,7 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_synthesis", duration_s=round(_step_duration, 2))
-_done("SCRIPT SYNTHESIS")
+_step_done("SCRIPT SYNTHESIS")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -921,7 +921,7 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_fixer", duration_s=round(_step_duration, 2))
-_done("SCRIPT FIXER")
+_step_done("SCRIPT FIXER")
 
 
 # ══════════════════════════════════════════════════════════════════════════
