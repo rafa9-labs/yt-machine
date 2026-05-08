@@ -568,25 +568,19 @@ Synthesize into a compelling 60-80 second professional news narration script wit
 
     def _enforce_greeting(self, script: dict) -> dict:
         """
-        GUARANTEE: Every script MUST have a non-empty greeting.
+        GUARANTEE: Every script MUST have the trademark greeting.
         Intro_hook is optional — short greetings don't need it.
         """
-        import random
-        
-        GREETING_TEMPLATES = [
-            "Ssssmokin'!",
-            "Hold onto your lobsters, folks!",
-            "It is showtime!",
-            "Did somebody order CHAOS?",
-            "Baby, you are NOT ready for this!",
-            "Well, well, well. Look what just walked in!",
-        ]
+        TRADEMARK_GREETING = "Baby you are not ready for this!"
         
         if not script.get('greeting', '').strip():
-            script['greeting'] = random.choice(GREETING_TEMPLATES)
-            print(f"  [GREETING] Generated greeting: \"{script['greeting']}\"")
+            script['greeting'] = TRADEMARK_GREETING
+            print(f"  [GREETING] Set trademark greeting: \"{script['greeting']}\"")
+        elif script.get('greeting', '').strip() != TRADEMARK_GREETING:
+            print(f"  [GREETING] Overriding greeting \"{script['greeting']}\" → \"{TRADEMARK_GREETING}\"")
+            script['greeting'] = TRADEMARK_GREETING
         
-        # intro_hook is optional — clear if present to avoid redundancy with short greetings
+        # intro_hook is optional — clear if present to avoid redundancy
         if script.get('intro_hook', '').strip():
             script['intro_hook'] = ''
         
@@ -1127,7 +1121,7 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         """
         prompt_config = self.config["prompts"]["multi_news_synthesizer"]
         
-        greeting = self._get_time_greeting()
+        greeting = "Baby you are not ready for this!"
         
         # Build news summaries block
         news_block = ""
@@ -1141,15 +1135,16 @@ NEWS STORY {i}:
 - Second-order consequence: {analysis.get('second_order_consequence', 'N/A')}
 """
         
-        prompt = f"""Create a Mask script — {num_stories} stories, Infotainment Satire structure (The Cartoonish Truth).
+        prompt = f"""Create a Mask script — EXACTLY {num_stories} stories, Infotainment Satire structure (The Cartoonish Truth).
 
-GREETING TO USE: "{greeting}"
+GREETING: The greeting field MUST be EXACTLY: "{greeting}"
+No other greeting is allowed. No intro_hook field. The greeting IS the opening line.
 
 {news_block}
 
 CRITICAL RULES:
 - Output ONLY the JSON object. NO explanatory text before or after. NO markdown.
-- The greeting field must be EXACTLY: {greeting} (3-6 words MAX, one exclamatory phrase only, no intro_hook)
+- The greeting field must be EXACTLY: "{greeting}" — this is our trademark opener. No other greeting. No intro_hook field.
 - Each story: part_1 = THE HOOK (what happened), part_2 = THE MECHANISM (why it matters, the hidden chain), real_talk = THE TRUTH (visceral specific consequence), fallout = THE FALLOUT (one concrete forward consequence, what escalates next)
 - part_2_narration must NOT contain real_talk or fallout content. They are SEPARATE fields.
 - part_2 must answer SO WHAT — name the concrete second-order consequence. NO vague abstractions.
@@ -1931,6 +1926,102 @@ CRITICAL RULES:
                 return False
         
         return True
+    
+    def fix_script(self, script: dict) -> Optional[dict]:
+        """
+        Script Fixer: LLM-based structural/syntactic repair.
+        Fixes grammar errors, repetitions, weak segues, broken closings,
+        and flow issues. NEVER rewrites for style — only fixes what's broken.
+        
+        Args:
+            script: Script dict with 'stories' array
+            
+        Returns:
+            Corrected script dict, or None on failure (caller should use original)
+        """
+        prompt_config = self.config["prompts"].get("script_fixer")
+        if not prompt_config:
+            print("  [SCRIPT-FIXER] No script_fixer config found, skipping")
+            return None
+        
+        stories = script.get('stories', [])
+        if not stories:
+            print("  [SCRIPT-FIXER] No stories in script, skipping")
+            return None
+        
+        script_json = json.dumps(script, indent=2, ensure_ascii=False)
+        
+        prompt = f"""Fix the following 2-story script. Fix ONLY what's broken — grammar, syntax, repetitions, weak segues, broken closing, flow issues.
+
+STRICT RULES:
+- NEVER change facts, numbers, countries, or specific details
+- NEVER add new information that wasn't in the original
+- NEVER change the Mask voice or style
+- If something isn't broken, leave it exactly as is
+- Story 1 MUST have a "segue" field that bridges to Story 2
+- Story 2 must NOT have a "segue" field
+- The closing MUST end with: "Stay behind the curtains, and if I don't see you — good morning, good afternoon, and goodnight."
+- The closing MUST echo the LAST story's fallout using 2-3 plain words
+- Ensure part_1→part_2→real_talk→fallout flows naturally within each story
+- Remove any repeated phrases across segments
+
+ORIGINAL SCRIPT:
+{script_json[:6000]}
+
+Return ONLY the corrected JSON object with the same structure. No markdown. No explanations."""
+
+        response = self.generate(
+            prompt=prompt,
+            system_prompt=prompt_config["system_prompt"],
+            temperature=prompt_config["temperature"],
+            max_tokens=prompt_config["max_tokens"],
+            task_name="script_fixer"
+        )
+        
+        if not response:
+            print("  [SCRIPT-FIXER] No response from LLM")
+            return None
+        
+        fixed_script = self._extract_json(response)
+        if not fixed_script or not isinstance(fixed_script, dict):
+            print(f"  [SCRIPT-FIXER] Failed to parse JSON response")
+            return None
+        
+        fixed_stories = fixed_script.get('stories', [])
+        if len(fixed_stories) < 2:
+            print(f"  [SCRIPT-FIXER] Got {len(fixed_stories)} stories, need 2 — using original")
+            return None
+        
+        # Enforce greeting
+        if not fixed_script.get('greeting'):
+            fixed_script['greeting'] = script.get('greeting', "Baby you are not ready for this!")
+        
+        # Enforce structural rules
+        for i, story in enumerate(fixed_stories):
+            if i == 0:
+                if not story.get('segue'):
+                    story['segue'] = script['stories'][0].get('segue', '')
+            else:
+                story.pop('segue', None)
+        
+        # Closing must end with trademark
+        closing = fixed_script.get('closing', '')
+        trademark = "good morning, good afternoon, and goodnight"
+        if trademark.replace(',', '').replace(' ', '') not in closing.replace(',', '').replace(' ', '').lower():
+            fixed_script['closing'] = script.get('closing', closing)
+        
+        # Fidelity check: ensure key entities are preserved
+        for i, (orig, fixed) in enumerate(zip(stories, fixed_stories)):
+            orig_text = f"{orig.get('part_1_narration','')} {orig.get('part_2_narration','')}"
+            fixed_text = f"{fixed.get('part_1_narration','')} {fixed.get('part_2_narration','')}"
+            if not self._check_content_fidelity(orig_text, fixed_text):
+                print(f"  [SCRIPT-FIXER] Story {i+1} failed fidelity check — keeping original")
+                fixed_stories[i] = orig
+        
+        fixed_script['stories'] = fixed_stories[:2]
+        
+        print(f"  [SCRIPT-FIXER] Script fixed — {len(fixed_stories)} stories")
+        return fixed_script
     
     def curate_script(self, script: dict) -> Optional[str]:
         """

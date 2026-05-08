@@ -620,18 +620,18 @@ for i, article in enumerate(viral_articles):
     if not is_duplicate:
         selected.append(article)
         print(f"  [DEDUP] Selected: {title[:65]}")
-    if len(selected) >= 3:
+    if len(selected) >= NUM_STORIES:
         break
 
-while len(selected) < 3 and len(viral_articles) > len(selected):
+while len(selected) < NUM_STORIES and len(viral_articles) > len(selected):
     for a in viral_articles:
         if a not in selected:
             selected.append(a)
             break
-    if len(selected) >= 3:
+    if len(selected) >= NUM_STORIES:
         break
 
-articles = selected[:3]
+articles = selected[:NUM_STORIES]
 for i, a in enumerate(articles, 1):
     log.info("article.selected", index=i, title=a['title'][:70])
 
@@ -881,7 +881,47 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_synthesis", duration_s=round(_step_duration, 2))
-_step_done("SCRIPT SYNTHESIS")
+_done("SCRIPT SYNTHESIS")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# STEP 4.05: SCRIPT FIXER — Fix syntax, repetitions, segues, closing
+# ══════════════════════════════════════════════════════════════════════════
+log.info("step.start", step="script_fixer")
+_step_banner("SCRIPT FIXER")
+_step_start = time.time()
+
+try:
+    print("\n  [LLM] Fixing script (this may take 10-30s)...", flush=True)
+    fixed_script, _fixer_timed_out = _run_with_heartbeat(
+        llm.fix_script, "script_fixer", 8, 120,
+        script
+    )
+    if _fixer_timed_out:
+        log.error("script_fixer.timeout", timeout_s=120)
+        fixed_script = None
+
+    if fixed_script and isinstance(fixed_script, dict) and fixed_script.get('stories'):
+        script = fixed_script
+        full_script = script.get('full_text', full_script)
+        log.info("script_fixer.success", stories=len(script['stories']))
+        print(f"  [SCRIPT-FIXER] Script fixed successfully")
+    else:
+        log.warning("script_fixer.skipped", reason="no_valid_result")
+        print("  [SCRIPT-FIXER] No valid fix returned — using original script")
+
+    script_file = project_folder / "script.txt"
+    script_file.write_text(full_script, encoding='utf-8')
+    segments_file = project_folder / "script_segments.json"
+    segments_file.write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding='utf-8')
+
+except Exception as e:
+    log.warning("script_fixer.failed", error=str(e))
+    print(f"  [SCRIPT-FIXER] Error: {str(e)[:80]}")
+
+_step_duration = time.time() - _step_start
+log.info("step.complete", step="script_fixer", duration_s=round(_step_duration, 2))
+_done("SCRIPT FIXER")
 
 
 # ══════════════════════════════════════════════════════════════════════════
