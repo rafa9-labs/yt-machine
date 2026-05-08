@@ -971,8 +971,10 @@ Synthesize into a compelling 60-80 second professional news narration script wit
     def _dedup_segue_overlap(self, script: dict) -> dict:
         """
         Remove duplicate phrasing between a story's segue and the next story's part_1.
-        If story N's segue starts the same phrase as story N+1's part_1, strip the
-        overlap from part_1 so the audience doesn't hear the same clause twice.
+        Check BOTH:
+          1. Tail-of-segue vs head-of-part_1 (original logic)
+          2. Prefix-of-segue vs prefix-of-part_1 (new: catches "And while Europe..." overlap)
+        Strip the overlap from part_1 so the audience doesn't hear the same clause twice.
         """
         stories = script.get('stories', [])
         if len(stories) < 2:
@@ -988,9 +990,11 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             segue_words = segue.split()
             next_words = next_p1.split()
             
-            max_check = min(3, len(segue_words), len(next_words))
             overlap_count = 0
-            for n in range(1, max_check + 1):
+
+            # Check 1: Tail-of-segue vs head-of-part_1
+            max_check_tail = min(3, len(segue_words), len(next_words))
+            for n in range(1, max_check_tail + 1):
                 tail = [w.lower().rstrip('.,!?;:') for w in segue_words[-n:]]
                 head = [w.lower().rstrip('.,!?;:') for w in next_words[:n]]
                 if tail == head:
@@ -999,8 +1003,27 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             if overlap_count >= 2:
                 cleaned_p1 = ' '.join(next_words[overlap_count:]).strip()
                 if cleaned_p1 and len(cleaned_p1.split()) >= 5:
-                    print(f"  [DEDUP] Story {i+2} part_1: stripped {overlap_count} overlapping words from segue")
+                    print(f"  [DEDUP-TAIL] Story {i+2} part_1: stripped {overlap_count} overlapping words from segue tail")
                     print(f"    Removed: \"{' '.join(next_words[:overlap_count])}\"")
+                    stories[i + 1]['part_1_narration'] = cleaned_p1
+                    next_words = cleaned_p1.split()
+
+            # Check 2: Prefix-of-segue vs prefix-of-part_1
+            next_p1 = stories[i + 1].get('part_1_narration', '').strip()
+            next_words = next_p1.split()
+            max_check_prefix = min(len(segue_words), len(next_words))
+            prefix_overlap = 0
+            for n in range(1, max_check_prefix + 1):
+                s_words = [w.lower().rstrip('.,!?;:') for w in segue_words[:n]]
+                p_words = [w.lower().rstrip('.,!?;:') for w in next_words[:n]]
+                if s_words == p_words:
+                    prefix_overlap = n
+            
+            if prefix_overlap >= 4:
+                cleaned_p1 = ' '.join(next_words[prefix_overlap:]).strip()
+                if cleaned_p1 and len(cleaned_p1.split()) >= 5:
+                    print(f"  [DEDUP-PREFIX] Story {i+2} part_1: stripped {prefix_overlap} overlapping prefix words from segue")
+                    print(f"    Removed: \"{' '.join(next_words[:prefix_overlap])}\"")
                     stories[i + 1]['part_1_narration'] = cleaned_p1
         
         script['stories'] = stories
@@ -2004,6 +2027,58 @@ Return ONLY the corrected JSON object with the same structure. No markdown. No e
             else:
                 story.pop('segue', None)
         
+        # Deterministic prefix dedup: if segue and next part_1 share 5+ word prefix, strip from part_1
+        for i in range(len(fixed_stories) - 1):
+            segue = fixed_stories[i].get('segue', '').strip()
+            next_p1 = fixed_stories[i + 1].get('part_1_narration', '').strip()
+            if not segue or not next_p1:
+                continue
+            segue_words = [w.lower().rstrip('.,!?;:') for w in segue.split()]
+            next_words = [w.lower().rstrip('.,!?;:') for w in next_p1.split()]
+            overlap = 0
+            for n in range(min(len(segue_words), len(next_words))):
+                if segue_words[n] == next_words[n]:
+                    overlap = n + 1
+                else:
+                    break
+            if overlap >= 4:
+                cleaned = ' '.join(next_p1.split()[overlap:]).strip()
+                if cleaned and len(cleaned.split()) >= 5:
+                    print(f"  [SCRIPT-FIXER] Stripped {overlap}-word prefix overlap between segue and story {i+2} part_1")
+                    print(f"    Removed: \"{' '.join(next_p1.split()[:overlap])}\"")
+                    fixed_stories[i + 1]['part_1_narration'] = cleaned
+        
+        # Deterministic closing echo dedup: strip fallout echo from closing start
+        closing = fixed_script.get('closing', '').strip()
+        last_fallout = fixed_stories[-1].get('fallout', '').strip().lower() if fixed_stories else ''
+        if closing and last_fallout:
+            closing_lower = closing.lower()
+            fo_words = last_fallout.split()
+            best_phrase = None
+            best_len = 0
+            for wcount in range(min(len(fo_words), 5), 1, -1):
+                for start in range(len(fo_words) - wcount + 1):
+                    phrase = ' '.join(fo_words[start:start + wcount])
+                    if phrase in closing_lower and wcount > best_len:
+                        best_phrase = phrase
+                        best_len = wcount
+                if best_phrase:
+                    break
+            if best_phrase and best_len >= 2:
+                idx = closing_lower.index(best_phrase)
+                prefix = closing[:idx].strip().lower()
+                if prefix in ('', 'and', 'and while', 'while', 'a', 'the', 'an'):
+                    after_raw = closing[idx + len(best_phrase):]
+                    after = after_raw.lstrip('. ').strip()
+                    if after:
+                        fo_last = fo_words[-1].rstrip('.,;:')
+                        after_words = after.split()
+                        if after_words and after_words[0].lower().rstrip('.,;:') == fo_last:
+                            after = ' '.join(after_words[1:]).strip()
+                        if after:
+                            fixed_script['closing'] = '... ' + after if not after.startswith('...') else after
+                            print(f"  [SCRIPT-FIXER] Stripped fallout echo from closing")
+        
         # Closing must end with trademark
         closing = fixed_script.get('closing', '')
         trademark = "good morning, good afternoon, and goodnight"
@@ -2139,6 +2214,9 @@ ORIGINAL STORY NARRATIONS:
                 }
         
         # ── UPDATE STORY NARRATIONS WITH CURATED TEXT (4-PART STRUCTURE) ──
+        # Apply fidelity validation to each story's curated body
+        curated_bodies_pre = [' '.join(v for v in s.values() if v) for s in curated_structures]
+        curated_bodies_validated = self._validate_curation_fidelity(curated_bodies_pre, story_bodies)
         for i, structure in enumerate(curated_structures):
             if i < len(script.get('stories', [])):
                 if structure.get('hook'):
@@ -2152,13 +2230,54 @@ ORIGINAL STORY NARRATIONS:
         script['_curated'] = True
 
         # ── REASSEMBLE WITH STRUCTURAL ELEMENTS ──
-        curated_bodies = [' '.join(v for v in s.values() if v) for s in curated_structures]
+        curated_bodies = curated_bodies_validated
         result = self._reassemble_script(script, curated_bodies)
         
         total_orig = sum(len(b.split()) for b in story_bodies)
         total_cur = sum(len(b.split()) for b in curated_bodies)
         print(f"  [CURATOR] Stories curated: {total_orig} → {total_cur} words (structural elements preserved)")
         return result
+    
+    def _validate_curation_fidelity(self, curated_bodies: List[str], original_bodies: List[str]) -> List[str]:
+        """
+        Strip hallucinated text from curated bodies that doesn't appear in originals.
+        Any contiguous run of 3+ words not found in the original body is removed.
+        Also removes any duplicated adjacent sentences (curator sometimes repeats a sentence).
+        """
+        import re
+        validated = []
+        for i, (curated, original) in enumerate(zip(curated_bodies, original_bodies)):
+            if not curated:
+                validated.append(curated)
+                continue
+            orig_words_lower = set()
+            for w in original.lower().split():
+                orig_words_lower.add(w.rstrip('.,!?;:'))
+            
+            cur_sentences = re.split(r'(?<=[.!?])\s+', curated.strip())
+            good_sentences = []
+            for sent in cur_sentences:
+                sent_stripped = sent.strip()
+                if not sent_stripped:
+                    continue
+                sent_words = [w.lower().rstrip('.,!?;:') for w in sent_stripped.split()]
+                overlap = sum(1 for w in sent_words if w in orig_words_lower)
+                ratio = overlap / len(sent_words) if sent_words else 0
+                if ratio >= 0.5:
+                    if good_sentences and sent_stripped.lower() == good_sentences[-1].lower():
+                        print(f"  [CURATOR-FIDELITY] Story {i+1}: stripped duplicate sentence \"{sent_stripped[:60]}...\"" if len(sent_stripped) > 60 else f"  [CURATOR-FIDELITY] Story {i+1}: stripped duplicate sentence \"{sent_stripped}\"")
+                        continue
+                    good_sentences.append(sent_stripped)
+                else:
+                    print(f"  [CURATOR-FIDELITY] Story {i+1}: stripped hallucinated sentence \"{sent_stripped[:60]}...\"" if len(sent_stripped) > 60 else f"  [CURATOR-FIDELITY] Story {i+1}: stripped hallucinated sentence \"{sent_stripped}\"")
+            
+            validated_body = ' '.join(good_sentences).strip()
+            if not validated_body:
+                validated_body = original
+                print(f"  [CURATOR-FIDELITY] Story {i+1}: all sentences rejected, using original body")
+            validated.append(validated_body)
+        
+        return validated
     
     def _parse_curated_stories(self, curated_text: str, expected_count: int) -> Optional[List[str]]:
         """
@@ -2307,6 +2426,31 @@ ORIGINAL STORY NARRATIONS:
                 body = body.replace(original_fo.strip(), '').strip()
                 body = re.sub(r'\s*[-—]+\s*$', '', body).strip()
             
+            # Strip prefix overlap with previous segue (final assembly dedup)
+            # If this story's body starts with the same words as the previous segue,
+            # the audience hears them twice. Strip overlapping prefix from body.
+            if i > 0 and parts:
+                prev_text = ''
+                for p in reversed(parts):
+                    if p and p != '....' and not p.startswith('...'):
+                        prev_text = p
+                        break
+                if prev_text:
+                    prev_words = [w.lower().rstrip('.,!?;:') for w in prev_text.split()]
+                    body_words_list = [w.lower().rstrip('.,!?;:') for w in body.split()]
+                    prefix_overlap = 0
+                    for n in range(min(len(prev_words), len(body_words_list))):
+                        if prev_words[n] == body_words_list[n]:
+                            prefix_overlap = n + 1
+                        else:
+                            break
+                    if prefix_overlap >= 4:
+                        body_original_words = body.split()
+                        cleaned = ' '.join(body_original_words[prefix_overlap:]).strip()
+                        if cleaned and len(cleaned.split()) >= 5:
+                            print(f"  [REASSEMBLE] Stripped {prefix_overlap}-word prefix overlap from story {i+1} body")
+                            body = cleaned
+            
             parts.append(body)
             if original_rt:
                 parts.append(original_rt)
@@ -2346,7 +2490,7 @@ ORIGINAL STORY NARRATIONS:
                         after_raw = closing[idx + len(best_phrase):]
                         after = after_raw.lstrip('. ').strip()
                         prefix = closing[:idx].strip().lower()
-                        if prefix in ('', 'and', 'and while', 'while'):
+                        if prefix in ('', 'and', 'and while', 'while', 'a', 'the', 'an'):
                             if after:
                                 fo_last = fo_words[-1].rstrip('.,;:')
                                 after_words = after.split()
