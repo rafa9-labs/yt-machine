@@ -497,3 +497,76 @@ class TestIntegrationUserScenario:
         full_text = self.llm._reassemble_script(result, story_bodies)
         count = full_text.lower().count('and while europe waits on those shipments')
         assert count == 1, f"Expected 'And while Europe waits on those shipments' once, got {count}"
+
+
+# ══════════════════════════════════════════════════════════════
+# 5. _parse_curated_structures — marker gate validation
+# ══════════════════════════════════════════════════════════════
+class TestCuratedStructuresMarkerGate:
+    def setup_method(self):
+        self.llm = _make_llm()
+
+    def test_no_markers_returns_none(self):
+        """Unmarked curator output (no [HOOK]/[MECHANISM] etc.) must be rejected."""
+        curated = (
+            "Ethiopia is building a massive digital highway! "
+            "Officials are pumping funds into local infrastructure.\n\n"
+            "---\n\n"
+            "A massive LNG tanker just sailed into a danger zone! "
+            "QatarEnergy is testing global security."
+        )
+        result = self.llm._parse_curated_structures(curated, expected_count=2)
+        assert result is None, f"Expected None for unmarked output, got {result}"
+
+    def test_partial_markers_returns_none(self):
+        """Output with only one [HOOK] marker for two stories must be rejected.
+        Need at least expected_count * 2 markers (HOOK + one more per story)."""
+        curated = (
+            "[HOOK] Ethiopia is building a digital highway!\n"
+            "[MECHANISM] Officials are pumping funds.\n\n"
+            "---\n\n"
+            "A massive LNG tanker just sailed into a danger zone! "
+            "QatarEnergy is testing global security."
+        )
+        result = self.llm._parse_curated_structures(curated, expected_count=2)
+        assert result is None, f"Expected None for 2 markers in 2 stories (need 4), got {result}"
+
+    def test_full_markers_returns_structures(self):
+        """Output with all 4 markers per story must parse correctly."""
+        curated = (
+            "[STORY 1]\n"
+            "[HOOK] Ethiopia is building a massive digital highway!\n"
+            "[MECHANISM] Officials are pumping funds into local infrastructure.\n"
+            "[REAL_TALK] it's a digital fence to keep tech giants out.\n"
+            "[FALLOUT] a new protectionist bloc will make it harder.\n\n"
+            "---\n\n"
+            "[STORY 2]\n"
+            "[HOOK] A massive LNG tanker just sailed into a danger zone!\n"
+            "[MECHANISM] QatarEnergy is testing global security.\n"
+            "[REAL_TALK] doha is playing a high-stakes game of chicken.\n"
+            "[FALLOUT] market risk premiums will drive over-ordering."
+        )
+        result = self.llm._parse_curated_structures(curated, expected_count=2)
+        assert result is not None, "Expected parsed structures for properly marked output"
+        assert len(result) == 2
+        assert 'hook' in result[0]
+        assert result[0]['hook'] == 'Ethiopia is building a massive digital highway!'
+        assert result[1]['hook'] == 'A massive LNG tanker just sailed into a danger zone!'
+        assert result[1]['fallout'] == 'market risk premiums will drive over-ordering.'
+
+    def test_exactly_minimum_markers_passes(self):
+        """2 stories with 4 markers (2 per story = minimum) should pass the gate."""
+        curated = (
+            "[STORY 1]\n"
+            "[HOOK] Story one hook.\n"
+            "[MECHANISM] Story one mechanism.\n"
+            "[REAL_TALK] Story one real talk.\n"
+            "[FALLOUT] Story one fallout.\n\n"
+            "[STORY 2]\n"
+            "[HOOK] Story two hook.\n"
+            "[MECHANISM] Story two mechanism.\n"
+            "[REAL_TALK] Story two real talk.\n"
+            "[FALLOUT] Story two fallout."
+        )
+        result = self.llm._parse_curated_structures(curated, expected_count=2)
+        assert result is not None, "Expected structures for minimum marker count"
