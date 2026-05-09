@@ -42,8 +42,8 @@ class TestDedupSegueOverlap:
         assert 'And before that even lands' not in p1, f"Prefix overlap NOT stripped: {p1}"
         assert 'forces behind' in p1, f"Expected 'forces behind' in: {p1}"
 
-    def test_no_false_positive_short_overlap(self):
-        """3-word overlap should NOT trigger (threshold is 4)"""
+    def test_bridging_conjunction_3word_stripped(self):
+        """3-word overlap starting with 'And' (bridging conjunction) IS stripped (threshold lowered to 3)"""
         script = {
             'stories': [
                 {'segue': 'And now for something', 'part_1_narration': 'x'},
@@ -52,7 +52,20 @@ class TestDedupSegueOverlap:
         }
         result = self.llm._dedup_segue_overlap(script)
         p1 = result['stories'][1]['part_1_narration']
-        assert 'And now for' in p1, f"3-word overlap should NOT be stripped: {p1}"
+        assert 'And now for' not in p1, f"3-word overlap with bridging conjunction SHOULD be stripped: {p1}"
+        assert 'the market' in p1, f"Expected 'the market' in: {p1}"
+
+    def test_3word_non_bridging_not_stripped(self):
+        """3-word overlap without a bridging conjunction should NOT trigger (threshold is 4)"""
+        script = {
+            'stories': [
+                {'segue': 'The market is crashing today', 'part_1_narration': 'x'},
+                {'part_1_narration': 'The market is Goldman Sachs is concerned about it', 'part_2_narration': 'more'},
+            ]
+        }
+        result = self.llm._dedup_segue_overlap(script)
+        p1 = result['stories'][1]['part_1_narration']
+        assert 'The market is' in p1, f"3-word overlap without bridging conjunction should NOT be stripped: {p1}"
 
     def test_tail_overlap_still_works(self):
         """Original tail-vs-head overlap check still functions (2+ word match)"""

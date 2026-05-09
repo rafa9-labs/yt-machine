@@ -876,6 +876,9 @@ def _assemble_pure_ffmpeg(
                     with open(ass_path, 'w', encoding='utf-8') as f:
                         f.write(ass_content)
                     print(f"  [PURE-FF] ASS subtitles generated ({len(ass_content)} chars)")
+                else:
+                    print(f"  [PURE-FF] WARNING: ASS subtitle generation returned empty content — subtitles will be MISSING")
+                    log.warning("assembly.ass_empty", reason="generate_ass_subtitles returned empty string")
             except Exception as e:
                 print(f"  [PURE-FF] ASS subtitle generation failed: {e}")
                 ass_path = None

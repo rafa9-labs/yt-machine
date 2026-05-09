@@ -435,8 +435,8 @@ def run_script_evaluation(
         if '_enforce_fallout' in dir(llm_interface) and isinstance(llm_interface, LLMInterface):
             script = llm_interface._enforce_fallout(script, news_analyses)
 
-    if script.get('stories') and script.get('segment_timeline'):
-        _rebuild_timeline(script)
+    # Timeline is built once after all mutations (enforcement, curation, evaluation)
+    # in the pipeline master — NOT here. This prevents timeline/script desync.
 
     print(f"  [EVAL] Evaluation complete — {len(script.get('stories', []))} stories")
     return script
@@ -576,11 +576,3 @@ def _rebuild_timeline(script: dict) -> None:
                 desc = story.get(narration_fields[j], '')
             visual_scenes.append({'scene': scene_names[j], 'description': desc})
     script['all_visual_scenes'] = visual_scenes
-
-    full_parts = []
-    for seg in timeline:
-        if seg.get('is_separator'):
-            full_parts.append(seg['text'])
-        elif seg.get('text'):
-            full_parts.append(seg['text'])
-    script['full_text'] = ' '.join(filter(None, full_parts))

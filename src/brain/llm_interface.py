@@ -973,12 +973,14 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         Remove duplicate phrasing between a story's segue and the next story's part_1.
         Check BOTH:
           1. Tail-of-segue vs head-of-part_1 (original logic)
-          2. Prefix-of-segue vs prefix-of-part_1 (new: catches "And while Europe..." overlap)
+          2. Prefix-of-segue vs prefix-of-part_1 (threshold: 3+ words)
         Strip the overlap from part_1 so the audience doesn't hear the same clause twice.
         """
         stories = script.get('stories', [])
         if len(stories) < 2:
             return script
+
+        BRIDGING_CONJUNCTIONS = {'and', 'but', 'while', 'meanwhile', 'now', 'speaking'}
         
         for i in range(len(stories) - 1):
             segue = stories[i].get('segue', '').strip()
@@ -1019,10 +1021,17 @@ Synthesize into a compelling 60-80 second professional news narration script wit
                 if s_words == p_words:
                     prefix_overlap = n
             
-            if prefix_overlap >= 4:
+            # Determine threshold: 3+ words normally, but force 3+ when first word
+            # of both strings is an identical bridging conjunction (And/But/While/etc.)
+            first_s = segue_words[0].lower().rstrip('.,!?;:')
+            first_p = next_words[0].lower().rstrip('.,!?;:')
+            is_bridging = first_s == first_p and first_s in BRIDGING_CONJUNCTIONS
+            threshold = 3 if is_bridging else 4
+            
+            if prefix_overlap >= threshold:
                 cleaned_p1 = ' '.join(next_words[prefix_overlap:]).strip()
                 if cleaned_p1 and len(cleaned_p1.split()) >= 5:
-                    print(f"  [DEDUP-PREFIX] Story {i+2} part_1: stripped {prefix_overlap} overlapping prefix words from segue")
+                    print(f"  [DEDUP-PREFIX] Story {i+2} part_1: stripped {prefix_overlap} overlapping prefix words from segue (threshold={threshold})")
                     print(f"    Removed: \"{' '.join(next_words[:prefix_overlap])}\"")
                     stories[i + 1]['part_1_narration'] = cleaned_p1
         
@@ -2444,7 +2453,9 @@ ORIGINAL STORY NARRATIONS:
                             prefix_overlap = n + 1
                         else:
                             break
-                    if prefix_overlap >= 4:
+                    threshold = 3 if (prev_words[0] == body_words_list[0] and
+                                       prev_words[0] in {'and', 'but', 'while', 'meanwhile', 'now', 'speaking'}) else 4
+                    if prefix_overlap >= threshold:
                         body_original_words = body.split()
                         cleaned = ' '.join(body_original_words[prefix_overlap:]).strip()
                         if cleaned and len(cleaned.split()) >= 5:
