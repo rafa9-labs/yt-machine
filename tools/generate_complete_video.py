@@ -95,6 +95,48 @@ if args.resume:
 log.info("pipeline.start", skip_images=SKIP_IMAGES, no_telegram=args.no_telegram)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# PIPELINE PHASE TRACKING — prevents step re-execution and stale-data regressions
+# ══════════════════════════════════════════════════════════════════════════
+from enum import IntEnum
+
+class PipelinePhase(IntEnum):
+    START = 0
+    SCRAPE_DONE = 1
+    ANALYSIS_DONE = 2
+    SYNTHESIS_DONE = 3
+    FIXER_DONE = 4
+    ENFORCEMENT_DONE = 5
+    VISUAL_PROMPTS_DONE = 6
+    CURATION_DONE = 7
+    EVALUATION_DONE = 8
+    TIMELINE_DONE = 9
+    IMAGES_DONE = 10
+    TTS_DONE = 11
+    ASSEMBLY_DONE = 12
+
+_current_phase = PipelinePhase.START
+_last_script_hash = None
+
+
+def _advance_phase(target_phase: PipelinePhase):
+    global _current_phase
+    if target_phase.value < _current_phase.value:
+        log.error("pipeline.regression", current=_current_phase, attempted=target_phase)
+        raise RuntimeError(f"Pipeline regression: tried {target_phase.name} but already at {_current_phase.name}")
+    _current_phase = target_phase
+
+
+def _check_script_regression(script: dict):
+    global _last_script_hash
+    if not script.get('full_text'):
+        return
+    current_hash = hash(script['full_text'])
+    if _last_script_hash is not None and current_hash != _last_script_hash:
+        log.info("pipeline.script_changed", prev_hash=_last_script_hash, new_hash=current_hash)
+    _last_script_hash = current_hash
+
+
 # ── HELPER: Extract text from script segments ──
 def _extract_segment_text(segment_data) -> str:
     if isinstance(segment_data, str):
@@ -642,6 +684,7 @@ print(f"\n  [SCRAPER] {len(articles)} articles selected in {round(_step_duration
 for i, a in enumerate(articles, 1):
     print(f"    {i}. {a.get('title', 'N/A')[:70]}")
 _step_done("FETCH NEWS")
+_advance_phase(PipelinePhase.SCRAPE_DONE)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -772,6 +815,7 @@ _save_to_postgres("news_analysis", project_id, {
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="news_analysis", duration_s=round(_step_duration, 2))
 _step_done("NEWS ANALYSIS")
+_advance_phase(PipelinePhase.ANALYSIS_DONE)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -881,6 +925,8 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_synthesis", duration_s=round(_step_duration, 2))
+_check_script_regression(script)
+_advance_phase(PipelinePhase.SYNTHESIS_DONE)
 _step_done("SCRIPT SYNTHESIS")
 
 
@@ -921,6 +967,8 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_fixer", duration_s=round(_step_duration, 2))
+_check_script_regression(script)
+_advance_phase(PipelinePhase.FIXER_DONE)
 _step_done("SCRIPT FIXER")
 
 
@@ -942,34 +990,7 @@ try:
     script['estimated_duration'] = int(script['word_count'] / 2.5)
     full_script = script.get('full_text', full_script)
 
-    # Build segment timeline for video assembly
-    segment_timeline = []
-    greeting_seg = script.get('greeting', '')
-    if greeting_seg:
-        segment_timeline.append({'text': greeting_seg, 'image_idx': -1, 'label': 'greeting'})
-    intro_hook = script.get('intro_hook', '')
-    if intro_hook:
-        segment_timeline.append({'text': intro_hook, 'image_idx': -1, 'label': 'intro_hook'})
-    segment_timeline.append({'text': '....', 'image_idx': -1, 'label': 'intro_pause', 'is_separator': True})
-    for i, story in enumerate(script['stories']):
-        img_base = i * IMAGES_PER_STORY
-        for field, suffix, img_off in [
-            ('part_1_narration', 'part1', 0),
-            ('part_2_narration', 'part2', 1),
-            ('real_talk', 'real_talk', 2),
-            ('fallout', 'fallout', 3),
-        ]:
-            val = story.get(field, '')
-            if val:
-                segment_timeline.append({'text': val, 'image_idx': img_base + img_off, 'label': f'story_{i+1}_{suffix}'})
-        segue = story.get('segue', story.get('transition', ''))
-        if segue and i < len(script['stories']) - 1:
-            segment_timeline.append({'text': segue, 'image_idx': img_base + 3, 'label': f'story_{i+1}_segue'})
-        if i < len(script['stories']) - 1:
-            segment_timeline.append({'text': '....', 'image_idx': img_base + 3, 'label': f'story_{i+1}_separator', 'is_separator': True})
-    script['segment_timeline'] = segment_timeline
-
-    # Save updated script
+    # Save updated script (timeline built AFTER evaluation — single source of truth)
     script_file = project_folder / "script.txt"
     script_file.write_text(full_script, encoding='utf-8')
     segments_file = project_folder / "script_segments.json"
@@ -978,14 +999,15 @@ try:
     log.info("script_enforcement.complete",
              greeting=bool(script.get('greeting')),
              segues=sum(1 for s in script.get('stories', [])[:-1] if s.get('segue')),
-             fallouts=sum(1 for s in script.get('stories', []) if s.get('fallout')),
-             timeline_segments=len(segment_timeline))
+             fallouts=sum(1 for s in script.get('stories', []) if s.get('fallout')))
 
 except Exception as e:
     log.error("script_enforcement.failed", error=str(e))
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_enforcement", duration_s=round(_step_duration, 2))
+_check_script_regression(script)
+_advance_phase(PipelinePhase.ENFORCEMENT_DONE)
 _step_done("SCRIPT ENFORCEMENT")
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1017,6 +1039,8 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="visual_prompts", duration_s=round(_step_duration, 2))
+_check_script_regression(script)
+_advance_phase(PipelinePhase.VISUAL_PROMPTS_DONE)
 _step_done("VISUAL PROMPTS")
 
 
@@ -1107,6 +1131,8 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_curation", duration_s=round(_step_duration, 2))
+_check_script_regression(script)
+_advance_phase(PipelinePhase.CURATION_DONE)
 _step_done("SCRIPT CURATION")
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1145,7 +1171,84 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="script_evaluation", duration_s=round(_step_duration, 2))
+_check_script_regression(script)
+_advance_phase(PipelinePhase.EVALUATION_DONE)
 _step_done("SCRIPT EVALUATION")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BUILD SEGMENT TIMELINE — single authoritative build after ALL mutations
+# (enforcement → curation → evaluation are done; no further script changes)
+# ══════════════════════════════════════════════════════════════════════════
+log.info("step.start", step="build_timeline")
+print("\n  [TIMELINE] Building final segment timeline...")
+
+# Sanity: strip any segues that duplicate the next story's opening
+script = llm._dedup_segue_overlap(script)
+script = llm._dedup_inter_story_phrases(script)
+
+stories = script.get('stories', [])
+segment_timeline = []
+greeting_seg = script.get('greeting', '')
+if greeting_seg:
+    segment_timeline.append({'text': greeting_seg, 'image_idx': -1, 'label': 'greeting'})
+intro_hook = script.get('intro_hook', '')
+if intro_hook:
+    segment_timeline.append({'text': intro_hook, 'image_idx': -1, 'label': 'intro_hook'})
+segment_timeline.append({'text': '....', 'image_idx': -1, 'label': 'intro_pause', 'is_separator': True})
+for i, story in enumerate(stories):
+    img_base = i * IMAGES_PER_STORY
+    part_1 = story.get('part_1_narration', '')
+    if i > 0 and part_1:
+        prev_segue = stories[i - 1].get('segue', '').strip()
+        if prev_segue:
+            prev_segue_words = [w.lower().rstrip('.,!?;:') for w in prev_segue.split()]
+            part_1_words = [w.lower().rstrip('.,!?;:') for w in part_1.split()]
+            prefix_overlap = 0
+            for n in range(min(len(prev_segue_words), len(part_1_words))):
+                if prev_segue_words[n] == part_1_words[n]:
+                    prefix_overlap = n + 1
+                else:
+                    break
+            if prefix_overlap >= 3:
+                cleaned = ' '.join(part_1.split()[prefix_overlap:]).strip()
+                if cleaned and len(cleaned.split()) >= 5:
+                    log.info("timeline.strip_overlap", story=i+1, words_stripped=prefix_overlap)
+                    print(f"  [TIMELINE] Stripped {prefix_overlap}-word overlap from story {i+1} part_1")
+                    part_1 = cleaned
+                    story['part_1_narration'] = cleaned
+    for field, suffix, img_off in [
+        ('part_1_narration', 'part1', 0),
+        ('part_2_narration', 'part2', 1),
+        ('real_talk', 'real_talk', 2),
+        ('fallout', 'fallout', 3),
+    ]:
+        val = story.get(field, '')
+        if val:
+            segment_timeline.append({'text': val, 'image_idx': img_base + img_off, 'label': f'story_{i+1}_{suffix}'})
+    segue = story.get('segue', '')
+    if segue and i < len(stories) - 1:
+        segment_timeline.append({'text': segue, 'image_idx': img_base + 3, 'label': f'story_{i+1}_segue'})
+    if i < len(stories) - 1:
+        segment_timeline.append({'text': '....', 'image_idx': img_base + 3, 'label': f'story_{i+1}_separator', 'is_separator': True})
+
+closing = script.get('closing', '')
+if closing:
+    segment_timeline.append({'text': closing, 'image_idx': (len(stories) - 1) * IMAGES_PER_STORY + 3, 'label': 'closing'})
+
+script['segment_timeline'] = segment_timeline
+script['word_count'] = len(script.get('full_text', full_script).split())
+script['estimated_duration'] = int(script['word_count'] / 2.5)
+full_script = script.get('full_text', full_script)
+
+script_file = project_folder / "script.txt"
+script_file.write_text(full_script, encoding='utf-8')
+segments_file = project_folder / "script_segments.json"
+segments_file.write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding='utf-8')
+
+log.info("timeline.complete", segments=len(segment_timeline), words=script['word_count'])
+print(f"  [TIMELINE] {len(segment_timeline)} segments, {script['word_count']} words")
+_advance_phase(PipelinePhase.TIMELINE_DONE)
 
 
 # ── GPU MODEL LIFECYCLE: Clean up LLM phase before loading FLUX ──
@@ -1369,6 +1472,7 @@ except Exception as e:
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="pixel_art", duration_s=round(_step_duration, 2),
          images=len(generated_images))
+_advance_phase(PipelinePhase.IMAGES_DONE)
 _step_done("PIXEL ART")
 
 # ── GPU MODEL LIFECYCLE: Flush FLUX after batch generation, then transition to TTS ──
@@ -1412,6 +1516,7 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="voice_generation", duration_s=round(_step_duration, 2))
+_advance_phase(PipelinePhase.TTS_DONE)
 _step_done("VOICE GENERATION")
 
 
@@ -1645,6 +1750,7 @@ except Exception as e:
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="video_assembly", duration_s=round(_step_duration, 2))
+_advance_phase(PipelinePhase.ASSEMBLY_DONE)
 _step_done("VIDEO ASSEMBLY")
 
 

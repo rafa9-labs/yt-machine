@@ -626,11 +626,17 @@ def _clamp_ass_overlaps(lines: List[str]) -> List[str]:
 
     This function parses all Dialogue events, sorts by start time, and clamps
     each event's end time to be strictly less than the next event's start time.
+
+    MIN_EVENT_CS enforces a minimum event duration of 4 centiseconds (0.04s),
+    which is ~1.2 frames at 30fps — guaranteeing the subtitle is visible for
+    at least one full frame rather than being rendered for 0 or sub-frame duration.
     """
     import re
     dialogue_re = re.compile(
         r'^(Dialogue:\s*\d+),(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),(.*)$'
     )
+    MIN_EVENT_CS = 4  # 0.04s minimum — at least one frame at 30fps
+
     parsed = []
     non_dialogue = []
     for line in lines:
@@ -659,9 +665,9 @@ def _clamp_ass_overlaps(lines: List[str]) -> List[str]:
             if end_s >= next_start:
                 end_s = next_start - 0.01
                 if end_s <= start_s:
-                    end_s = start_s + 0.01
+                    end_s = start_s + MIN_EVENT_CS / 100.0
         if end_s <= start_s:
-            end_s = start_s + 0.01
+            end_s = start_s + MIN_EVENT_CS / 100.0
         h = int(end_s // 3600)
         m = int((end_s % 3600) // 60)
         s_val = int(end_s % 60)
@@ -933,7 +939,13 @@ def generate_ass_subtitles(
         )
 
     lines = _clamp_ass_overlaps(lines)
-    return "\n".join(lines)
+    content = "\n".join(lines)
+
+    if not content or "Dialogue:" not in content:
+        print(f"  [ASS] WARNING: generate_ass_subtitles produced {len(lines)} lines but no Dialogue events — subtitles will be missing")
+        return ""
+
+    return content
 
 
 def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
@@ -956,9 +968,8 @@ def create_subtitle_clips(script_text: str, word_timestamps: List[Dict],
     # Structural batch splitting now places silences at story boundaries,
     # making whisper timestamps more accurate. A small residual offset remains.
     SUBTITLE_DELAY = 0.04
-    for w in word_timestamps:
-        w['start'] = w['start'] + SUBTITLE_DELAY
-        w['end'] = w['end'] + SUBTITLE_DELAY
+    wt = [{'word': w['word'], 'start': w['start'] + SUBTITLE_DELAY, 'end': w['end'] + SUBTITLE_DELAY} for w in word_timestamps]
+    word_timestamps = wt
 
     # Clean script text — remove TTS pause markers, stray quotes, etc.
     clean_script = _clean_script_for_subtitles(script_text) if script_text else script_text
