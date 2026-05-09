@@ -2207,7 +2207,12 @@ ORIGINAL STORY NARRATIONS:
         curated_structures = self._parse_curated_structures(curated, len(story_bodies))
         
         if not curated_structures or len(curated_structures) < len(story_bodies):
-            print(f"  [CURATOR] Could not parse {len(story_bodies)} stories from response (got {len(curated_structures) if curated_structures else 0}), using original")
+            print(f"  [CURATOR] ⚠️ Could not parse {len(story_bodies)} stories from response "
+                  f"(got {len(curated_structures) if curated_structures else 0}). "
+                  f"Curator output lacks [HOOK]/[MECHANISM]/[REAL_TALK]/[FALLOUT] markers — "
+                  f"falling back to original narration (no curation applied).")
+            log.warning("curation.no_markers", got=len(curated_structures) if curated_structures else 0,
+                        expected=len(story_bodies))
             return self._reassemble_script(script, story_bodies)
         
         # ── PER-STORY FIDELITY CHECK ──
@@ -2331,14 +2336,24 @@ ORIGINAL STORY NARRATIONS:
         """
         Parse curated LLM response back into 4-part structures per story.
         Expects [HOOK], [MECHANISM], [REAL_TALK], [FALLOUT] markers.
-        Falls back to quarter-split if markers are absent.
+        Returns None if markers are absent — quarter-split is too unreliable to use silently.
         """
         import re
         
         MARKER_RE = re.compile(r'\[(HOOK|MECHANISM|REAL_TALK|FALLOUT)\]\s*', re.IGNORECASE)
         
+        # ── GATE: Require at least one structural marker per story ──
+        # Without markers, quarter-split silently produces garbage field mappings.
+        # The curator prompt explicitly requests these markers. If the LLM ignored
+        # them, reject the output and fall back to original narration.
+        marker_matches = MARKER_RE.findall(curated_text)
+        if len(marker_matches) < expected_count * 2:
+            print(f"  [CURATOR] ⚠️ Insufficient structural markers in curated output "
+                  f"(found {len(marker_matches)}, need ≥{expected_count * 2}). "
+                  f"Rejecting unmarked output — falling back to original narration.")
+            return None
+        
         stories = []
-        raw_stories = []
         
         # Split by [STORY N] markers or --- separators
         story_pattern = r'\[STORY\s+\d+\]\s*\n?'
@@ -2367,38 +2382,20 @@ ORIGINAL STORY NARRATIONS:
                     'fallout': content_segments[3] if len(content_segments) > 3 else '',
                 }
             elif len(content_segments) >= 2:
+                # Partial markers: hook + mechanism found, but real_talk/fallout missing
                 structure = {
                     'hook': content_segments[0] if len(content_segments) > 0 else '',
                     'mechanism': content_segments[1] if len(content_segments) > 1 else '',
+                    'real_talk': '',
+                    'fallout': '',
                 }
-                # Fill missing fields from quarter-split of remaining text
-                remaining_text = ' '.join(s for s in content_segments if s)
-                if not structure['mechanism'] and remaining_text:
-                    sents = re.split(r'(?<=[.!?])\s+', remaining_text)
-                    q = max(1, len(sents) // 4)
-                    structure['hook'] = structure['hook'] or ' '.join(sents[:q])
-                    structure['mechanism'] = structure['mechanism'] or ' '.join(sents[q:q*2])
-                    structure['real_talk'] = structure['real_talk'] or ' '.join(sents[q*2:q*3])
-                    structure['fallout'] = structure['fallout'] or ' '.join(sents[q*3:])
             else:
-                # No markers at all: quarter-split entire text
-                all_sents = re.split(r'(?<=[.!?])\s+', part)
-                q = max(1, len(all_sents) // 4)
-                structure = {
-                    'hook': ' '.join(all_sents[:q]),
-                    'mechanism': ' '.join(all_sents[q:q*2]),
-                    'real_talk': ' '.join(all_sents[q*2:q*3]),
-                    'fallout': ' '.join(all_sents[q*3:]),
-                }
+                # Not enough markers to map — reject this story
+                structure = {'hook': '', 'mechanism': '', 'real_talk': '', 'fallout': ''}
             stories.append(structure)
         
         while len(stories) < expected_count:
             stories.append({'hook': '', 'mechanism': '', 'real_talk': '', 'fallout': ''})
-        
-        # Convert structures back to body strings for _reassemble_script compatibility
-        curated_bodies = []
-        for s in stories:
-            curated_bodies.append(' '.join(v for v in s.values() if v))
         
         return stories[:expected_count]
     
