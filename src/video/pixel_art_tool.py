@@ -953,10 +953,10 @@ _NAMED_ENTITY_SUBSTITUTIONS = [
 
 # Pre-approved safe prompts per visual category — last resort before placeholder
 _CATEGORY_SAFE_PROMPTS = {
-    'warfare': '16-bit isometric pixel art scene: tactical landscape with smoke in the distance, military terrain at dusk, dramatic orange sky, trenches and fortifications, atmospheric haze',
-    'naval': '16-bit isometric pixel art scene: ocean harbor with docked vessels at sunset, calm waves reflecting orange sky, maritime flags on masts, nautical atmosphere',
-    'aerial': '16-bit isometric pixel art scene: open sky with cloud formations at golden hour, distant contrails, dramatic sunset colors of orange and purple, atmospheric depth',
-    'arms_defense': '16-bit isometric pixel art scene: military installation with radar equipment at dusk, technical markings visible, national insignia on structures, moody lighting',
+    'warfare': '16-bit isometric pixel art scene: tactical map overlay with territory zones, glowing strategic markers, resource flow arrows, hex grid, dramatic orange sky, atmospheric depth',
+    'naval': '16-bit isometric pixel art scene: sea route map with fleet position indicators, glowing trade lines across ocean, port data overlays, calm waves reflecting sunset',
+    'aerial': '16-bit isometric pixel art scene: radar display with flight path vectors, altitude data streams, airspace zone indicators, dramatic sunset colors of orange and purple',
+    'arms_defense': '16-bit isometric pixel art scene: defense architecture schematic with system capability graphs, network topology, resource allocation charts, moody lighting',
     'markets': '16-bit isometric pixel art scene: trading floor with screens and displays, financial charts in blue and green, professional atmosphere, dramatic lighting',
     'trade_sanctions': '16-bit isometric pixel art scene: cargo port with container stacks and cranes, ships docked at harbor, industrial atmosphere, overcast sky',
     'energy': '16-bit isometric pixel art scene: industrial complex with smokestacks and flames at night, pipeline infrastructure, orange glow on horizon, moody atmosphere',
@@ -1232,10 +1232,10 @@ def _get_adaptive_enrichment(visual_type: str) -> str:
     Supports all 16 geopolitical visual categories with per-category emphasis.
     """
     enrichments = {
-        'warfare': 'tactical positioning, battlefield terrain, smoke and fire, military tension',
-        'naval': 'naval formation, ocean waves, maritime flags, fleet maneuvers',
-        'aerial': 'altitude perspective, contrails visible, sky domination, payload detail',
-        'arms_defense': 'hardware detail, technical markings, defense system, national insignia',
+        'warfare': 'tactical map layout, territory indicators, resource flow arrows, data tension visualization',
+        'naval': 'sea route display, position indicators, trade flow lines, maritime data overlay',
+        'aerial': 'radar coverage display, flight path vectors, altitude zone map, signal range rings',
+        'arms_defense': 'system architecture layout, capability graphs, network topology, resource bar charts',
         'markets': 'market indicators visible, price displays, trading floor, financial panic',
         'trade_sanctions': 'cargo containers, port bottleneck, trade barrier, nation flags',
         'energy': 'industrial infrastructure, flames and smoke, pipeline terrain, workers',
@@ -1615,18 +1615,28 @@ def _extract_visual_terms_from_narration(script_text: str) -> str:
         'south ossetia', 'abkhazia', 'kashmir', 'kuril islands'
     ]
     
-    # Known equipment/hardware terms
-    equipment_terms = [
-        'f-35', 'f-16', 'f-22', 'su-35', 'su-57', 'j-20',
-        'missile', 'drone', 'tank', 'warship', 'destroyer',
-        'submarine', 'carrier', 'aircraft carrier', 'frigate',
-        'artillery', 'helicopter', 'fighter jet', 'bomber',
-        'patrol boat', 'oil tanker', 'cargo ship', 'container ship',
-        'pipeline', 'refinery', 'nuclear plant', 'power grid',
-        's-400', 's-300', 'patriot', 'iron dome', 'thaad',
-        'himars', 'm142', 'iskander', 'kinzhal', 'dagger',
-        'reaper', 'mq-9', 'bayraktar', 'tb2', 'switchblade'
-    ]
+    # Known equipment/hardware terms → arcade/data-viz replacements
+    equipment_map = {
+        'f-35': 'stealth capability icon', 'f-16': 'fighter indicator', 'f-22': 'air superiority marker',
+        'su-35': 'maneuver unit icon', 'su-57': 'stealth unit marker', 'j-20': 'aircraft indicator',
+        'missile': 'projection vector', 'drone': 'aerial platform indicator',
+        'tank': 'armored unit icon', 'warship': 'naval indicator', 'destroyer': 'naval platform marker',
+        'submarine': 'subsurface indicator', 'carrier': 'fleet center icon', 'aircraft carrier': 'fleet hub marker',
+        'frigate': 'escort vessel icon', 'artillery': 'fire support indicator',
+        'helicopter': 'rotary platform icon', 'fighter jet': 'air dominance marker',
+        'bomber': 'strategic asset icon', 'patrol boat': 'patrol vessel indicator',
+        'oil tanker': 'energy transport icon', 'cargo ship': 'trade vessel indicator',
+        'container ship': 'logistics hub icon', 'pipeline': 'resource flow line',
+        'refinery': 'processing node', 'nuclear plant': 'energy station',
+        'power grid': 'energy network', 's-400': 'defense battery icon',
+        's-300': 'defense unit marker', 'patriot': 'interceptor icon',
+        'iron dome': 'shield system icon', 'thaad': 'high-altitude interceptor',
+        'himars': 'mobile launcher icon', 'm142': 'launcher unit marker',
+        'iskander': 'tactical missile icon', 'kinzhal': 'hypersonic indicator',
+        'dagger': 'strike vector', 'reaper': 'surveillance platform',
+        'mq-9': 'drone icon', 'bayraktar': 'drone unit marker',
+        'tb2': 'tactical drone icon', 'switchblade': 'loitering munition icon'
+    }
     
     # Known economic/infrastructure terms
     economic_terms = [
@@ -1648,9 +1658,9 @@ def _extract_visual_terms_from_narration(script_text: str) -> str:
                 break
     
     # Extract equipment (second priority → weight 1.2)
-    for equip in equipment_terms:
+    for equip, replacement in equipment_map.items():
         if equip in text_lower:
-            found_terms.append((equip, 1.2))
+            found_terms.append((replacement, 1.2))
             if len(found_terms) >= 5:
                 break
     

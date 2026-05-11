@@ -913,7 +913,7 @@ def _assemble_pure_ffmpeg(
                     f'[1:a]atrim=0:{total_dur:.3f},asetpts=PTS-STARTPTS,'
                     f'highpass=f=80,'
                     f'afade=t=in:st=0:d=1,'
-                    f'volume=0.10,afade=t=out:st={dim_start:.3f}:d={MUSIC_DIM_DURATION:.1f}[music];'
+                    f'volume=0.30,afade=t=out:st={dim_start:.3f}:d={MUSIC_DIM_DURATION:.1f}[music];'
                     f'[0:a][music]amix=inputs=2:duration=longest:normalize=0,'
                     f'afade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}[out]',
                     '-map', '[out]',
@@ -1142,7 +1142,7 @@ def build_split_video(
         # ── EXPORT ──
         MUSIC_DIM_DURATION = 10.0
         VIDEO_FADE_DURATION = 0.8
-        MUSIC_BASE_VOLUME = 0.10
+        MUSIC_BASE_VOLUME = 0.30
 
         out_path = Path(output_path) if output_path else Path(__file__).parent.parent.parent / "output" / "videos" / f"split_{int(total_dur)}s.mp4"
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1228,7 +1228,7 @@ def build_split_video(
                             f'[1:a]atrim=0:{total_dur:.3f},asetpts=PTS-STARTPTS,'
                             f'highpass=f=80,'
                             f'afade=t=in:st=0:d=1,'
-                            f'volume=0.10,afade=t=out:st={dim_start:.3f}:d={MUSIC_DIM_DURATION:.1f}[music];'
+                            f'volume=0.30,afade=t=out:st={dim_start:.3f}:d={MUSIC_DIM_DURATION:.1f}[music];'
                             f'[0:a][music]amix=inputs=2:duration=longest:normalize=0,'
                             f'afade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}[out]',
                             '-map', '[out]',
@@ -1359,7 +1359,7 @@ def build_split_video(
                             f'[1:a]atrim=0:{total_dur:.3f},asetpts=PTS-STARTPTS,'
                             f'highpass=f=80,'
                             f'afade=t=in:st=0:d=1,'
-                            f'volume=0.10,afade=t=out:st={dim_start:.3f}:d={MUSIC_DIM_DURATION:.1f}[music];'
+                            f'volume=0.30,afade=t=out:st={dim_start:.3f}:d={MUSIC_DIM_DURATION:.1f}[music];'
                             f'[0:a][music]amix=inputs=2:duration=longest:normalize=0,'
                             f'afade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}[out]',
                             '-map', '[out]',

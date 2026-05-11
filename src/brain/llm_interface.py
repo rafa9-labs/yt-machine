@@ -877,8 +877,8 @@ Synthesize into a compelling 60-80 second professional news narration script wit
             return f"{template} {cleaned.lower()}, {lighting}, atmospheric depth"
         
         type_defaults = {
-            'hook': '16-bit isometric pixel art scene: dramatic wide establishing shot, military forces positioned on left, strategic landscape at sunset, atmospheric haze',
-            'mechanism': '16-bit isometric pixel art scene: tactical close-up of strategic infrastructure, detailed equipment on left side, dynamic composition at golden hour',
+            'hook': '16-bit isometric pixel art scene: dramatic wide establishing shot, strategic position markers on left, landscape overview at sunset, atmospheric haze',
+            'mechanism': '16-bit isometric pixel art scene: close-up of data visualization and resource flows, chart indicators on left side, dynamic composition at golden hour',
             'truth': '16-bit isometric pixel art scene: somber revealing scene, civilian perspective on left, consequences visible in background, cold blue lighting',
             'fallout': '16-bit isometric pixel art scene: forward-looking consequence scene, domino effect visible, dark horizon on left, twilight atmosphere, ominous sky',
         }
@@ -1282,9 +1282,9 @@ CRITICAL RULES:
         # Ensure greeting is set correctly
         script['greeting'] = greeting
         
-        # Ensure intro_hook exists
-        if not script.get('intro_hook'):
-            script['intro_hook'] = "Ssssmokin'! We have got TWO stories and the dance floor is on FIRE!"
+        # intro_hook is removed — script starts directly with the first news story
+        if script.get('intro_hook'):
+            script['intro_hook'] = ''
         
         # Ensure stories exist
         if 'stories' not in script or not script.get('stories'):
