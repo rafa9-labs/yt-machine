@@ -71,7 +71,7 @@ def _get_scene_profile(scene_idx: int) -> dict:
 
 
 AVATAR_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "avatar_loop.mp4"
-MUSIC_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "music" / "news_background_sound.mp3"
+MUSIC_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "music" / "news-yt.mp3"
 
 
 def _find_ffmpeg() -> str:

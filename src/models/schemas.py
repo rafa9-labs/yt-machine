@@ -177,8 +177,8 @@ class VideoScript(BaseModel):
       3. Auto-retry if validation fails
     """
     title: str = Field(..., min_length=5, description="Video title")
-    greeting: str = Field(default="Hello Maskers")
-    intro_hook: str = Field(..., description="Attention-grabbing opening")
+    greeting: str = Field(default="")
+    intro_hook: str = Field(default="")
     stories: List[ScriptSegment] = Field(default_factory=list)
     closing: str = Field(default="")
     full_text: str = Field(default="")
@@ -190,7 +190,7 @@ class VideoScript(BaseModel):
         Assemble all segments into the final voiceover text.
         Called automatically — no manual string concatenation needed.
         """
-        parts = [self.intro_hook]
+        parts = []
         for story in self.stories:
             parts.append(story.text)
         if self.closing:

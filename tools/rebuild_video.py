@@ -72,20 +72,10 @@ print(f"Audio duration: {total_dur:.1f}s")
 if segment_timeline and word_timestamps:
     num_images = len(image_paths)
     image_times = [{"start": None, "end": None} for _ in range(num_images)]
-    
-    # Strip dead segments (greeting/intro_hook removed from TTS)
-    stripped_greeting = script.get("greeting", "")
-    stripped_intro_hook = script.get("intro_hook", "")
+
+    # No intro segments — script starts directly with first story
     cleaned_timeline = []
     for seg in segment_timeline:
-        seg_text = seg.get("text", "").strip()
-        seg_label = seg.get("label", "")
-        if seg_label == "intro" and stripped_greeting and stripped_greeting[:20].lower() in seg_text.lower():
-            print(f"  Stripped dead intro segment: \"{seg_text[:50]}...\"")
-            continue
-        if seg_label == "intro_pause" and stripped_greeting:
-            print(f"  Stripped dead intro_pause segment")
-            continue
         cleaned_timeline.append(seg)
     segment_timeline = cleaned_timeline
     print(f"  Cleaned timeline: {len(segment_timeline)} active segments")

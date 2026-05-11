@@ -385,10 +385,8 @@ def apply_continuity_fixes(script: dict, issues: List[dict]) -> dict:
         full_parts.append(s.get('real_talk', ''))
         full_parts.append(s.get('fallout', ''))
         full_parts.append(s.get('segue', ''))
-    greeting = script.get('greeting', '')
-    intro = script.get('intro_hook', '')
     closing = script.get('closing', '')
-    script['full_text'] = ' '.join(p for p in [greeting, intro] + full_parts + [closing] if p)
+    script['full_text'] = ' '.join(p for p in full_parts + [closing] if p)
 
     return script
 
@@ -447,16 +445,11 @@ def _rebuild_timeline(script: dict) -> None:
     Rebuild segment_timeline from stories after dedup/continuity fixes.
     """
     stories = script.get('stories', [])
-    greeting = script.get('greeting', '')
-    intro_hook = script.get('intro_hook', '')
     closing = script.get('closing', '')
 
     timeline = []
 
-    intro_text = f"{greeting} {intro_hook}".strip()
-    if intro_text:
-        timeline.append({'text': intro_text, 'image_idx': 0, 'label': 'intro'})
-    timeline.append({'text': '...', 'image_idx': 0, 'label': 'intro_pause', 'is_separator': True})
+    # No intro — script starts directly with story 1
 
     for i, story in enumerate(stories):
         img_base = i * 4

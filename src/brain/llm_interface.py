@@ -557,60 +557,21 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         "And while that echoes — {next_subject} just rewrote the rules.",
     ]
     
-    INTRO_HOOK_TEMPLATES = [
-        "Two stories. One screen. Let us go.",
-        "Tonight the dominoes are already falling.",
-        "Big moves. Big consequences. Let us dive in.",
-        "The world just shifted. Here is what it means.",
-        "Hold tight. Two stories that change everything.",
-        "Chaos incoming. Two stories you cannot miss.",
-    ]
-
     def _enforce_greeting(self, script: dict) -> dict:
         """
-        Ensure greeting is present and fact-first.
-        Greeting must be a data-driven opener from the first story.
-        No hardcoded trademark — the LLM generates a fresh fact-first hook.
+        GREETING REMOVED — script starts directly with the first news story.
         """
-        if not script.get('greeting', '').strip():
-            stories = script.get('stories', [])
-            if stories and stories[0].get('part_1_narration'):
-                first_words = ' '.join(stories[0]['part_1_narration'].split()[:12])
-                script['greeting'] = first_words
-                print(f"  [GREETING] Fallback from story 1: \"{first_words[:60]}...\"")
-            else:
-                script['greeting'] = "Let us get into it."
-                print(f"  [GREETING] Minimal fallback greeting set")
-        
+        script['greeting'] = ''
         return script
+
+
+
+
     
     def _ensure_greeting_in_fulltext(self, script: dict) -> dict:
         """
-        GUARANTEE: full_text MUST start with the greeting.
-        This is called after every full_text modification (synthesis, curation, etc.)
-        Uses fuzzy prefix match to avoid prepending duplicate greetings.
+        GREETING REMOVED — no greeting to inject.
         """
-        full_text = script.get('full_text', '').strip()
-        greeting = script.get('greeting', '').strip()
-        
-        if not full_text or not greeting:
-            return script
-        
-        ft_lower = full_text.lower()
-        g_lower = greeting.lower()
-        g_first_word = greeting.split()[0].lower() if greeting.split() else ''
-        
-        if ft_lower.startswith(g_lower) or ft_lower.startswith(g_lower.rstrip('.,!?')):
-            return script
-        
-        ft_prefix = ft_lower[:len(g_lower) + 5]
-        if g_lower in ft_prefix:
-            return script
-        
-        if g_first_word and g_first_word not in ft_lower[:len(g_lower) + 10]:
-            script['full_text'] = f"{greeting} {full_text}"
-            print(f"  [GREETING] Prepended missing greeting to full_text")
-        
         return script
     
     def _enforce_segues(self, script: dict) -> dict:
@@ -1151,13 +1112,7 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         """
         prompt_config = self.config["prompts"]["multi_news_synthesizer"]
         
-        # Build a fact-first opener from the first story's key data
-        greeting = ""
-        if news_analyses:
-            first = news_analyses[0]
-            key_facts = first.get('key_facts', [])
-            if key_facts and len(key_facts) >= 1:
-                greeting = key_facts[0]
+        greeting = ""  # No greeting — script starts with first story
         
         # Build news summaries block
         news_block = ""
@@ -1173,13 +1128,13 @@ NEWS STORY {i}:
         
         prompt = f"""Create a Mask script — EXACTLY {num_stories} stories, Infotainment Satire structure (The Cartoonish Truth).
 
-GREETING: The greeting must be a FACT-FIRST OPENER — a single shocking data point or fact from Story 1 that leads directly into the narration. No catchphrases. No exclamations. Just the most arresting fact from the first story in 6-12 words. It must flow naturally into Story 1's part_1_narration with continuity — the greeting and part_1 should feel like one continuous thread. Example: "Iran just moved forty percent of its reserves into Shanghai."
+GREETING: The greeting field is always empty. No greeting. Script starts directly with Story 1's part_1_narration.
 
 {news_block}
 
 CRITICAL RULES:
 - Output ONLY the JSON object. NO explanatory text before or after. NO markdown.
-- The greeting must be a fact-first opener — a single shocking data point or fact from Story 1 (6-12 words). No catchphrases, no exclamations, no "Baby you are not ready." Just the most arresting fact that leads directly into part_1_narration with natural continuity.
+- The greeting field must always be empty. No intro_hook field — removed entirely.
 - Each story: part_1 = THE HOOK (what happened), part_2 = THE MECHANISM (why it matters, the hidden chain), real_talk = THE TRUTH (visceral specific consequence), fallout = THE FALLOUT (one concrete forward consequence, what escalates next)
 - part_2_narration must NOT contain real_talk or fallout content. They are SEPARATE fields.
 - part_2 must answer SO WHAT — name the concrete second-order consequence. NO vague abstractions.
@@ -1280,11 +1235,9 @@ CRITICAL RULES:
                     return None
         
         # Ensure greeting is set correctly
-        script['greeting'] = greeting
-        
-        # intro_hook is removed — script starts directly with the first news story
-        if script.get('intro_hook'):
-            script['intro_hook'] = ''
+        # intro_hook is removed — script starts directly with first story
+        script['intro_hook'] = ''
+        script['greeting'] = ''
         
         # Ensure stories exist
         if 'stories' not in script or not script.get('stories'):
@@ -1567,20 +1520,7 @@ CRITICAL RULES:
         # Intro segment → image 0 (first story, part 1)
         intro_hook = script.get('intro_hook', '').strip()
         greeting = script.get('greeting', '').strip()
-        intro_text = f"{greeting} {intro_hook}".strip() if intro_hook else greeting
-        segment_timeline.append({
-            'text': intro_text,
-            'image_idx': 0,
-            'label': 'intro'
-        })
-        
-        # PAUSE after intro — let the hook land before diving into stories
-        segment_timeline.append({
-            'text': '...',
-            'image_idx': 0,
-            'label': 'intro_pause',
-            'is_separator': True
-        })
+        # Script starts directly with Story 1 — no intro/greeting
         
         for i, story in enumerate(script['stories']):
             img_base = i * 4  # Story 0 → images 0,1,2,3; Story 1 → images 4,5,6,7
@@ -2030,9 +1970,8 @@ Return ONLY the corrected JSON object with the same structure. No markdown. No e
             print(f"  [SCRIPT-FIXER] Got {len(fixed_stories)} stories, need 2 — using original")
             return None
         
-        # Enforce greeting
-        if not fixed_script.get('greeting'):
-            fixed_script['greeting'] = script.get('greeting', "Baby you are not ready for this!")
+        # Greeting removed — always empty
+        fixed_script['greeting'] = ''
         
         # Enforce structural rules
         for i, story in enumerate(fixed_stories):
@@ -2412,15 +2351,7 @@ ORIGINAL STORY NARRATIONS:
         """
         parts = []
         
-        # Greeting + Intro Hook (always preserved)
-        greeting = script.get('greeting', '')
-        intro_hook = script.get('intro_hook', '')
-        if greeting:
-            parts.append(greeting)
-        if intro_hook:
-            parts.append(intro_hook)
-        
-        # Stories with real_talk, fallout, and segues
+        # Script starts directly with stories — no greeting or intro_hook
         stories = script.get('stories', [])
         for i in range(len(story_bodies)):
             body = story_bodies[i]
