@@ -513,9 +513,6 @@ if DRY_RUN:
     greeting_seg = script.get('greeting', '')
     if greeting_seg:
         segment_timeline.append({'text': greeting_seg, 'image_idx': -1, 'label': 'greeting'})
-    intro_hook = script.get('intro_hook', '')
-    if intro_hook:
-        segment_timeline.append({'text': intro_hook, 'image_idx': -1, 'label': 'intro_hook'})
     segment_timeline.append({'text': '....', 'image_idx': -1, 'label': 'intro_pause', 'is_separator': True})
     for i, story in enumerate(script['stories']):
         img_base = i * 4
@@ -866,15 +863,12 @@ try:
 
     full_script = script.get('full_text', '')
 
-    # Strip greeting and intro_hook — go straight to the first news story
+    # Strip greeting — go straight to the first news story
     greeting = script.get('greeting', '')
-    intro_hook = script.get('intro_hook', '')
-    for prefix in [greeting, intro_hook]:
-        if prefix and full_script.startswith(prefix):
-            full_script = full_script[len(prefix):].strip()
-            script['full_text'] = full_script
+    if greeting and full_script.startswith(greeting):
+        full_script = full_script[len(greeting):].strip()
+        script['full_text'] = full_script
     script['greeting'] = ''
-    script['intro_hook'] = ''
 
     if not full_script:
         parts = []

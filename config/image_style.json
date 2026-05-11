@@ -58,23 +58,23 @@
   "lora_by_visual_type": {
     "warfare": {
       "scale": 0.9,
-      "trigger": "tactical pixel",
-      "additional_prompts": "detailed military equipment, explosions, smoke, tactical formations, battlefield terrain"
+      "trigger": "strategy pixel",
+      "additional_prompts": "tactical map overlay, territory zones on hex grid, resource flow arrows, strategic markers, data streams, glowing position indicators"
     },
     "naval": {
       "scale": 0.9,
-      "trigger": "naval pixel",
-      "additional_prompts": "warships, ocean waves, naval formations, maritime flags, fleet maneuvers"
+      "trigger": "sea route pixel",
+      "additional_prompts": "fleet position indicators on sea map, glowing route lines across ocean, port data overlays, maritime trade flow visualization"
     },
     "aerial": {
       "scale": 0.88,
-      "trigger": "aerial pixel",
-      "additional_prompts": "military aircraft, contrails, sky formations, payload detail, altitude perspective"
+      "trigger": "air route pixel",
+      "additional_prompts": "flight path vectors on radar display, altitude data streams, signal coverage mapping, airspace zone indicators"
     },
     "arms_defense": {
       "scale": 0.88,
-      "trigger": "defense pixel",
-      "additional_prompts": "military hardware closeup, technical schematics, weapon systems, national insignia"
+      "trigger": "systems pixel",
+      "additional_prompts": "defense architecture diagram, resource allocation grid, system capability schematics, network nodes and connections"
     },
     "markets": {
       "scale": 0.82,
