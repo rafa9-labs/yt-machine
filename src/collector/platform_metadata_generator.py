@@ -213,9 +213,11 @@ class PlatformMetadataGenerator:
             '#iran',
             '#china',
             '#oilcrisis',
-            '#tradewar',
-            '#militaryanalysis',
-            '#strategicanalysis'
+            '#globalaffairs',
+            '#geopolitics',
+            '#strategicanalysis',
+            '#worldexplained',
+            '#dataanalysis'
         ]
         
         hashtags.extend(trending)
