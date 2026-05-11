@@ -198,9 +198,7 @@ if DRY_RUN:
     ]
 
     _DRY_RUN_SCRIPT = {
-        'greeting': "Ssssmokin'!",
-        'intro_hook': "Hold onto your lobsters, folks!",
-        'full_text': "Ssssmokin'! Hold onto your lobsters, folks! Iran launched missiles at Israel yesterday. "
+        'full_text': "Iran launched missiles at Israel yesterday. "
                      "The Pentagon confirmed multiple impacts across the region. This changes the regional power "
                      "dynamics entirely. The consequences will ripple for decades. But wait, there is more. The "
                      "Pentagon signed a two billion dollar AI defense contract with SpaceX. Global markets "
@@ -510,10 +508,6 @@ if DRY_RUN:
 
     # Build segment timeline (same as real pipeline)
     segment_timeline = []
-    greeting_seg = script.get('greeting', '')
-    if greeting_seg:
-        segment_timeline.append({'text': greeting_seg, 'image_idx': -1, 'label': 'greeting'})
-    segment_timeline.append({'text': '....', 'image_idx': -1, 'label': 'intro_pause', 'is_separator': True})
     for i, story in enumerate(script['stories']):
         img_base = i * 4
         for field, suffix, img_off in [
@@ -863,11 +857,7 @@ try:
 
     full_script = script.get('full_text', '')
 
-    # Strip greeting — go straight to the first news story
-    greeting = script.get('greeting', '')
-    if greeting and full_script.startswith(greeting):
-        full_script = full_script[len(greeting):].strip()
-        script['full_text'] = full_script
+    # No greeting or intro_hook — script starts directly with first news story
     script['greeting'] = ''
 
     if not full_script:
@@ -1183,13 +1173,6 @@ script = llm._dedup_inter_story_phrases(script)
 
 stories = script.get('stories', [])
 segment_timeline = []
-greeting_seg = script.get('greeting', '')
-if greeting_seg:
-    segment_timeline.append({'text': greeting_seg, 'image_idx': -1, 'label': 'greeting'})
-intro_hook = script.get('intro_hook', '')
-if intro_hook:
-    segment_timeline.append({'text': intro_hook, 'image_idx': -1, 'label': 'intro_hook'})
-segment_timeline.append({'text': '....', 'image_idx': -1, 'label': 'intro_pause', 'is_separator': True})
 for i, story in enumerate(stories):
     img_base = i * IMAGES_PER_STORY
     part_1 = story.get('part_1_narration', '')
@@ -1547,22 +1530,9 @@ try:
         num_images = len(generated_images)
         image_times = [{'start': None, 'end': None} for _ in range(num_images)]
 
-        # ── Strip dead segments (greeting/intro_hook removed from TTS) ──
-        stripped_greeting = script.get('greeting', '')
-        cleaned_timeline = []
-        for seg in segment_timeline:
-            seg_text = seg.get('text', '').strip()
-            seg_label = seg.get('label', '')
-            if seg_label == 'intro' and stripped_greeting and stripped_greeting[:20].lower() in seg_text.lower():
-                continue
-            if seg_label == 'intro_pause' and stripped_greeting:
-                continue
-            cleaned_timeline.append(seg)
-        segment_timeline = cleaned_timeline
-        log.debug("assembly.timeline_cleaned", active_segments=len(segment_timeline))
+        segment_timeline = image_times
 
         def _fuzzy_find_segment(seg_text, word_timestamps):
-            """Find the best matching position for segment text in word timestamps."""
             seg_words = seg_text.lower().split()
             seg_clean = [w.strip(".,!?;:'\"()-") for w in seg_words if len(w.strip(".,!?;:'\"()-")) > 1]
             if len(seg_clean) < 2:
