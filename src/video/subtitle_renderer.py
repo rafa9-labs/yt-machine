@@ -627,6 +627,9 @@ def _clamp_ass_overlaps(lines: List[str]) -> List[str]:
     This function parses all Dialogue events, sorts by start time, and clamps
     each event's end time to be strictly less than the next event's start time.
 
+    Title-style events are excluded from clamping — they span the entire video
+    and intentionally overlap all subtitle events.
+
     MIN_EVENT_CS enforces a minimum event duration of 4 centiseconds (0.04s),
     which is ~1.2 frames at 30fps — guaranteeing the subtitle is visible for
     at least one full frame rather than being rendered for 0 or sub-frame duration.
@@ -638,6 +641,7 @@ def _clamp_ass_overlaps(lines: List[str]) -> List[str]:
     MIN_EVENT_CS = 4  # 0.04s minimum — at least one frame at 30fps
 
     parsed = []
+    title_events = []
     non_dialogue = []
     for line in lines:
         m = dialogue_re.match(line)
@@ -648,7 +652,10 @@ def _clamp_ass_overlaps(lines: List[str]) -> List[str]:
             rest = m.group(4)
             start_s = _parse_ass_time(start_ts)
             end_s = _parse_ass_time(end_ts)
-            parsed.append((start_s, end_s, prefix, start_ts, end_ts, rest))
+            if ',Title,' in rest or rest.startswith('Title,'):
+                title_events.append((start_s, end_s, prefix, start_ts, end_ts, rest))
+            else:
+                parsed.append((start_s, end_s, prefix, start_ts, end_ts, rest))
         else:
             non_dialogue.append(line)
 
@@ -675,7 +682,8 @@ def _clamp_ass_overlaps(lines: List[str]) -> List[str]:
         clamped_end = f"{h}:{m:02d}:{s_val:02d}.{cs:02d}"
         clamped.append(f"{prefix},{start_ts},{clamped_end},{rest}")
 
-    return non_dialogue + clamped
+    subtitle_lines = [f"{e[2]},{e[3]},{e[4]},{e[5]}" for e in title_events] + clamped
+    return non_dialogue + subtitle_lines
 
 
 def generate_ass_subtitles(
@@ -686,6 +694,7 @@ def generate_ass_subtitles(
     band_y_position: int,
     style: dict = None,
     hook_text: str = None,
+    total_duration: float = None,
 ) -> str:
     """
     Generate ASS (Advanced SubStation Alpha) subtitle content for ffmpeg burn-in.
@@ -699,37 +708,6 @@ def generate_ass_subtitles(
     import re
 
     s = {**SUBTITLE_STYLE, **(style or {})}
-    
-    if not word_timestamps:
-        return ""
-
-    SUBTITLE_DELAY = 0.04
-    delayed_ts = [{'word': w['word'], 'start': w['start'] + SUBTITLE_DELAY, 'end': w['end'] + SUBTITLE_DELAY}
-                  for w in word_timestamps]
-
-    clean_script = _clean_script_for_subtitles(script_text) if script_text else script_text
-
-    if clean_script and clean_script.strip():
-        aligned_words = align_whisper_to_script(delayed_ts, clean_script)
-    else:
-        aligned_words = delayed_ts
-
-    aligned_words = [w for w in aligned_words if _clean_display(w['word'])]
-
-    if not aligned_words:
-        return ""
-
-    phrases = _split_into_phrases(aligned_words, max_words=5)
-    if not phrases:
-        return ""
-
-    highlight_color = s.get('highlight_color', (255, 215, 0))
-    previous_color = s.get('previous_color', (255, 255, 255))
-    upcoming_color = s.get('upcoming_color', (180, 180, 180))
-    outline_color = s.get('outline_color', (0, 0, 0))
-    outline_width = s.get('outline_width', 5)
-    font_size = s.get('font_size', 64)
-    font_name = s.get('font_name', 'Arial-Bold')
 
     def _ass_color(rgb):
         return f"&H{rgb[2]:02X}{rgb[1]:02X}{rgb[0]:02X}"
@@ -741,6 +719,14 @@ def generate_ass_subtitles(
         cs = int((seconds % 1) * 100)
         return f"{h}:{m:02d}:{s_val:02d}.{cs:02d}"
 
+    highlight_color = s.get('highlight_color', (255, 215, 0))
+    previous_color = s.get('previous_color', (255, 255, 255))
+    upcoming_color = s.get('upcoming_color', (180, 180, 180))
+    outline_color = s.get('outline_color', (0, 0, 0))
+    outline_width = s.get('outline_width', 5)
+    font_size = s.get('font_size', 64)
+    font_name = s.get('font_name', 'Arial-Bold')
+
     hi_ass = _ass_color(highlight_color)
     prev_ass = _ass_color(previous_color)
     upc_ass = _ass_color(upcoming_color)
@@ -751,6 +737,7 @@ def generate_ass_subtitles(
         ass_font = "Arial"
 
     sub_y = band_y_position + 10
+    title_end_seconds = total_duration if total_duration else 35999.99
 
     lines = [
         "[Script Info]",
@@ -778,9 +765,41 @@ def generate_ass_subtitles(
             title_display = " ".join(title_words)
         title_y = 20
         lines.append(
-            f"Dialogue: 0,0:00:00.00,9:59:59.99,Title,,0,0,0,,"
+            f"Dialogue: 0,{_format_time(0)},{_format_time(title_end_seconds)},Title,,0,0,0,,"
             f"{{\\an8}}{{\\pos({video_width // 2},{title_y})}}{title_display}"
         )
+
+    if not word_timestamps:
+        content = "\n".join(lines)
+        if "Dialogue:" not in content:
+            return ""
+        return content
+
+    SUBTITLE_DELAY = 0.04
+    delayed_ts = [{'word': w['word'], 'start': w['start'] + SUBTITLE_DELAY, 'end': w['end'] + SUBTITLE_DELAY}
+                  for w in word_timestamps]
+
+    clean_script = _clean_script_for_subtitles(script_text) if script_text else script_text
+
+    if clean_script and clean_script.strip():
+        aligned_words = align_whisper_to_script(delayed_ts, clean_script)
+    else:
+        aligned_words = delayed_ts
+
+    aligned_words = [w for w in aligned_words if _clean_display(w['word'])]
+
+    if not aligned_words:
+        content = "\n".join(lines)
+        if "Dialogue:" not in content:
+            return ""
+        return content
+
+    phrases = _split_into_phrases(aligned_words, max_words=5)
+    if not phrases:
+        content = "\n".join(lines)
+        if "Dialogue:" not in content:
+            return ""
+        return content
 
     TAIL_PAD = 0.01
 

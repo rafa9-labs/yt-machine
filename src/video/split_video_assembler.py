@@ -71,7 +71,7 @@ def _get_scene_profile(scene_idx: int) -> dict:
 
 
 AVATAR_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "avatar_loop.mp4"
-MUSIC_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "music" / "news-yt.mp3"
+MUSIC_PATH = Path(__file__).parent.parent.parent / "assets" / "avatar" / "music" / "news_background_sound.mp3"
 
 
 def _find_ffmpeg() -> str:
@@ -858,29 +858,30 @@ def _assemble_pure_ffmpeg(
             return False
         print(f"  [PURE-FF] Stack OK ({Path(stacked_path).stat().st_size / (1024*1024):.1f}MB)")
 
-        # ── 5. Generate ASS subtitles ──
+        # ── 5. Generate ASS subtitles (always generate if we have timestamps or a title) ──
         ass_path = None
-        if word_timestamps and script_text:
+        if (word_timestamps and script_text) or hook_text:
             try:
                 ass_content = generate_ass_subtitles(
-                    script_text=script_text,
-                    word_timestamps=word_timestamps,
+                    script_text=script_text or '',
+                    word_timestamps=word_timestamps or [],
                     video_width=VIDEO_W,
                     video_height=VIDEO_H,
                     band_y_position=subtitle_y,
                     hook_text=hook_text,
+                    total_duration=total_dur,
                 )
                 if ass_content:
                     ass_path = tempfile.mktemp(suffix='_subs.ass')
                     temp_files.append(ass_path)
                     with open(ass_path, 'w', encoding='utf-8') as f:
                         f.write(ass_content)
-                    print(f"  [PURE-FF] ASS subtitles generated ({len(ass_content)} chars)")
+                    print(f"  [PURE-FF] ASS generated ({len(ass_content)} chars, hook={bool(hook_text)}, subs={bool(word_timestamps)})")
                 else:
-                    print(f"  [PURE-FF] WARNING: ASS subtitle generation returned empty content — subtitles will be MISSING")
+                    print(f"  [PURE-FF] WARNING: ASS generation returned empty content")
                     log.warning("assembly.ass_empty", reason="generate_ass_subtitles returned empty string")
             except Exception as e:
-                print(f"  [PURE-FF] ASS subtitle generation failed: {e}")
+                print(f"  [PURE-FF] ASS generation failed: {e}")
                 ass_path = None
 
         # ── 6. Build video filter chain (subtitles + fade) ──

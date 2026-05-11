@@ -568,21 +568,19 @@ Synthesize into a compelling 60-80 second professional news narration script wit
 
     def _enforce_greeting(self, script: dict) -> dict:
         """
-        GUARANTEE: Every script MUST have the trademark greeting.
-        Intro_hook is optional — short greetings don't need it.
+        Ensure greeting is present and fact-first.
+        Greeting must be a data-driven opener from the first story.
+        No hardcoded trademark — the LLM generates a fresh fact-first hook.
         """
-        TRADEMARK_GREETING = "Baby you are not ready for this!"
-        
         if not script.get('greeting', '').strip():
-            script['greeting'] = TRADEMARK_GREETING
-            print(f"  [GREETING] Set trademark greeting: \"{script['greeting']}\"")
-        elif script.get('greeting', '').strip() != TRADEMARK_GREETING:
-            print(f"  [GREETING] Overriding greeting \"{script['greeting']}\" → \"{TRADEMARK_GREETING}\"")
-            script['greeting'] = TRADEMARK_GREETING
-        
-        # intro_hook is optional — clear if present to avoid redundancy
-        if script.get('intro_hook', '').strip():
-            script['intro_hook'] = ''
+            stories = script.get('stories', [])
+            if stories and stories[0].get('part_1_narration'):
+                first_words = ' '.join(stories[0]['part_1_narration'].split()[:12])
+                script['greeting'] = first_words
+                print(f"  [GREETING] Fallback from story 1: \"{first_words[:60]}...\"")
+            else:
+                script['greeting'] = "Let us get into it."
+                print(f"  [GREETING] Minimal fallback greeting set")
         
         return script
     
@@ -1153,7 +1151,13 @@ Synthesize into a compelling 60-80 second professional news narration script wit
         """
         prompt_config = self.config["prompts"]["multi_news_synthesizer"]
         
-        greeting = "Baby you are not ready for this!"
+        # Build a fact-first opener from the first story's key data
+        greeting = ""
+        if news_analyses:
+            first = news_analyses[0]
+            key_facts = first.get('key_facts', [])
+            if key_facts and len(key_facts) >= 1:
+                greeting = key_facts[0]
         
         # Build news summaries block
         news_block = ""
@@ -1169,14 +1173,13 @@ NEWS STORY {i}:
         
         prompt = f"""Create a Mask script — EXACTLY {num_stories} stories, Infotainment Satire structure (The Cartoonish Truth).
 
-GREETING: The greeting field MUST be EXACTLY: "{greeting}"
-No other greeting is allowed. No intro_hook field. The greeting IS the opening line.
+GREETING: The greeting must be a FACT-FIRST OPENER — a single shocking data point or fact from Story 1 that leads directly into the narration. No catchphrases. No exclamations. Just the most arresting fact from the first story in 6-12 words. It must flow naturally into Story 1's part_1_narration with continuity — the greeting and part_1 should feel like one continuous thread. Example: "Iran just moved forty percent of its reserves into Shanghai."
 
 {news_block}
 
 CRITICAL RULES:
 - Output ONLY the JSON object. NO explanatory text before or after. NO markdown.
-- The greeting field must be EXACTLY: "{greeting}" — this is our trademark opener. No other greeting. No intro_hook field.
+- The greeting must be a fact-first opener — a single shocking data point or fact from Story 1 (6-12 words). No catchphrases, no exclamations, no "Baby you are not ready." Just the most arresting fact that leads directly into part_1_narration with natural continuity.
 - Each story: part_1 = THE HOOK (what happened), part_2 = THE MECHANISM (why it matters, the hidden chain), real_talk = THE TRUTH (visceral specific consequence), fallout = THE FALLOUT (one concrete forward consequence, what escalates next)
 - part_2_narration must NOT contain real_talk or fallout content. They are SEPARATE fields.
 - part_2 must answer SO WHAT — name the concrete second-order consequence. NO vague abstractions.
@@ -1184,6 +1187,9 @@ CRITICAL RULES:
 - fallout must name ONE concrete forward consequence — what happens NEXT, what escalates, the ripple effect.
 - Create ORIGINAL metaphors. These are BANNED — never use: 'erase the status quo like a bad drawing', 'old switcheroo', 'dance floor on fire', 'crashing the party', 'flip the script'
 - The ONLY approved cartoon exclamation is 'Ssssmokin''. Do NOT invent random exclamations.
+- ARCADE LEXICON — Never use these restricted words (they trigger content flags). Replace them with safe equivalents:
+  SMASH → ULTIMATE COMBO or LANDS A PUNCH | CRIPPLE → STALL or HIT WITH A DEBUFF | EMPIRE → DOMINION or NETWORK | ATTACK → MANEUVER or PUSH | WAR → CONFLICT or SHIFT | STRIKE → MOVE or PLAY | INVASION → PUSH or EXPANSION | DESTROY → RESET or OBLITERATE | CRUSH → COMBO BREAK | WEAPON → EQUIPMENT or SYSTEM
+  Use these safe words INSTEAD of the restricted ones. Never use the restricted column.
 - Each non-last story must have a "segue" field that bridges FROM this story's FALLOUT to the next story's HOOK. The segue's second clause MUST contain a PROPER NOUN or SPECIFIC ENTITY from the next story. BAD: 'And while THAT domino falls, ANOTHER one just got pushed...' (names nothing). GOOD: 'And while dams reshape the Horn of Africa — Tehran and Beijing just sealed a twenty-year pact.' Generic bridges like 'just wait!' or 'hold onto your lobsters!' are FORBIDDEN.
 - Manic, chaotic, fast-talking energy — but the facts are REAL and DENSE
 - The real_talk field is where The Mask drops the act — NO caps, NO exclamations, just flat visceral truth
