@@ -15,6 +15,9 @@ venv/
 env/
 ENV/
 
+# Model profile (machine-specific model selections)
+config/model_profile.json
+
 # Environment variables
 .env
 .env.*

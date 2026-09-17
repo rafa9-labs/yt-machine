@@ -14,6 +14,7 @@ Layout (Option A — 60/40 split):
 """
 
 import os
+import logging
 import math
 import subprocess
 import tempfile
@@ -22,6 +23,8 @@ import numpy as np
 from pathlib import Path
 from typing import List, Optional, Dict
 from PIL import Image
+
+log = logging.getLogger(__name__)
 
 try:
     from moviepy.editor import (

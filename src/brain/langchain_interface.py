@@ -47,7 +47,7 @@ class LangChainInterface:
     configured ChatOllama instances with fallback support.
     """
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, profile=None):
         if config_path is None:
             base_dir = Path(__file__).parent.parent.parent
             config_path = base_dir / "config" / "system_prompts.json"
@@ -56,11 +56,34 @@ class LangChainInterface:
         self.config = self._load_config()
 
         model_config = self.config["model_config"]
-        self.base_url = model_config["base_url"]
-        self.default_model = model_config["default_model"]
-        self.fallback_model = model_config.get("fallback_model", "llama3.2:latest")
+
+        # ── Profile-aware model routing ──
+        # When a model profile exists, every chain uses the single selected
+        # text model. There are no fallback models: silently loading a
+        # second model is exactly what causes unified-memory exhaustion.
+        self.profile = profile
+        if self.profile is None:
+            try:
+                from src.models.profile import ModelProfile
+                self.profile = ModelProfile.load_or_none()
+            except Exception:
+                self.profile = None
+
+        if self.profile is not None:
+            self.base_url = self.profile.text_endpoint
+            self.default_model = self.profile.text_model
+            self.fallback_model = None
+            self.task_models = {
+                task: self.default_model
+                for task in (model_config.get("task_models") or {})
+            }
+        else:
+            self.base_url = model_config["base_url"]
+            self.default_model = model_config["default_model"]
+            self.fallback_model = model_config.get("fallback_model", "llama3.2:latest")
+            self.task_models = model_config.get("task_models", {})
+
         self.num_ctx = model_config.get("num_ctx", 4096)
-        self.task_models = model_config.get("task_models", {})
         self._llm_cache = {}
 
     def _load_config(self) -> dict:
@@ -101,15 +124,36 @@ class LangChainInterface:
 
     def get_llm(self, model_name: str = None, temperature: float = 0.7,
                 max_tokens: int = 500):
-        from langchain_ollama import ChatOllama
+        """Build a chat model for the active provider.
 
+        Ollama profiles use ChatOllama. llama.cpp / OpenAI-compatible
+        profiles use ChatOpenAI pointed at /v1 — still one model only.
+        """
         if model_name is None:
             model_name = self.default_model
 
-        cache_key = f"{model_name}|{temperature}|{max_tokens}"
+        provider = self.profile.text_provider if self.profile else None
+        cache_key = f"{provider}|{model_name}|{temperature}|{max_tokens}"
 
-        if cache_key not in self._llm_cache:
-            self._llm_cache[cache_key] = ChatOllama(
+        if cache_key in self._llm_cache:
+            return self._llm_cache[cache_key]
+
+        if provider in ("llamacpp", "openai_compat"):
+            from langchain_openai import ChatOpenAI
+
+            llm = ChatOpenAI(
+                model=model_name,
+                base_url=f"{self.base_url}/v1",
+                api_key="local",
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=600,
+                max_retries=1,
+            )
+        else:
+            from langchain_ollama import ChatOllama
+
+            llm = ChatOllama(
                 model=model_name,
                 base_url=self.base_url,
                 temperature=temperature,
@@ -117,19 +161,30 @@ class LangChainInterface:
                 num_ctx=self.num_ctx,
             )
 
-        return self._llm_cache[cache_key]
+        self._llm_cache[cache_key] = llm
+        return llm
 
     def get_llm_with_fallback(self, primary_model: str = None,
                                fallback_models: list = None,
                                temperature: float = 0.7,
                                max_tokens: int = 500):
+        """Return the primary model.
+
+        With a profile, fallbacks are intentionally disabled — loading a
+        second model mid-pipeline on a 32 GiB unified-memory machine is a
+        memory hazard. Legacy mode (no profile) keeps the old chain.
+        """
         if primary_model is None:
             primary_model = self.default_model
+
+        primary = self.get_llm(primary_model, temperature, max_tokens)
+
+        if self.profile is not None:
+            return primary
 
         if fallback_models is None:
             fallback_models = [self.fallback_model, "llama3.2:latest"]
 
-        primary = self.get_llm(primary_model, temperature, max_tokens)
         fallbacks = [self.get_llm(m, temperature, max_tokens) for m in fallback_models]
 
         return primary.with_fallbacks(fallbacks)

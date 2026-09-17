@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import requests
@@ -10,17 +11,47 @@ import time
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
+log = logging.getLogger(__name__)
+
 class LLMInterface:
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, profile=None, provider=None):
         if config_path is None:
             base_dir = Path(__file__).parent.parent.parent
             config_path = base_dir / "config" / "system_prompts.json"
         
         self.config_path = Path(config_path)
         self.config = self._load_config()
-        self.base_url = self.config["model_config"]["base_url"]
-        self.default_model = self.config["model_config"]["default_model"]
-        self.fallback_model = self.config["model_config"].get("fallback_model", "llama3.2:latest")
+
+        # ── Model profile → provider adapter ──
+        # The profile is the source of truth for WHICH model to use and HOW
+        # to reach it (Ollama native vs OpenAI-compatible llama.cpp). The
+        # legacy system_prompts.json model_config is used only as a fallback
+        # for prompt tuning values (timeouts, num_ctx) when no profile exists.
+        self.profile = profile
+        self._provider = provider
+        self._explicit_provider = provider is not None
+
+        if profile is None:
+            try:
+                from src.models.profile import ModelProfile
+                profile = ModelProfile.load_or_none()
+                self.profile = profile
+            except Exception:
+                self.profile = None
+
+        if self._provider is None and self.profile is not None:
+            from src.models.providers import build_text_provider
+            self._provider = build_text_provider(self.profile)
+
+        if self._provider is not None and self.profile is not None:
+            self.base_url = self.profile.text_endpoint
+            self.default_model = self.profile.text_model
+            self.fallback_model = self.default_model  # no silent model swapping
+        else:
+            self.base_url = self.config["model_config"]["base_url"]
+            self.default_model = self.config["model_config"]["default_model"]
+            self.fallback_model = self.config["model_config"].get("fallback_model", "llama3.2:latest")
+
         self.timeout = self.config["model_config"]["timeout"]
         self.retry_attempts = self.config["model_config"]["retry_attempts"]
         self.num_ctx = self.config["model_config"].get("num_ctx", 4096)
@@ -31,11 +62,33 @@ class LLMInterface:
         self.call_timeouts = self.config["model_config"].get("call_timeouts", {})
         
         # Task-specific model routing
-        self.task_models = self.config["model_config"].get("task_models", {})
+        self.task_models = {}
+        if self.profile is None:
+            self.task_models = self.config["model_config"].get("task_models", {})
+        else:
+            # Unify every task onto the single selected text model. Task
+            # diversity used to mean task-specific models; with one local
+            # model resident, routing all tasks to it is the memory-safe
+            # choice.
+            for task in (self.config["model_config"].get("task_models") or {}):
+                self.task_models[task] = self.default_model
         
         # Circuit breaker for model fallback
         self._primary_failures = 0
         self._MAX_PRIMARY_FAILURES = 3
+
+    @property
+    def provider(self):
+        """The active provider adapter (None when running in legacy mode)."""
+        return self._provider
+
+    def set_provider(self, provider) -> None:
+        """Hot-swap the provider adapter (used by the runtime phase manager)."""
+        self._provider = provider
+        if provider is not None and self.profile is not None:
+            self.base_url = self.profile.text_endpoint
+            self.default_model = self.profile.text_model
+            self.fallback_model = self.default_model
     
     def _load_config(self) -> Dict[str, Any]:
         with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -143,8 +196,9 @@ class LLMInterface:
         except:
             return None
     
-    def _make_request(self, endpoint: str, payload: Dict[str, Any], attempt: int = 1,
-                      hard_timeout: float = None, idle_timeout: float = None) -> Optional[Dict[str, Any]]:
+    def _legacy_make_request(self, endpoint: str, payload: Dict[str, Any], attempt: int = 1,
+                             hard_timeout: float = None, idle_timeout: float = None) -> Optional[Dict[str, Any]]:
+        """Raw Ollama request — used only when no profile/provider is loaded."""
         _hard = hard_timeout if hard_timeout is not None else self.hard_call_timeout
         _idle = idle_timeout if idle_timeout is not None else self.idle_timeout
         try:
@@ -184,8 +238,8 @@ class LLMInterface:
             if attempt < self.retry_attempts:
                 print(f"Request failed (attempt {attempt}/{self.retry_attempts}): {e}")
                 time.sleep(2 ** attempt)
-                return self._make_request(endpoint, payload, attempt + 1,
-                                          hard_timeout=_hard, idle_timeout=_idle)
+                return self._legacy_make_request(endpoint, payload, attempt + 1,
+                                                 hard_timeout=_hard, idle_timeout=_idle)
             else:
                 print(f"Request failed after {self.retry_attempts} attempts: {e}")
                 return None
@@ -209,7 +263,35 @@ class LLMInterface:
         task_timeouts = self.call_timeouts.get(task_name, {}) if task_name else {}
         hard_timeout = task_timeouts.get("hard") if task_timeouts else None
         idle_timeout = task_timeouts.get("idle") if task_timeouts else None
-        
+
+        # ── Profile-driven path: single selected model, no hidden fallbacks ──
+        if self._provider is not None:
+            from src.models.providers import ProviderError
+            try:
+                text = self._provider.generate(
+                    prompt=prompt,
+                    model=self.default_model,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    num_ctx=self.num_ctx,
+                    hard_timeout=hard_timeout or self.hard_call_timeout,
+                    idle_timeout=idle_timeout or self.idle_timeout,
+                )
+            except ProviderError as exc:
+                print(f"  [LLM] Provider error: {exc}")
+                return None
+            except Exception as exc:
+                print(f"  [LLM] Unexpected provider failure: {exc}")
+                return None
+
+            if text:
+                self._primary_failures = 0
+                return text
+            print(f"  [LLM] Model {self.default_model} returned an empty response")
+            return None
+
+        # ── Legacy path (no profile): raw Ollama with explicit fallback ──
         payload = {
             "model": model,
             "prompt": prompt,
@@ -229,9 +311,9 @@ class LLMInterface:
             print(f"  [LLM] ⚡ Primary model circuit breaker active ({self._primary_failures} failures), using fallback: {self.fallback_model}")
             payload["model"] = self.fallback_model
         
-        result = self._make_request("/api/generate", payload,
-                                    hard_timeout=hard_timeout,
-                                    idle_timeout=idle_timeout)
+        result = self._legacy_make_request("/api/generate", payload,
+                                           hard_timeout=hard_timeout,
+                                           idle_timeout=idle_timeout)
         
         if result and result.get("response", "").strip():
             # Reset circuit breaker on success
@@ -258,9 +340,9 @@ class LLMInterface:
         for fallback in fallback_chain:
             print(f"  [LLM] Model {payload['model']} failed, trying fallback: {fallback}")
             payload["model"] = fallback
-            result = self._make_request("/api/generate", payload,
-                                         hard_timeout=hard_timeout,
-                                         idle_timeout=idle_timeout)
+            result = self._legacy_make_request("/api/generate", payload,
+                                               hard_timeout=hard_timeout,
+                                               idle_timeout=idle_timeout)
             
             if result and result.get("response", "").strip():
                 print(f"  [LLM] ✓ Fallback model ({fallback}) succeeded ({len(result['response'])} chars)")
@@ -271,7 +353,24 @@ class LLMInterface:
         return None
     
     def unload_model(self, model: str = None) -> bool:
+        """Release the text model.
+
+        With a profile, llama.cpp servers are owned by ModelRuntime and are
+        stopped as processes — there is no keep_alive protocol to call.
+        Ollama models are evicted with keep_alive=0 as before.
+        """
         model = model or self.default_model
+
+        if self._provider is not None:
+            from src.models.providers import OllamaTextProvider
+            if isinstance(self._provider, OllamaTextProvider):
+                ok = self._provider.unload(model)
+                if ok:
+                    print(f"  [LLM] Model '{model}' unloaded (keep_alive=0)")
+                return ok
+            # llama.cpp / OpenAI-compatible: process lifecycle handles this.
+            return True
+
         try:
             requests.post(
                 f"{self.base_url}/api/generate",
@@ -291,6 +390,23 @@ class LLMInterface:
         temperature: float = 0.7,
         max_tokens: int = 500
     ) -> Optional[str]:
+        if self._provider is not None:
+            from src.models.providers import ProviderError
+            try:
+                text = self._provider.chat(
+                    messages=messages,
+                    model=self.default_model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    num_ctx=self.num_ctx,
+                    hard_timeout=self.hard_call_timeout,
+                    idle_timeout=self.idle_timeout,
+                )
+                return text or None
+            except ProviderError as exc:
+                print(f"  [LLM] Provider error: {exc}")
+                return None
+
         if model is None:
             model = self.default_model
         
@@ -305,9 +421,9 @@ class LLMInterface:
             }
         }
         
-        result = self._make_request("/api/chat", payload,
-                                    hard_timeout=self.hard_call_timeout,
-                                    idle_timeout=self.idle_timeout)
+        result = self._legacy_make_request("/api/chat", payload,
+                                           hard_timeout=self.hard_call_timeout,
+                                           idle_timeout=self.idle_timeout)
         return result["response"] if result else None
     
     def process_news(self, article_text: str) -> Optional[Dict[str, Any]]:
@@ -2847,10 +2963,12 @@ Output ONLY JSON: {{"scene": "{scenes[j]['scene']}", "description": "..."}}"""
         return scenes
     
     def check_connection(self) -> bool:
+        if self._provider is not None:
+            return self._provider.health(timeout=5)
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=5)
             return response.status_code == 200
-        except:
+        except Exception:
             return False
     
     def warmup_model(self, model: str = None) -> bool:

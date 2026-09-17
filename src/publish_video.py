@@ -34,10 +34,20 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Load the repo-root .env explicitly: load_dotenv() alone depends on the cwd,
+# which differs between a manual run (repo root) and launchd (WorkingDirectory).
+load_dotenv(PROJECT_ROOT / ".env")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s')
 logger = logging.getLogger('publisher')
+
+# Privacy for the upload. Keep "private" until the first upload has been
+# verified end to end, then set YOUTUBE_PRIVACY=public (or "unlisted").
+YOUTUBE_PRIVACY = os.getenv("YOUTUBE_PRIVACY", "public").strip().lower()
 
 # ── Video Discovery ──────────────────────────────────────────────────────────
 
@@ -231,6 +241,10 @@ def publish_youtube(video_path: str, metadata: dict, dry_run: bool = False) -> d
     youtube = googleapiclient.discovery.build("youtube", "v3", credentials=creds)
     
     # Prepare upload
+    privacy = YOUTUBE_PRIVACY if YOUTUBE_PRIVACY in ("public", "unlisted", "private") else "public"
+    if privacy != "public":
+        logger.info(f"  ℹ️ Uploading with privacy={privacy} (YOUTUBE_PRIVACY)")
+
     body = {
         "snippet": {
             "title": metadata["title"][:100],
@@ -239,7 +253,7 @@ def publish_youtube(video_path: str, metadata: dict, dry_run: bool = False) -> d
             "categoryId": "25",  # News & Politics
         },
         "status": {
-            "privacyStatus": "public",
+            "privacyStatus": privacy,
             "selfDeclaredMadeForKids": False,
             "embeddable": True,
         },
@@ -267,25 +281,14 @@ def publish_youtube(video_path: str, metadata: dict, dry_run: bool = False) -> d
     
     video_id = response.get("id")
     video_url = f"https://youtube.com/shorts/{video_id}"
-    logger.info(f"  ✅ Published to YouTube: {video_url}")
-    
-    # Add to Shorts shelf (set as Short)
-    youtube.videos().update(
-        part="status",
-        body={
-            "id": video_id,
-            "status": {
-                "privacyStatus": "public",
-                "selfDeclaredMadeForKids": False,
-            }
-        }
-    ).execute()
-    
+    logger.info(f"  ✅ Published to YouTube ({privacy}): {video_url}")
+
     return {
         "platform": "youtube",
         "status": "published",
         "video_id": video_id,
         "url": video_url,
+        "privacy": privacy,
     }
 
 
@@ -294,8 +297,12 @@ def publish_youtube(video_path: str, metadata: dict, dry_run: bool = False) -> d
 def publish_tiktok(video_path: str, metadata: dict, dry_run: bool = False) -> dict:
     """
     Upload video to TikTok via Content Posting API.
-    
-    Requires: TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_ACCESS_TOKEN
+
+    Credentials: TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET and an access token.
+    Access tokens expire in ~24h, so the token is read from
+    credentials/tiktok_token.json when present and refreshed automatically
+    (see tools/tiktok_auth.py). A static TIKTOK_ACCESS_TOKEN in .env still
+    works for testing, but will fail on the second day.
     """
     logger.info(f"🎵 TikTok: Preparing upload for {video_path}")
     
@@ -306,11 +313,28 @@ def publish_tiktok(video_path: str, metadata: dict, dry_run: bool = False) -> di
     
     client_key = os.getenv("TIKTOK_CLIENT_KEY")
     client_secret = os.getenv("TIKTOK_CLIENT_SECRET")
-    access_token = os.getenv("TIKTOK_ACCESS_TOKEN")
-    
+
+    # Refresh the OAuth token first — a launchd run happens hours after the
+    # previous one, so the cached token is usually past its 24h lifetime.
+    access_token = ""
+    try:
+        from tools.tiktok_auth import ensure_fresh_token, get_access_token
+
+        refreshed = ensure_fresh_token()
+        if not refreshed.get("success"):
+            logger.warning(f"  ⚠️ TikTok token refresh skipped: {refreshed.get('error')}")
+        access_token = get_access_token()
+    except Exception as exc:
+        logger.warning(f"  ⚠️ TikTok token helper unavailable ({exc}); using .env token")
+        access_token = os.getenv("TIKTOK_ACCESS_TOKEN", "").strip()
+
+    if not access_token:
+        access_token = os.getenv("TIKTOK_ACCESS_TOKEN", "").strip()
+
     if not all([client_key, client_secret, access_token]):
         logger.error("  ❌ TikTok credentials not configured in .env")
         logger.error("  → Set TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_ACCESS_TOKEN")
+        logger.error("  → Or run once: python tools/tiktok_auth.py --authorize")
         return {"platform": "tiktok", "status": "error", "error": "Missing credentials"}
     
     try:
@@ -546,19 +570,75 @@ def publish_instagram(video_path: str, metadata: dict, dry_run: bool = False) ->
     return {"platform": "instagram", "status": "timeout", "container_id": container_id}
 
 
+# ── Publish ledger (idempotency) ─────────────────────────────────────────────
+
+LEDGER_PATH = Path("output/publish_logs/.published.json")
+
+# Errors that no amount of retrying will fix: missing credentials or files.
+# Everything else (network blips, 5xx, rate limits) is retried.
+_NON_RETRYABLE_MARKERS = (
+    "missing client secrets",
+    "missing credentials",
+    "credentials not configured",
+    "video not found",
+    "video too large",
+)
+
+
+def _video_fingerprint(video_path: str) -> str:
+    """Stable identity for a rendered video: path + size + mtime.
+
+    Not a content hash — hashing a 20 MB MP4 on every run is wasted I/O, and
+    any re-encode changes size/mtime anyway.
+    """
+    p = Path(video_path).resolve()
+    stat = p.stat()
+    return f"{p}|{stat.st_size}|{int(stat.st_mtime)}"
+
+
+def _load_ledger() -> dict:
+    if not LEDGER_PATH.exists():
+        return {}
+    try:
+        return json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_ledger(ledger: dict) -> None:
+    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LEDGER_PATH.write_text(json.dumps(ledger, indent=2), encoding="utf-8")
+
+
+def _is_retryable(result: dict) -> bool:
+    """False for configuration errors that will fail identically every time."""
+    error = str(result.get("error", "")).lower()
+    return not any(marker in error for marker in _NON_RETRYABLE_MARKERS)
+
+
 # ── Main Publisher ───────────────────────────────────────────────────────────
 
-def publish_video(video_path: str = None, platforms: list = None, dry_run: bool = False) -> list:
+def publish_video(
+    video_path: str = None,
+    platforms: list = None,
+    dry_run: bool = False,
+    force: bool = False,
+) -> list:
     """
     Publish a video to specified platforms.
-    
+
     Args:
         video_path: Path to video file. If None, finds latest in output/projects/
         platforms: List of platform names. If None, publishes to all configured.
         dry_run: If True, preview without actually publishing.
-    
+        force: Re-publish even if this exact video was already published.
+
     Returns:
         List of result dicts from each platform.
+
+    IDEMPOTENCY: a video that already succeeded on a platform is skipped, so a
+    duplicate scheduled run (or a manual run after the cron) cannot double-post
+    the same file. Use force=True to override.
     """
     all_platforms = ["youtube", "tiktok", "instagram"]
     
@@ -570,9 +650,16 @@ def publish_video(video_path: str = None, platforms: list = None, dry_run: bool 
         if not Path(video_path).exists():
             logger.error(f"Video not found: {video_path}")
             return []
+        # Derive project_dir from the video's parent. Without this the rich
+        # platform_metadata.json is never read for explicit paths and the
+        # upload falls back to the generic placeholder title.
+        video_file = Path(video_path).resolve()
+        project_dir = video_file.parent
+        manifest = project_dir / "manifest.json"
         video_info = {
-            "video_path": video_path,
-            "manifest_path": None,
+            "video_path": str(video_file),
+            "manifest_path": str(manifest) if manifest.exists() else None,
+            "project_dir": str(project_dir),
         }
     else:
         video_info = find_latest_video()
@@ -591,10 +678,28 @@ def publish_video(video_path: str = None, platforms: list = None, dry_run: bool 
         "tiktok": publish_tiktok,
         "instagram": publish_instagram,
     }
-    
+
+    ledger = _load_ledger()
+    fingerprint = _video_fingerprint(video_path)
+    already = ledger.get(fingerprint, {})
+
     for platform in platforms:
         if platform not in publishers:
             logger.warning(f"Unknown platform: {platform}")
+            continue
+
+        # Idempotency: a duplicate scheduled run must not double-post.
+        if not force and platform in already and not dry_run:
+            prev = already[platform]
+            logger.info(f"\n{'='*50}")
+            logger.info(f"⏭️  {platform.upper()} already published for this video — skipping")
+            logger.info(f"   {prev.get('url', '(no url recorded)')}")
+            results.append({
+                "platform": platform,
+                "status": "already_published",
+                "url": prev.get("url"),
+                "video_id": prev.get("video_id"),
+            })
             continue
 
         logger.info(f"\n{'='*50}")
@@ -607,6 +712,14 @@ def publish_video(video_path: str = None, platforms: list = None, dry_run: bool 
                 result = publishers[platform](video_path, metadata, dry_run)
                 if result.get("status") in ("published", "dry_run", "inbox"):
                     break
+
+                # Configuration errors cannot be fixed by waiting: a missing
+                # token or client-secret file will fail identically on every
+                # attempt, and the backoff only delays the rest of the run.
+                if not _is_retryable(result):
+                    logger.error(f"  ❌ {platform}: not retrying — {result.get('error')}")
+                    break
+
                 if attempt < 3:
                     wait = 30 * attempt
                     logger.warning(f"  ⚠️ {platform} attempt {attempt}/3 failed, retrying in {wait}s...")
@@ -623,13 +736,27 @@ def publish_video(video_path: str = None, platforms: list = None, dry_run: bool 
         if result is None:
             result = {"platform": platform, "status": "error", "error": "All 3 attempts failed"}
         results.append(result)
+
+        # Record only real successes — a failed platform must be retried on
+        # the next run, not silently marked as done.
+        if result.get("status") == "published" and not dry_run:
+            already[platform] = {
+                "url": result.get("url"),
+                "video_id": result.get("video_id") or result.get("publish_id"),
+                "published_at": datetime.now().isoformat(),
+            }
+            ledger[fingerprint] = already
+            _save_ledger(ledger)
     
     # Summary
     logger.info(f"\n{'='*50}")
     logger.info("📊 PUBLISH SUMMARY")
     logger.info(f"{'='*50}")
     for r in results:
-        status_icon = {"published": "✅", "dry_run": "🔍", "error": "❌", "timeout": "⏳", "inbox": "📥"}.get(r["status"], "?")
+        status_icon = {
+            "published": "✅", "dry_run": "🔍", "error": "❌",
+            "timeout": "⏳", "inbox": "📥", "already_published": "⏭️",
+        }.get(r["status"], "?")
         logger.info(f"  {status_icon} {r['platform']}: {r['status']}")
         if "url" in r:
             logger.info(f"     → {r['url']}")
@@ -659,6 +786,8 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, help="Path to specific video file")
     parser.add_argument("--platform", type=str, help="Platform(s): youtube,tiktok,instagram")
     parser.add_argument("--dry-run", action="store_true", help="Preview without publishing")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-publish even if this video already succeeded")
     
     args = parser.parse_args()
     
@@ -670,6 +799,7 @@ if __name__ == "__main__":
         video_path=args.video,
         platforms=platforms,
         dry_run=args.dry_run,
+        force=args.force,
     )
     
     # Exit with error if any platform failed

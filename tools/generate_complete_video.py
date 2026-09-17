@@ -265,8 +265,20 @@ def _run_with_heartbeat(func, label: str, heartbeat_interval: int = 8, timeout_s
 
     Prints a dot every `heartbeat_interval` seconds so the user knows the process
     isn't frozen. Also prints VRAM status every 3rd heartbeat.
-    Enforces `timeout_seconds` — if the function doesn't complete in time, returns
-    (None, True) and abandons the thread (it's daemon, so it won't block exit).
+
+    TIMEOUT BEHAVIOR — read this before relying on it:
+        If `func` exceeds `timeout_seconds`, this returns (None, True) and
+        ABANDONS the worker thread. Python cannot kill a thread, so the
+        request may still be in flight.
+
+        That is tolerable here only because the provider adapters in
+        src/models/providers.py enforce their own hard + idle deadlines and
+        close the HTTP response on breach. This heartbeat is the outer
+        safety net for a wedged call, not the primary timeout mechanism.
+
+        On Apple Silicon a wedged text generation holds the model's memory.
+        If you see repeated timeouts, prefer fixing/raising the provider
+        timeout over relying on this abandonment.
 
     Returns:
         (result, timed_out) — same as _run_with_timeout
@@ -341,8 +353,83 @@ from src.video.split_video_assembler import build_split_video
 from src.video.visual_qa import validate_image, adjust_prompt_for_retry
 from src.video.model_orchestrator import ModelOrchestrator
 
-# ── GPU MODEL ORCHESTRATOR ──
-orchestrator = ModelOrchestrator()
+# ── MODEL PROFILE + SEQUENTIAL RUNTIME ──────────────────────────────
+# The profile decides which models serve text/image. The runtime enforces
+# that only ONE heavy model is resident at any time, which is the whole
+# game on a 32 GiB unified-memory Mac.
+from src.models.profile import ModelProfile, ProfileError
+from src.models.runtime import ModelRuntime, PHASE_IDLE
+from src.models.providers import build_text_provider
+
+_profile = None
+try:
+    _profile = ModelProfile.load()
+    log.info("profile.loaded",
+             text=_profile.text.id if _profile.text else None,
+             image=_profile.image.id if _profile.image else None)
+except ProfileError as _profile_err:
+    log.warning("profile.missing", error=str(_profile_err))
+    if not DRY_RUN:
+        print("\n" + "=" * 62)
+        print("  NO MODEL PROFILE FOUND")
+        print("=" * 62)
+        print(f"  {_profile_err}")
+        print("\n  Run model setup first:")
+        print("    .venv/bin/python tools/model_setup.py")
+        print("=" * 62 + "\n")
+        sys.exit(2)
+
+# Rebind the LLM interfaces to the selected providers.
+if _profile is not None:
+    _provider = build_text_provider(_profile)
+    llm.set_provider(_provider)
+    if _USE_LANGCHAIN:
+        try:
+            _langchain = LangChainInterface(profile=_profile)
+        except Exception as _lc_err:
+            log.warning("langchain.rebind_failed", error=str(_lc_err))
+            _USE_LANGCHAIN = False
+    log.info("llm.provider_bound", provider=_profile.text_provider,
+             model=_profile.text_model, endpoint=_profile.text_endpoint)
+
+# ── SEQUENTIAL MODEL RUNTIME ──
+runtime = ModelRuntime(_profile) if _profile is not None else None
+
+# ── MODEL ORCHESTRATOR (runtime-aware) ──
+orchestrator = ModelOrchestrator(runtime=runtime)
+
+# ── PIPELINE LOCK — one heavy job at a time, across processes ──
+if runtime is not None and not DRY_RUN:
+    try:
+        runtime.acquire_lock(job_id=f"video_{int(time.time())}")
+        log.info("pipeline.lock.acquired")
+    except RuntimeError as _lock_err:
+        print(f"\nFATAL: {_lock_err}")
+        sys.exit(3)
+
+    # ── GUARANTEED CLEANUP ──
+    # The pipeline is a long script with many early exits. Rather than rely
+    # on every branch calling cleanup, we register run-anywhere teardown so
+    # a crash, Ctrl-C, or sys.exit() still stops the model server and
+    # releases the lock. Without this, a failed run can leave Qwen resident
+    # and the next run will OOM on a 32 GiB machine.
+    import atexit
+    import signal as _signal
+
+    atexit.register(runtime.finish)
+
+    def _handle_signal(signum, _frame):
+        log.warning("pipeline.signal", signal=signum)
+        try:
+            runtime.finish()
+        finally:
+            os._exit(128 + signum)
+
+    for _sig in (_signal.SIGINT, _signal.SIGTERM):
+        try:
+            _signal.signal(_sig, _handle_signal)
+        except Exception:
+            pass
 
 # ── DATABASE INIT ──
 try:
@@ -378,6 +465,17 @@ def _save_checkpoint(step_name, project_folder, data=None):
 NUM_STORIES = 2
 IMAGES_PER_STORY = 4
 NUM_IMAGES = NUM_STORIES * IMAGES_PER_STORY  # = 8
+
+# ── LLM STEP TIMEOUTS ──
+# These are wall-clock ceilings for one LLM step. Defaults are sized for a
+# ~27B Q4 model on Apple Silicon (~10-25 tok/s) rather than a small cloud or
+# 4B model. Raise via env if your model is slower; lower if it is faster.
+LLM_TIMEOUT_ANALYSIS = int(os.environ.get("LLM_TIMEOUT_ANALYSIS", "420"))
+LLM_TIMEOUT_SYNTHESIS = int(os.environ.get("LLM_TIMEOUT_SYNTHESIS", "1800"))
+LLM_TIMEOUT_FIXER = int(os.environ.get("LLM_TIMEOUT_FIXER", "600"))
+LLM_TIMEOUT_VISUALS = int(os.environ.get("LLM_TIMEOUT_VISUALS", "900"))
+LLM_TIMEOUT_CURATION = int(os.environ.get("LLM_TIMEOUT_CURATION", "900"))
+LLM_TIMEOUT_EVALUATION = int(os.environ.get("LLM_TIMEOUT_EVALUATION", "600"))
 
 
 # ── STEP BANNER ──
@@ -687,9 +785,19 @@ log.info("dedup.skipped", reason="vector_dedup_disabled_vram_contention")
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# OLLAMA HEALTH CHECK — verify Ollama is responsive before first LLM call
+# TEXT PROVIDER HEALTH CHECK — verify the selected model server responds
+# before any generation work begins. Fail fast; never silently swap models.
 # ══════════════════════════════════════════════════════════════════════════
-if not orchestrator.check_ollama_health():
+if runtime is not None:
+    # The runtime already started (or adopted) the text server in
+    # phase_llm(); verify it answers before committing to the pipeline.
+    if not llm.check_connection():
+        print(f"\nFATAL: Text model server is not responding at {llm.base_url}")
+        print(f"Selected model: {llm.default_model}")
+        runtime.finish()
+        sys.exit(1)
+    log.info("llm.health_ok", endpoint=llm.base_url, model=llm.default_model)
+elif not orchestrator.check_ollama_health():
     print("\nFATAL: Ollama is not running or unresponsive.")
     print("Start it with: ollama serve")
     print("Or if using a remote server, check OLLAMA_HOST in .env")
@@ -738,7 +846,7 @@ for i, article in enumerate(articles, 1):
                 from src.models.schemas import NewsAnalysis as NewsAnalysisModel
                 chain = _langchain.build_structured_chain(NewsAnalysisModel, "news_processor")
                 result, _lc_timed_out = _run_with_heartbeat(
-                    chain.invoke, f"analysis_{i}/{len(articles)}", 8, 120,
+                    chain.invoke, f"analysis_{i}/{len(articles)}", 8, LLM_TIMEOUT_ANALYSIS,
                     {"input_text": f"Analyze this news article:\n\n{article_text}"}
                 )
                 if not _lc_timed_out and result:
@@ -754,7 +862,7 @@ for i, article in enumerate(articles, 1):
         if not analysis:
             print(f"  [{i}/{len(articles)}]   Raw LLM fallback...", end="", flush=True)
             analysis, _proc_timed_out = _run_with_heartbeat(
-                llm.process_news, f"analysis_{i}/{len(articles)}", 8, 120,
+                llm.process_news, f"analysis_{i}/{len(articles)}", 8, LLM_TIMEOUT_ANALYSIS,
                 article_text
             )
             if _proc_timed_out:
@@ -843,7 +951,7 @@ try:
     script = None
     for _synth_attempt in range(3):
         script, _synth_timed_out = _run_with_heartbeat(
-            llm.synthesize_multi_news_script, "script_synthesis", 8, 600,
+            llm.synthesize_multi_news_script, "script_synthesis", 8, LLM_TIMEOUT_SYNTHESIS,
             news_analyses, NUM_STORIES
         )
         if script and not _synth_timed_out:
@@ -924,11 +1032,11 @@ _step_start = time.time()
 try:
     print("\n  [LLM] Fixing script (this may take 10-30s)...", flush=True)
     fixed_script, _fixer_timed_out = _run_with_heartbeat(
-        llm.fix_script, "script_fixer", 8, 120,
+        llm.fix_script, "script_fixer", 8, LLM_TIMEOUT_FIXER,
         script
     )
     if _fixer_timed_out:
-        log.error("script_fixer.timeout", timeout_s=120)
+        log.error("script_fixer.timeout", timeout_s=LLM_TIMEOUT_FIXER)
         fixed_script = None
 
     if fixed_script and isinstance(fixed_script, dict) and fixed_script.get('stories'):
@@ -1002,11 +1110,11 @@ _step_start = time.time()
 try:
     print("\n  [LLM] Generating visual prompts (this may take 15-60s)...", flush=True)
     dedicated_visuals, _visual_timed_out = _run_with_heartbeat(
-        llm.generate_visual_prompts, "visual_prompts", 8, 300,
+        llm.generate_visual_prompts, "visual_prompts", 8, LLM_TIMEOUT_VISUALS,
         script, articles, news_analyses
     )
     if _visual_timed_out:
-        log.error("visual_prompts.timeout", timeout_s=300)
+        log.error("visual_prompts.timeout", timeout_s=LLM_TIMEOUT_VISUALS)
         dedicated_visuals = None
 
     if dedicated_visuals and len(dedicated_visuals) >= NUM_IMAGES:
@@ -1071,11 +1179,11 @@ try:
     if not curated_text:
         print("  [LLM] Curation fallback...", end="", flush=True)
         curated_text, _curate_timed_out = _run_with_heartbeat(
-            llm.curate_script, "script_curation", 8, 300,
+            llm.curate_script, "script_curation", 8, LLM_TIMEOUT_CURATION,
             script
         )
         if _curate_timed_out:
-            log.error("curation.timeout", timeout_s=300)
+            log.error("curation.timeout", timeout_s=LLM_TIMEOUT_CURATION)
             curated_text = None
 
     if curated_text and curated_text != original_text:
@@ -1131,14 +1239,14 @@ try:
     from src.brain.script_evaluator import run_script_evaluation
 
     script, _eval_timed_out = _run_with_heartbeat(
-        run_script_evaluation, "script_evaluation", 8, 120,
+        run_script_evaluation, "script_evaluation", 8, LLM_TIMEOUT_EVALUATION,
         script=script,
         news_analyses=news_analyses,
         llm_interface=llm,
         similarity_threshold=0.90,
     )
     if _eval_timed_out:
-        log.error("script_evaluation.timeout", timeout_s=120)
+        log.error("script_evaluation.timeout", timeout_s=LLM_TIMEOUT_EVALUATION)
 
     full_script = script.get('full_text', full_script)
     script_file = project_folder / "script.txt"
@@ -1228,18 +1336,62 @@ print(f"  [TIMELINE] {len(segment_timeline)} segments, {script['word_count']} wo
 _advance_phase(PipelinePhase.TIMELINE_DONE)
 
 
-# ── GPU MODEL LIFECYCLE: Clean up LLM phase before loading FLUX ──
-log.info("orchestrator.transition", phase="image_gen", note="Force cleanup, then evict Ollama + preload FLUX")
-orchestrator.force_cleanup()
-if not orchestrator.verify_clean_state():
-    print("\nWARNING: GPU state not clean before image generation. Proceeding anyway...")
-    log.warning("orchestrator.dirty_state_before_image_gen")
+# ── MODEL LIFECYCLE: stop text model before any image generation ──
+# This is the critical memory barrier: Qwen must be fully stopped and its
+# memory returned before the image model is allowed to load.
+log.info("orchestrator.transition", phase="image_gen", note="stop text model, verify memory, enter image phase")
 
-flux_preloaded = orchestrator.phase_image_generation()
-if flux_preloaded:
-    log.info("orchestrator.flux_preloaded", note="FLUX pipeline loaded and pinned for batch generation")
+if SKIP_IMAGES:
+    log.info("orchestrator.skip_images", note="Images skipped — text model lifecycle untouched")
+    flux_preloaded = False
 else:
-    log.warning("orchestrator.flux_preload_failed", note="FLUX preload failed, will attempt per-image or fall back to cloud")
+    # Install the MLX-Gen provider when the profile selected one.
+    if runtime is not None and _profile is not None and _profile.image is not None:
+        from src.models.registry import PROVIDER_MLXGEN
+        if _profile.image.provider == PROVIDER_MLXGEN:
+            from src.video.mlxgen_provider import MLXGenImageProvider
+            mlx_provider = MLXGenImageProvider(
+                model_path=_profile.image.path or _profile.image.id,
+                executable=(_profile.image.metadata or {}).get(
+                    "executable", os.getenv("MLXGEN_BIN",
+                    "/Users/rafa9-labs/AI/FluxSprites/.venv/bin/mlxgen")
+                ),
+            )
+            if not mlx_provider.available():
+                print(f"\nFATAL: MLX-Gen image model unavailable — {mlx_provider.missing_reason()}")
+                runtime.finish()
+                sys.exit(4)
+
+            # Optional style LoRA. Only applied when it already exists on
+            # disk — we never auto-download multi-GB weights mid-run, and
+            # the configured default is a FLUX.1 adapter whose
+            # compatibility with FLUX.2 Klein is unverified.
+            _lora_path = os.environ.get("MLXGEN_LORA_PATH", "")
+            if _lora_path:
+                if Path(_lora_path).exists():
+                    mlx_provider.set_loras(
+                        [_lora_path],
+                        [float(os.environ.get("MLXGEN_LORA_SCALE", "0.8"))],
+                    )
+                    log.info("mlxgen.lora_configured", path=_lora_path)
+                else:
+                    log.warning("mlxgen.lora_missing", path=_lora_path)
+
+            from src.video.pixel_art_tool import set_mlxgen_provider
+            set_mlxgen_provider(mlx_provider)
+        else:
+            log.warning("orchestrator.image_provider_unsupported",
+                        provider=_profile.image.provider,
+                        note="Only MLX-Gen is supported on Apple Silicon; continuing with legacy path")
+
+    flux_preloaded = orchestrator.phase_image_generation()
+    if flux_preloaded:
+        log.info("orchestrator.image_phase_ready", note="Text model stopped, image phase active")
+    else:
+        log.error("orchestrator.image_phase_failed", note="Image phase could not start")
+        print("\nFATAL: Could not enter the image generation phase.")
+        runtime.finish() if runtime else None
+        sys.exit(5)
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 5: PIXEL ART GENERATION (3 per story = 6 total)
@@ -1276,6 +1428,12 @@ try:
 
         base_seed = project_id % (2 ** 32)
         log.info("pixel_art.batch_seed", seed=base_seed)
+
+        # When a managed local image provider is active, a generation failure
+        # is an error to fix — not a reason to emit placeholders.
+        from src.video.pixel_art_tool import get_mlxgen_provider
+        pixel_art_provider_managed = get_mlxgen_provider() is not None
+        _last_image_error = None
 
         all_visual_scenes = script.get('all_visual_scenes', [])
 
@@ -1348,6 +1506,14 @@ try:
                 log.debug("pixel_art.attempt", scene=scene_name, attempt=attempt + 1)
                 art_result = generate_pixel_art(current_prompt, script_text=story_text, seed=seed)
 
+                # Record the concrete failure so an abort message is useful.
+                if not art_result.get('success'):
+                    _last_image_error = (
+                        art_result.get('error')
+                        or art_result.get('stdout_tail', '')[-300:]
+                        or 'image provider returned no result'
+                    )
+
                 # Auto-detect failed generation (solid color, monochrome, etc.)
                 if art_result.get('success') and art_result.get('detected_failure'):
                     log.warning("pixel_art.failed_detection", scene=scene_name, reason=art_result['detected_failure'])
@@ -1419,6 +1585,26 @@ try:
                             current_prompt = adjusted
 
             if not accepted:
+                # FAIL CLOSED for managed local image models.
+                #
+                # WHY NOT PLACEHOLDERS?
+                #   Falling back to a solid-color placeholder silently
+                #   produces a video with no real imagery while reporting
+                #   success. On a local-model pipeline the usual cause is a
+                #   fixable configuration error (unsupported flag, stale
+                #   model path), and a placeholder hides it for an entire
+                #   ~25 minute run. The operator gets a broken video and no
+                #   error to act on. Aborting with the real reason is
+                #   strictly more useful.
+                if pixel_art_provider_managed:
+                    print(f"\nFATAL: Image generation failed for {scene_name}.")
+                    print(f"  Reason: {_last_image_error or 'unknown (see log)'}")
+                    print("  Local image generation is configured to fail closed rather than")
+                    print("  substitute placeholder images. Fix the cause and re-run.")
+                    log.error("pixel_art.abort", scene=scene_name, reason=_last_image_error)
+                    runtime.finish() if runtime else None
+                    sys.exit(6)
+
                 fallback_path = _get_adjacent_fallback(
                     scene_idx, generated_images, image_folder, scene_name, PILImage
                 )
@@ -1452,12 +1638,11 @@ log.info("step.complete", step="pixel_art", duration_s=round(_step_duration, 2),
 _advance_phase(PipelinePhase.IMAGES_DONE)
 _step_done("PIXEL ART")
 
-# ── GPU MODEL LIFECYCLE: Flush FLUX after batch generation, then transition to TTS ──
+# ── MODEL LIFECYCLE: close image phase, verify all image processes exited ──
 orchestrator.phase_image_generation_done()
-log.info("orchestrator.transition", phase="post_image", note="FLUX pipeline flushed, VRAM released")
-orchestrator.force_cleanup()
+log.info("orchestrator.transition", phase="post_image", note="Image processes reaped, memory reclaimed")
 orchestrator.phase_tts()
-log.info("orchestrator.transition", phase="tts", note="VRAM cleaned, Kokoro will load on demand")
+log.info("orchestrator.transition", phase="tts", note="Kokoro will load on demand")
 
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 7: VOICE GENERATION
@@ -1876,9 +2061,11 @@ try:
 except Exception:
     pass
 
-# ── GPU MODEL LIFECYCLE: Final cleanup ──
+# ── MODEL LIFECYCLE: Final cleanup ──
+# With a runtime this stops the text server, reaps stragglers, and releases
+# the pipeline lock. Idempotent — the atexit hook may also call it.
 orchestrator.phase_cleanup()
-log.info("orchestrator.cleanup", note="All GPU models evicted")
+log.info("orchestrator.cleanup", note="All models stopped, lock released")
 _step_done("PROJECT SUMMARY")
 
 total_elapsed = round(time.time() - _PIPELINE_START, 1)

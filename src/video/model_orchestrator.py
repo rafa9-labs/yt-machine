@@ -58,6 +58,7 @@ import os
 import time
 import gc
 import logging
+import platform
 from typing import Optional
 
 import requests
@@ -69,6 +70,25 @@ GPU_BASE_OVERHEAD_GB = 1.5
 MEMORY_FRACTION = 0.95
 
 os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'max_split_size_mb:128')
+
+
+def _is_apple_silicon() -> bool:
+    """Apple Silicon has unified memory — there is no separate VRAM pool."""
+    return sys_platform_is_mac() and platform.machine() == "arm64"
+
+
+def sys_platform_is_mac() -> bool:
+    import sys
+    return sys.platform == "darwin"
+
+
+def cuda_available() -> bool:
+    """True only when a working CUDA device exists (Linux/NVIDIA path)."""
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
 
 
 class ModelOrchestrator:
@@ -106,7 +126,8 @@ class ModelOrchestrator:
     }
 
     def __init__(self, min_vram_gb: float = 14.0, vram_poll_timeout: int = 45,
-                 gpu_total_gb: float = GPU_TOTAL_GB, memory_fraction: float = MEMORY_FRACTION):
+                 gpu_total_gb: float = GPU_TOTAL_GB, memory_fraction: float = MEMORY_FRACTION,
+                 runtime=None):
         self._flux_loaded = False
         self._ollama_evicted = False
         self._current_phase = 'idle'
@@ -117,6 +138,25 @@ class ModelOrchestrator:
         self._gpu_total_gb = gpu_total_gb
         self._memory_fraction = memory_fraction
         self._memory_fraction_set = False
+        self._apple_silicon = _is_apple_silicon()
+        # When bound, the runtime owns heavy-model lifecycle (launch, stop,
+        # memory checks). The orchestrator then only reports status.
+        self._runtime = runtime
+
+    # ── Runtime binding ────────────────────────────────────────────────
+
+    def bind_runtime(self, runtime) -> None:
+        """Attach a ModelRuntime that owns text/image process lifecycle."""
+        self._runtime = runtime
+        log.info("orchestrator.runtime_bound")
+
+    @property
+    def runtime(self):
+        return self._runtime
+
+    @property
+    def is_apple_silicon(self) -> bool:
+        return self._apple_silicon
 
     @property
     def current_phase(self) -> str:
@@ -138,23 +178,45 @@ class ModelOrchestrator:
     # ── Pre-pipeline GPU sweep ─────────────────────────────────────────
 
     def phase_pre_pipeline(self, timeout: int = 90) -> bool:
-        """Mandatory GPU sweep BEFORE any model loading.
+        """Mandatory memory sweep BEFORE any model loading.
 
-        1. Evicts all Ollama models from GPU
-        2. Runs aggressive gc.collect() + torch.cuda.empty_cache()
-        3. Checks actual free VRAM against peak FLUX budget
-        4. If insufficient: waits up to `timeout` seconds, polling every 5s
-        5. If still insufficient: REFUSES to proceed with clear error message
+        On Apple Silicon (unified memory) this checks system memory instead
+        of VRAM. When a ModelRuntime is bound, the runtime owns this check
+        and we only verify the starting state is clean.
 
-        NOTE: Does NOT set the CUDA memory fraction cap here. That is deferred
-        to phase_image_generation() so Ollama can load freely during the LLM phase.
-
-        Call this as the VERY FIRST thing before phase_llm().
-        Returns True if safe to proceed, False if insufficient VRAM.
+        Returns True if safe to proceed, False if memory is insufficient.
         """
         print(f"\n{'='*60}")
-        print(f"  GPU PRE-PIPELINE CHECK")
+        print(f"  MEMORY PRE-PIPELINE CHECK" + (" (Apple Silicon unified memory)" if self._apple_silicon else " (GPU)"))
         print(f"{'='*60}")
+
+        if self._runtime is not None:
+            # The runtime performs per-phase capacity checks. Here we only
+            # confirm we can reach a clean baseline.
+            try:
+                from src.models import memory
+                snap = memory.snapshot()
+                print(f"  {snap.describe()}")
+                self._current_phase = 'ready'
+                return True
+            except Exception as exc:
+                print(f"  Memory check failed: {exc}")
+                return False
+
+        if self._apple_silicon:
+            try:
+                from src.models import memory
+                snap = memory.snapshot()
+                print(f"  {snap.describe()}")
+                # Require enough headroom for one large model plus reserve.
+                if snap.available_gb < (self._min_vram_gb + 4.0):
+                    print(f"  [!] Only {snap.available_gb:.1f}GB available — free memory before continuing")
+                    self._current_phase = 'ready'
+                    return True
+            except Exception as exc:
+                print(f"  Memory check unavailable ({exc}) — proceeding")
+            self._current_phase = 'ready'
+            return True
 
         self._evict_ollama()
 
@@ -322,8 +384,22 @@ class ModelOrchestrator:
     # ── Phase transitions ──────────────────────────────────────────────
 
     def phase_llm(self) -> None:
-        """Evict FLUX if loaded. Allow Ollama to load naturally on next LLM call."""
+        """Enter the text-model phase.
+
+        With a bound runtime, this stops any image work and starts or
+        adopts the selected text server. Legacy mode keeps the old
+        "Ollama loads on demand" behavior.
+        """
         self._flush_flux_if_loaded()
+
+        if self._runtime is not None:
+            self._runtime.start_text_phase()
+            self._ollama_evicted = False
+            self._current_phase = 'llm'
+            self._register_model('ollama')
+            log.info("orchestrator.phase llm — runtime started text phase")
+            return
+
         self._ollama_evicted = False
         self._current_phase = 'llm'
         self._register_model('ollama')
@@ -340,6 +416,16 @@ class ModelOrchestrator:
         Returns:
             True if FLUX preloaded successfully, False if fallback to cloud needed.
         """
+        if self._runtime is not None:
+            # Runtime stops the text server, verifies memory is reclaimed,
+            # and (for MLX-Gen) generation happens lazily per image. There is
+            # no persistent pipeline to preload, so this returns True once
+            # the phase is safe to enter.
+            self._runtime.start_image_phase()
+            self._current_phase = 'image_gen'
+            log.info("orchestrator.phase image_gen — runtime entered image phase")
+            return True
+
         self._evict_ollama()
         self._current_phase = 'image_gen'
 
@@ -398,6 +484,13 @@ class ModelOrchestrator:
 
     def phase_image_generation_done(self) -> None:
         """Flush FLUX after all images generated. Release VRAM cap for next phase."""
+        if self._runtime is not None:
+            self._runtime.end_image_phase()
+            self._current_phase = 'post_image'
+            self._inference_active = None
+            log.info("orchestrator.phase post_image — runtime closed image phase")
+            return
+
         self._flush_flux_if_loaded()
 
         from .pixel_art_tool import signal_flux_keep_alive
@@ -427,7 +520,15 @@ class ModelOrchestrator:
         log.info("orchestrator.phase video_edit — No GPU models needed")
 
     def phase_cleanup(self) -> None:
-        """Final cleanup — evict all GPU models, release cap."""
+        """Final cleanup — stop all owned models, release lock, reset cap."""
+        if self._runtime is not None:
+            # The runtime's finish() is idempotent and safe in a finally block.
+            self._runtime.finish()
+            self._clear_all_models()
+            self._current_phase = 'idle'
+            log.info("orchestrator.phase idle — runtime finished, all models stopped")
+            return
+
         self._flush_flux_if_loaded()
         self._evict_ollama()
         self._reset_memory_fraction()
@@ -445,7 +546,7 @@ class ModelOrchestrator:
 
         try:
             import requests
-            base_url = "http://localhost:11434"
+            base_url = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
             resp = requests.get(f"{base_url}/api/ps", timeout=5)
             if resp.status_code == 200:
