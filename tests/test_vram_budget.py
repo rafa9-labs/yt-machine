@@ -522,28 +522,25 @@ class TestPrePipeline:
             self.orch.phase_pre_pipeline()
             mock_evict.assert_called_once()
 
-    def test_set_memory_fraction_can_be_reset(self):
-        """Memory fraction can be set, reset, and set again (lifecycle: image_gen only)."""
+    def test_set_memory_fraction_is_disabled_noop(self):
+        """The CUDA cap is intentionally disabled and must not set the flag.
+
+        ``set_per_process_memory_fraction`` segfaulted with bitsandbytes during
+        quantized weight loading, so the orchestrator relies on explicit VRAM
+        checks plus ``torch.cuda.empty_cache()`` instead. The method still
+        returns True so callers treat the phase as usable.
+        """
         orch = ModelOrchestrator()
-        # Initially not set
         assert orch._memory_fraction_set is False
-        # Set it
-        with patch('torch.cuda.set_per_process_memory_fraction'):
-            with patch('torch.cuda.is_available', return_value=True):
-                orch._set_memory_fraction()
-        assert orch._memory_fraction_set is True
-        # Reset it
-        with patch('torch.cuda.set_per_process_memory_fraction'):
-            with patch('torch.cuda.is_available', return_value=True):
-                with patch('torch.cuda.empty_cache'):
-                    with patch('gc.collect'):
-                        orch._reset_memory_fraction()
+        assert orch._set_memory_fraction() is True
+        # Disabled: the flag must stay False so status() reports "no cap".
         assert orch._memory_fraction_set is False
-        # Can set again
-        with patch('torch.cuda.set_per_process_memory_fraction'):
-            with patch('torch.cuda.is_available', return_value=True):
-                orch._set_memory_fraction()
-        assert orch._memory_fraction_set is True
+
+    def test_reset_memory_fraction_is_safe_when_unset(self):
+        """Resetting an unset cap is a no-op, not an error."""
+        orch = ModelOrchestrator()
+        orch._reset_memory_fraction()
+        assert orch._memory_fraction_set is False
 
     def test_pre_pipeline_status_includes_memory_cap(self):
         orch = ModelOrchestrator()
@@ -574,7 +571,9 @@ class TestMemoryFractionCap:
     def test_validate_vram_budget_includes_memory_cap(self):
         result = ModelOrchestrator.validate_vram_budget(total_gpu_gb=24.0)
         assert 'memory_fraction_cap_gb' in result
-        assert result['memory_fraction_cap_gb'] == pytest.approx(20.4)
+        # MEMORY_FRACTION is 0.95 (raised from 0.85 after the hard cap was
+        # disabled), so a 24GB device reports 22.8GB.
+        assert result['memory_fraction_cap_gb'] == pytest.approx(24.0 * 0.95)
 
     def test_peak_flux_within_memory_fraction_cap(self):
         est = ModelOrchestrator.VRAM_ESTIMATES
@@ -590,9 +589,27 @@ class TestMemoryFractionCap:
         cap = 24.0 * 0.85  # 20.4 GB
         assert peak_ollama <= cap, f"Ollama peak {peak_ollama}GB exceeds memory fraction cap {cap}GB"
 
-    def test_pytorch_env_var_set(self):
-        import os
-        assert os.environ.get('PYTORCH_CUDA_ALLOC_CONF') == 'max_split_size_mb:128'
+    def test_pytorch_env_var_configured_on_fresh_import(self):
+        """A fresh import of the orchestrator configures PYTORCH_CUDA_ALLOC_CONF.
+
+        Verified in a subprocess so the result does not depend on whatever the
+        test runner's own environment already had set.
+        """
+        import subprocess
+
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        code = (
+            "import os; "
+            "os.environ.pop('PYTORCH_CUDA_ALLOC_CONF', None); "
+            "import src.video.model_orchestrator; "
+            "print(os.environ.get('PYTORCH_CUDA_ALLOC_CONF', ''))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, cwd=repo_root, timeout=120,
+        )
+        assert result.returncode == 0, result.stderr[-500:]
+        assert result.stdout.strip() == 'max_split_size_mb:128'
 
 
 # ════════════════════════════════════════════════════════════════

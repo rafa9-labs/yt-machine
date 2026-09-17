@@ -341,11 +341,13 @@ class TestZoomProfiles:
 class TestResolutionConfig:
     """Test that resolution configuration is correct."""
 
-    def test_render_resolution_is_768x810(self):
+    def test_render_resolution_is_768x816(self):
         config_path = Path(__file__).parent.parent / "config" / "image_style.json"
         with open(config_path, 'r') as f:
             config = json.load(f)
-        assert config['generation_params']['render_resolution'] == [768, 810]
+        # 816 (not 810) keeps the height a multiple of 16 as diffusion models
+        # require; the render is later upscaled to the 1088x1152 target.
+        assert config['generation_params']['render_resolution'] == [768, 816]
 
     def test_inference_steps_is_40(self):
         config_path = Path(__file__).parent.parent / "config" / "image_style.json"
@@ -394,17 +396,21 @@ class TestDynamicClosing:
 
     def test_dynamic_closing_with_topic(self):
         closing = self.llm._build_dynamic_closing(last_topic="Taiwan semiconductor ban", last_fallout="")
-        assert "Taiwan semiconductor ban" in closing
+        assert "taiwan semiconductor ban" in closing.lower()
         assert "reshapes the board" in closing
         assert "good morning" in closing.lower()
 
     def test_dynamic_closing_with_fallout_no_topic(self):
         closing = self.llm._build_dynamic_closing(last_topic="", last_fallout="the sanctions will collapse the economy")
-        assert "dominoes keep falling" in closing or any(w in closing.lower() for w in ["economy", "sanctions"])
+        # With no topic the closing echoes a short keyword from the fallout.
+        assert any(w in closing.lower() for w in ["economy", "sanctions", "collapse"])
+        assert "good morning" in closing.lower()
 
     def test_dynamic_closing_no_context(self):
         closing = self.llm._build_dynamic_closing(last_topic="", last_fallout="")
-        assert "dominoes keep falling" in closing
+        # No topic and no fallout falls back to a neutral bridge.
+        assert "just like that" in closing.lower()
+        assert "goodnight" in closing.lower()
 
     def test_validate_closing_preserves_truman(self):
         text = "Some story content here. .... Stay behind the curtains, and if I don't see you — good morning, good afternoon, and goodnight."
