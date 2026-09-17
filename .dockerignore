@@ -1,4 +1,4 @@
-# Output and generated files
+# Output and generated files (mounted as volumes at runtime)
 output/
 *.mp4
 *.mp3
@@ -6,10 +6,12 @@ output/
 
 # Credentials (mounted as volume)
 credentials/
+.env
+.env.*
 
 # Python cache
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 .venv/
 venv/
@@ -27,18 +29,17 @@ env/
 *.TEMP_*
 *.log
 
-# Docker
-Dockerfile
-docker-compose.yml
-
-# Docs (not needed in container)
+# Docs
 README.md
 CHANGELOG.md
 AGENT_CONTEXT.md
+SETUP.md
 config/ollama_setup.md
 
 # Tests
 tests/
 
-# Tools (training scripts, not needed in production)
-tools/
+# Training / ML artifacts (large)
+training_data/
+.accelerate/
+*.safetensors.bak

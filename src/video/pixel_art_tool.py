@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import time
 from pathlib import Path
 from dotenv import load_dotenv
@@ -83,6 +84,24 @@ FAL_FALLBACK_MODELS = ["fal-ai/flux/schnell"]
 
 USE_LOCAL_FLUX = os.getenv("USE_LOCAL_FLUX", "auto").lower() in ("true", "1", "yes", "auto")
 LOCAL_FLUX_MODEL = os.getenv("LOCAL_FLUX_MODEL", "black-forest-labs/FLUX.1-dev")
+
+# ── MLX-Gen image provider (Apple Silicon, selected via model profile) ──
+# Set by the pipeline when the profile chooses an MLX-Gen image model.
+# When present it takes priority over the CUDA/Diffusers and fal.ai paths.
+_MLXGEN_PROVIDER = None
+
+
+def set_mlxgen_provider(provider) -> None:
+    """Install the MLX-Gen provider for subsequent generate_pixel_art calls."""
+    global _MLXGEN_PROVIDER
+    _MLXGEN_PROVIDER = provider
+    if provider is not None:
+        print(f"  [IMG] MLX-Gen provider active: {Path(provider.model_path).name}")
+
+
+def get_mlxgen_provider():
+    return _MLXGEN_PROVIDER
+
 LOCAL_FLUX_FALLBACK_MODEL = "black-forest-labs/FLUX.1-schnell"
 LOCAL_FLUX_QUANTIZE = os.getenv("LOCAL_FLUX_QUANTIZE", "gguf_q4ks").lower()
 LOCAL_FLUX_COMPILE = os.getenv("LOCAL_FLUX_COMPILE", "none").lower()
@@ -881,6 +900,205 @@ NEGATIVE_PROMPT = IMAGE_STYLE_CONFIG.get('negative_prompt',
 
 # Phase 5.1: Quality check keywords — prompt must contain enough specificity
 MIN_SPECIFICITY_WORDS = 4  # Below this, prompt is flagged as too generic
+
+# ── LOCAL (MLX-Gen) PROMPT BUDGET ──────────────────────────────────────
+# WHY THIS EXISTS — measured, not guessed:
+#
+# The FAL/fal.ai path appends three overlapping style blocks and a palette
+# (PIXEL_ART_ENFORCEMENT_PREFIX + CLIP_STYLE_TAG + STYLE_SUFFIX +
+# COLOR_PALETTE_PROMPT). That is ~200 words of style text for a ~55 word
+# scene description. fal-ai/flux/dev with the Retro-Pixel LoRA tolerates
+# it because the LoRA anchors the style.
+#
+# FLUX.2 Klein has NO LoRA loaded on the local path, and it is far more
+# literal about every token. Measured on this machine at identical
+# settings, same seed, 768x816:
+#
+#   153-word triple-suffix pipeline prompt → garbled pseudo-text, floating
+#      disconnected elements, flat diagram look
+#    28-word single-suffix prompt            → clean coherent scene
+#
+# The style repetition was not reinforcing anything; it was competing with
+# the scene description. Local generation therefore uses ONE style clause
+# and a hard word cap on the scene description.
+LOCAL_MAX_STYLE_WORDS = 14
+LOCAL_MAX_SCENE_WORDS = 55
+
+# Scene-first ordering matters. When the long style block leads, the model
+# weights the first tokens most heavily and the actual subject gets only
+# leftover attention — that is what produced "style present, scene absent"
+# images (maps and flags with no focal content). Leading with the scene and
+# ending with a short style tail keeps composition grounded.
+LOCAL_STYLE_TAIL = "chunky pixels, limited palette, isometric pixel art, flat colors"
+
+# Text rendering is the single biggest source of visible garbage. FLUX
+# cannot spell: any request for letters, numbers, counters, or labels
+# produces scrambled glyphs that read as broken UI. Scenes must describe
+# the visual intent instead ("a large red figure indicating the sum").
+# Deliberately SMALL and conservative.
+#
+# Bulk-rewriting description text produces ungrammatical prompts, and a
+# broken sentence harms the image more than an occasional stray word (a
+# run of overlapping rules produced "a large indicator gauge showing a
+# large red graphic markers"). These three patterns cover the recurring,
+# high-impact failures; the prompt generator itself is now constrained
+# (see config/system_prompts.json -> visual_prompt_generator) so bad text
+# requests are not written in the first place.
+#
+# Quoted literals are matched broadly on purpose: any quoted string in a
+# scene description is a request to render those exact characters, and
+# FLUX-class models cannot spell.
+_TEXT_REQUEST_PATTERNS = [
+    # '33,000,000,000' in red pixelated digits
+    (re.compile(
+        r"\bdisplays?\s+['\"][^'\"]{1,40}['\"]"
+        r"(?:\s+in\s+\w+\s+(?:pixelated\s+)?digits?)?",
+        re.IGNORECASE), "shows a large red indicator"),
+    # marked with red 'EMPTY' tags  /  marked with 'STOP' signs
+    (re.compile(
+        r"\b(?:marked|labeled|labelled)\s+(?:with\s+)?"
+        r"(?:red|white|black|glowing)?\s*['\"][^'\"]{1,40}['\"]"
+        r"(?:\s+(?:tags?|labels?|stickers?|signs?))?",
+        re.IGNORECASE), "marked with a red symbol"),
+    # pixelated text fragments
+    (re.compile(r"\b(?:pixelated\s+|readable\s+)?text fragments?\b", re.IGNORECASE),
+     "glowing data pulses"),
+    # digital counter
+    (re.compile(r"\b(?:digital\s+)?counter\b", re.IGNORECASE), "indicator gauge"),
+    # "the words 'OIL SPIKE'" / "the text 'STOP'" — drop the noun too.
+    (re.compile(
+        r"\bthe\s+(?:words?|text|phrase|label)\s+['\"][^'\"]{1,40}['\"]",
+        re.IGNORECASE), "a graphic display"),
+    # A color adjective directly before the literal: "red 'X'" -> "red marks".
+    (re.compile(
+        r"\b(red|white|black|glowing|green)\s+['\"][^'\"]{1,40}['\"](\s+marks?)?",
+        re.IGNORECASE), r"\1 marks"),
+    # Any remaining quoted literal, including a bare 'X' inside a sentence.
+    (re.compile(r"\s*['\"][^'\"]{1,40}['\"]"), " a bold symbol"),
+]
+
+
+def sanitize_text_requests(description: str) -> tuple:
+    """Rewrite requests to render text into renderable visual intent.
+
+    Returns (cleaned_description, [replaced_phrases]).
+
+    FLUX-class models cannot render legible text. When a scene asks for a
+    "counter displaying 33,000,000,000" or "glowing text fragments", the
+    model attempts glyphs and produces scrambled shapes that read as
+    corruption. Rewriting to a pure visual ("a large indicator gauge")
+    yields a clean image that still conveys the same information.
+    """
+    cleaned = description
+    replaced = []
+    for pattern, replacement in _TEXT_REQUEST_PATTERNS:
+        def _sub(match, _replacement=replacement):
+            replaced.append(match.group(0).strip())
+            # expand() resolves backreferences like r"\1 marks" against
+            # this match; returning the raw string would emit a literal \1.
+            return match.expand(_replacement)
+        cleaned = pattern.sub(_sub, cleaned)
+
+    # Collapse duplicated words the substitutions can create, e.g.
+    # "a large counter" -> "a large large indicator gauge".
+    cleaned = re.sub(r'\b(\w+)\s+\1\b', r'\1', cleaned, flags=re.IGNORECASE)
+    # Tidy the punctuation left behind by removals.
+    cleaned = re.sub(r'\s*,\s*,+', ', ', cleaned)
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip(" ,")
+    return cleaned, replaced
+
+
+def _trim_to_words(text: str, max_words: int) -> str:
+    """Trim to a word budget, preferring to cut at sentence boundaries."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text.strip()
+
+    # Prefer ending on a complete sentence inside the budget.
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    kept = []
+    count = 0
+    for sentence in sentences:
+        n = len(sentence.split())
+        # Only accept a sentence that fits. A single oversized sentence
+        # falls through to the hard trim below — accepting it because
+        # `kept` is empty would silently ignore the budget entirely.
+        if count + n > max_words:
+            break
+        kept.append(sentence)
+        count += n
+    if kept:
+        return " ".join(kept)
+
+    trimmed = " ".join(words[:max_words]).rstrip(",;:")
+    if not trimmed.endswith((".", "!", "?")):
+        trimmed += "."
+    return trimmed
+
+
+def _strip_lora_triggers(text: str) -> str:
+    """Remove fal.ai LoRA trigger words that are inert on the local path."""
+    triggers = {"Retro Pixel"}
+    default_trigger = IMAGE_STYLE_CONFIG.get("lora_defaults", {}).get("trigger_word")
+    if default_trigger:
+        triggers.add(default_trigger)
+    for cfg in (IMAGE_STYLE_CONFIG.get("lora_by_visual_type") or {}).values():
+        trigger = cfg.get("trigger")
+        if trigger:
+            triggers.add(trigger)
+
+    cleaned = text
+    for trigger in sorted(triggers, key=len, reverse=True):
+        # Match the trigger case-insensitively, plus any trailing separator
+        # (comma, colon, dash) and surrounding whitespace.
+        cleaned = re.sub(
+            rf'\b{re.escape(trigger)}\b\s*[,:\-]?\s*',
+            '',
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+    for cfg in (IMAGE_STYLE_CONFIG.get("lora_by_visual_type") or {}).values():
+        additional = cfg.get("additional_prompts")
+        if additional and additional in cleaned:
+            cleaned = cleaned.replace(additional, "")
+    cleaned = re.sub(r'\s*,\s*,+', ', ', cleaned)
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
+    return cleaned.strip(" ,:-")
+
+
+def build_local_generation_prompt(description: str, style_suffix: str = None,
+                                  pixel_prefix: str = None) -> str:
+    """Build ONE concise prompt for local (MLX-Gen) generation.
+
+    Contrast with the fal.ai builder, which layers multiple style blocks
+    because its LoRA needs reinforcement. Here we emit the scene first,
+    then a short style tail — nothing else.
+
+    VALIDATED against the failing pipeline prompt: same model, same seed,
+    same resolution and step count, this structure produced a clean
+    coherent scene where the 153-word triple-suffix prompt produced
+    garbled pseudo-text and disconnected fragments.
+    """
+    scene = (description or "").strip()
+    # Drop leading "16-bit isometric pixel art scene:" boilerplate — the
+    # style tail already establishes the medium.
+    scene = re.sub(
+        r'^\s*(?:\d+-bit\s+)?(?:isometric\s+)?pixel\s+art(?:\s+scene)?\s*[:\-]\s*',
+        '', scene, flags=re.IGNORECASE,
+    )
+    scene = _trim_to_words(scene, LOCAL_MAX_SCENE_WORDS)
+
+    style = (style_suffix or "").strip()
+    if not style:
+        # Fall back to a short tail derived from the configured suffix so
+        # the medium is still declared when no override is supplied.
+        style = LOCAL_STYLE_TAIL
+    else:
+        style = _trim_to_words(style, LOCAL_MAX_STYLE_WORDS)
+
+    if not scene:
+        return style
+    return f"{scene} {style}"
 
 # FAL.ai content-policy safe substitutions - MULTI-LAYER DEFENSE
 # Layer 1: Extreme terms (always applied via _sanitize_prompt_for_api)
@@ -1913,6 +2131,78 @@ def generate_pixel_art(
             _print_refinement_settings(i2i_params)
         else:
             print(f"  [IMG] Proceeding with text-to-image generation (no reference)")
+
+    # ========== PRIMARY (Apple Silicon): MLX-Gen subprocess ==========
+    # When the model profile selects an MLX-Gen checkpoint, it is the only
+    # image backend used. No cloud fallback — an explicit failure is safer
+    # than silently switching models.
+    if _MLXGEN_PROVIDER is not None and not reference_image_url:
+        render_size = IMAGE_STYLE_CONFIG.get("generation_params", {}).get("render_resolution", [512, 512])
+        width, height = int(render_size[0]), int(render_size[1])
+        if width * height > MAX_PIXELS:
+            width = height = 512
+
+        # ── Build a LEAN prompt for local generation ──
+        # `full_prompt` is the fal.ai-style prompt: three overlapping style
+        # blocks plus a palette. Measured at identical settings and seed,
+        # that prompt produces garbled pseudo-text and floating fragments
+        # with FLUX.2 Klein, while a single style clause over the same scene
+        # produces a clean image. See LOCAL_MAX_STYLE_WORDS for the numbers.
+        #
+        # We start from the ENRICHED description (which has narration
+        # grounding) rather than `full_prompt`, because the scene text is
+        # the part that actually drives composition.
+        scene_for_local, text_requests = sanitize_text_requests(enriched_prompt)
+        if text_requests:
+            print(f"  [IMG] Rewrote {len(text_requests)} text-render request(s) "
+                  f"for local model: {text_requests[0][:50]!r}")
+
+        # Strip fal.ai LoRA trigger words. They are only meaningful to the
+        # fal endpoint, which loads the matching adapter. On the local path
+        # they are inert tokens that pull the model toward sprite-sheet
+        # imagery it was never trained to produce here.
+        if not _MLXGEN_PROVIDER.lora_paths:
+            scene_for_local = _strip_lora_triggers(scene_for_local)
+
+        local_prompt = build_local_generation_prompt(scene_for_local)
+        print(f"  [IMG] Local prompt ({len(local_prompt.split())} words): {local_prompt[:100]}...")
+
+        mlx_result = _MLXGEN_PROVIDER.generate(
+            prompt=local_prompt,
+            output_path=output_path,
+            width=width,
+            height=height,
+            # FLUX.2 Klein is distilled: 8 steps produces clean, fully
+            # rendered pixel art at this resolution (validated by hand
+            # against 28 steps — no visible quality gain for the extra
+            # ~3x generation time on Apple Silicon).
+            steps=int(os.environ.get("MLXGEN_STEPS", "8")),
+            guidance=float(os.environ.get("MLXGEN_GUIDANCE", "3.5")),
+            seed=seed,
+            negative_prompt=NEGATIVE_PROMPT,
+        )
+
+        if mlx_result.get("success"):
+            _store_prompt_cache(local_prompt, str(output_path))
+            mlx_result["local_prompt"] = local_prompt
+            mlx_result["text_requests_rewritten"] = text_requests
+            mlx_result.update({
+                "specificity_score": specificity,
+                "visual_type": visual_type,
+                "pixel_art_model_used": use_pixel_art_model,
+                "geopolitical_validation": final_geo_validation,
+                "accuracy_score": final_geo_validation['accuracy_score'],
+                "countries_detected": list(final_geo_validation['country_analysis'].keys()),
+                "equipment_validated": not any(analysis['issues'] for analysis in final_geo_validation['equipment_analysis'].values()),
+                "target_app": os.environ.get("TARGET_APP", "Default"),
+                "i2i_used": False,
+                "i2i_params": None,
+                "reference_image_url": None,
+            })
+            return mlx_result
+
+        # Fail closed: report the failure, do not fall back to a cloud model.
+        return mlx_result
 
     # ========== PRIMARY: Local FLUX (GPU, free, no API key needed) ==========
     if USE_LOCAL_FLUX and not reference_image_url:

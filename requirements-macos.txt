@@ -1,0 +1,44 @@
+requests>=2.31.0
+feedparser==6.0.10
+# NOTE: edge-tts 6.1.9 hard-pins certifi==2023.07.22, which is unsatisfiable
+# alongside langchain-openai (needs certifi>=2024.6.2). The >= range lets the
+# resolver pick a release without the stale certifi pin.
+edge-tts>=6.1.9
+kokoro>=0.9.2
+soundfile>=0.13.0
+moviepy==1.0.3
+Pillow==10.2.0
+pexels-api==1.0.1
+python-dotenv==1.0.0
+openai>=1.14.0
+mcp>=1.2.0,<2
+opencv-python>=4.9.0
+numpy>=1.26.0,<2.0
+fal-client>=0.4.0
+spacy>=3.7.0
+trafilatura>=1.6.0
+
+# ── Publishing: YouTube (OAuth2 upload) ──
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.120.0
+
+pydantic>=2.5.0
+psycopg2-binary>=2.9.9
+pgvector>=0.2.4
+
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+
+langchain>=1.2.0
+langchain-ollama>=1.1.0
+langchain-openai>=1.6.0
+langchain-core>=1.2.0
+
+aiohttp>=3.9.0
+playwright>=1.40.0
+
+structlog>=24.1.0
+
+faster-whisper>=1.0.0
+sentence-transformers>=2.7.0
+scikit-learn>=1.4.0

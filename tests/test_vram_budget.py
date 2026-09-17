@@ -462,10 +462,17 @@ class TestEdgeCases:
 # ════════════════════════════════════════════════════════════════
 
 class TestPrePipeline:
-    """Test phase_pre_pipeline() — the hard guard that prevents OOM crashes."""
+    """Test phase_pre_pipeline() — the hard guard that prevents OOM crashes.
+
+    These cases exercise the CUDA path, so Apple Silicon detection is
+    forced off. The unified-memory path has its own tests in
+    test_model_registry.py (TestMemoryGuard / TestModelRuntime).
+    """
 
     def setup_method(self):
         self.orch = ModelOrchestrator()
+        # Force the CUDA branch regardless of host architecture.
+        self.orch._apple_silicon = False
 
     @patch('src.video.model_orchestrator.ModelOrchestrator._set_memory_fraction', return_value=True)
     @patch('src.video.model_orchestrator.ModelOrchestrator._evict_ollama')

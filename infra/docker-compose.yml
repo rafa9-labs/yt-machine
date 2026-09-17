@@ -1,40 +1,41 @@
-version: "3.8"
-
 # Geopolitical Sentinel — Full Automation Stack
-# Usage: docker-compose up -d
+# Usage (from repo root): docker compose -f infra/docker-compose.yml up -d
 #
 # Services:
-#   yt-machine  — Pipeline API (generate + publish videos)
-#   n8n         — Workflow automation (daily triggers, notifications)
+#   yt-machine  — Pipeline API (generate + publish videos)  → :8000
+#   postgres    — PostgreSQL 16 + pgvector                  → :5432
+#   n8n         — Workflow automation                       → :5678
 
 services:
   yt-machine:
-    build: .
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
     container_name: yt-machine
     restart: unless-stopped
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - ../.env
+    environment:
+      # Inside the compose network the database is the `postgres` service
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      # Reach the host-side LLM bridge (MLX/Ollama) from inside the container.
+      # Requires tools/start_llm.sh with MLX_BIND=0.0.0.0 (or host Ollama).
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      # Persist generated videos and credentials across restarts
-      - ./output:/app/output
-      - ./credentials:/app/credentials
-      # Cache Ollama models if using local LLM
-      - ~/.ollama:/root/.ollama
+      - ../output:/app/output
+      - ../credentials:/app/credentials
+      - ../assets:/app/assets:ro
     networks:
       - sentinel-net
-    # Optional: limit resources for long-running generation
     deploy:
       resources:
         limits:
           memory: 4G
-    # ── Phase 1: PostgreSQL dependency ──
-    # WHY depends_on? Docker Compose starts services in dependency order.
-    # Without this, yt-machine could start before PostgreSQL is ready,
-    # causing "connection refused" errors. The condition: service_healthy
-    # waits until PostgreSQL actually responds to connections, not just
-    # "the container started."
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,14 +47,10 @@ services:
     ports:
       - "5678:5678"
     environment:
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=admin
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-changeme}
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
       - WEBHOOK_URL=http://localhost:5678/
-      # Timezone for cron schedules
       - GENERIC_TIMEZONE=${TZ:-Europe/London}
     volumes:
       - n8n_data:/home/node/.n8n
@@ -62,67 +59,29 @@ services:
     depends_on:
       - yt-machine
 
-  # ── Phase 1: PostgreSQL Database ──
-  # WHY A SEPARATE CONTAINER? Your old system used JSON files for storage.
-  # PostgreSQL runs in its own container with its own volume — this means:
-  # 1. Data survives container rebuilds (pgdata volume is persistent)
-  # 2. Database can be scaled/backed up independently
-  # 3. Multiple yt-machine instances can share one database
-  # The pgvector extension adds vector similarity search (Phase 5).
   postgres:
     image: pgvector/pgvector:pg16
     container_name: yt-machine-db
     restart: unless-stopped
     ports:
       - "5432:5432"
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-yt_machine}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
-      - POSTGRES_DB=${POSTGRES_DB:-yt_machine}
+    env_file:
+      - ../.env
     volumes:
-      # pgdata volume persists the database across docker-compose down/up
       - pgdata:/var/lib/postgresql/data
     networks:
       - sentinel-net
-    # healthcheck: Docker uses this to know when PostgreSQL is ready.
-    # pg_isready returns 0 only when the database accepts connections.
-    # This prevents yt-machine from trying to connect too early.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yt_machine}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # Optional: Ollama for local LLM fallback
-  # Uncomment if you want Ollama running in Docker
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: ollama
-  #   restart: unless-stopped
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama_data:/root/.ollama
-  #   networks:
-  #     - sentinel-net
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-
 volumes:
   n8n_data:
     driver: local
-  # ── Phase 1: PostgreSQL persistent storage ──
-  # WHY A NAMED VOLUME? Docker named volumes survive `docker-compose down`.
-  # If you used a bind mount (./data:/var/lib/postgresql/data), you'd risk
-  # file permission issues. Named volumes are managed by Docker and have
-  # correct permissions automatically.
   pgdata:
     driver: local
-  # ollama_data:
-  #   driver: local
 
 networks:
   sentinel-net:

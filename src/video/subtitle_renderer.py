@@ -47,7 +47,9 @@ def _load_font(style: dict):
     sz = style['font_size']
     for name in [style.get('font_name', 'Arial-Bold'), 'C:/Windows/Fonts/arialbd.ttf',
                  'arialbd.ttf', 'C:/Windows/Fonts/arial.ttf', 'arial.ttf',
-                 '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf']:
+                 '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                 '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+                 '/System/Library/Fonts/Helvetica.ttc']:
         try:
             return ImageFont.truetype(name, sz)
         except (IOError, OSError):

@@ -92,6 +92,53 @@ _generation_status = {
     "current_job": None,
 }
 
+# Generation on this machine loads a 20 GB text model and a 17 GB image
+# model sequentially. The old 600s ceiling cut off healthy runs, so the
+# limit is now explicit and configurable.
+_PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT", "7200"))
+
+
+def _kill_process_group(process: subprocess.Popen) -> None:
+    """Kill a pipeline process group — including its model server children.
+
+    Guards against signalling our own group: if `getpgid` resolved to this
+    server's group, `killpg` would terminate the API process itself with no
+    error. Compare first, and fall back to signalling the single pid.
+    """
+    import signal as signal_module
+
+    def _send(sig: int) -> None:
+        try:
+            target_pgid = os.getpgid(process.pid)
+        except ProcessLookupError:
+            return
+        if target_pgid == os.getpgrp():
+            logger.warning(
+                f"Refusing killpg — group {target_pgid} is the server's own; "
+                "signalling the pipeline pid only"
+            )
+            try:
+                os.kill(process.pid, sig)
+            except ProcessLookupError:
+                pass
+            return
+        try:
+            os.killpg(target_pgid, sig)
+        except Exception:
+            pass
+
+    _send(signal_module.SIGTERM)
+    try:
+        process.wait(timeout=20)
+        return
+    except Exception:
+        pass
+    _send(signal_module.SIGKILL)
+    try:
+        process.wait(timeout=10)
+    except Exception:
+        pass
+
 
 # ── LIFESPAN (startup/shutdown) ───────────────────────────────────────────
 # WHY LIFESPAN? Flask had no concept of "startup code." You just put
@@ -193,6 +240,26 @@ class HealthResponse(BaseModel):
 # thread, yielding control back to the event loop. Other requests can still
 # be handled while the video generates.
 
+def _pipeline_lock_held() -> bool:
+    """True when another process (or a previous crashed run) holds the lock.
+
+    The lock is the authoritative guard: the API's in-memory status dict
+    only sees jobs started by this process, so a manual CLI run would
+    otherwise sail past it and both would load models at once.
+    """
+    try:
+        from src.models.runtime import PipelineLock
+        lock = PipelineLock()
+        if not lock.path.exists():
+            return False
+        owner = lock._read_owner() or {}
+        if lock._is_stale(owner):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def _send_to_telegram(job_id: str, stdout: str) -> dict:
     """
     Find the latest generated video and send it to Telegram.
@@ -245,26 +312,36 @@ def _send_to_telegram(job_id: str, stdout: str) -> dict:
 
 
 async def _run_generation(job_id: str):
-    """Run the unified video generation pipeline in a background thread.
-    
-    The v1/v2 pipelines have been merged into generate_complete_video.py.
-    All features (async scraper, LangChain, pgvector, Telegram) are built-in
-    with graceful fallbacks. No pipeline version toggle needed.
+    """Run the unified video generation pipeline as a managed subprocess.
+
+    The pipeline owns model lifecycle (starting/stopping the text server,
+    running MLX-Gen image generation) and takes the inter-process lock
+    itself. This wrapper only supervises the child process and reports
+    status — it never kills individual model servers.
     """
     global _generation_status
     
-    pipeline_script = "generate_complete_video.py"
+    pipeline_script = "tools/generate_complete_video.py"
     
     logger.info(f"🎬 Starting video generation: {job_id} (pipeline=unified)")
 
     def _blocking_run():
-        """This runs in a thread pool — blocking is OK here."""
-        return subprocess.run(
-            [sys.executable, pipeline_script],
-            capture_output=True,
+        """Run in its own process group so a timeout can kill the group."""
+        process = subprocess.Popen(
+            [sys.executable, pipeline_script, "--no-telegram"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=600,  # 10 minute timeout
             cwd=str(Path(__file__).parent.parent),
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=_PIPELINE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            _kill_process_group(process)
+            raise
+        return subprocess.CompletedProcess(
+            process.args, process.returncode, stdout, stderr
         )
 
     try:
@@ -286,6 +363,15 @@ async def _run_generation(job_id: str):
                     "stdout": result.stdout[-500:],
                     "telegram": telegram_result,
                 },
+                "current_job": None,
+            })
+        elif result.returncode == 3:
+            # Exit code 3 is the pipeline's "another job holds the lock".
+            logger.warning(f"🔒 Generation skipped — pipeline lock is held: {job_id}")
+            _generation_status.update({
+                "status": "idle",
+                "last_run": datetime.now().isoformat(),
+                "last_result": {"returncode": 3, "reason": "pipeline lock held"},
                 "current_job": None,
             })
         else:
@@ -389,12 +475,26 @@ async def generate(
     Try sending {"max_word_count": 99999} — you'll get a clear validation error.
     """
     # ── Guard: prevent concurrent generations ──
+    # Two guards, because they catch different things:
+    #   1. In-memory status — jobs started by THIS server process.
+    #   2. The inter-process lock file — manual CLI runs and scheduled jobs.
     if _generation_status["status"] == "running":
         raise HTTPException(
             status_code=409,
             detail={
                 "message": "Video generation already in progress",
                 "current_job": _generation_status["current_job"],
+            },
+        )
+
+    if _pipeline_lock_held():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Another pipeline run holds the model lock. Only one "
+                    "generation may run at a time on this machine."
+                ),
             },
         )
 

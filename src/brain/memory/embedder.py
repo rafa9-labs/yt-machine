@@ -61,7 +61,7 @@ EMBEDDING_DIMENSION = 768
 
 class Embedder:
     """
-    Converts text into vector embeddings using Ollama's local API.
+    Converts text into vector embeddings using the selected embedding provider.
 
     USAGE:
         embedder = Embedder()
@@ -70,11 +70,36 @@ class Embedder:
 
         # Batch embedding (more efficient for multiple texts):
         vectors = embedder.embed_batch(["topic 1", "topic 2", "topic 3"])
+
+    PROVIDER SELECTION:
+        When a model profile defines an embedding role, that provider is
+        used. Otherwise the constructor arguments (Ollama defaults) apply,
+        preserving backward compatibility with existing tests.
     """
 
-    def __init__(self, model: str = DEFAULT_MODEL, base_url: str = OLLAMA_BASE_URL):
-        self.model = model
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, model: str = DEFAULT_MODEL, base_url: str = OLLAMA_BASE_URL,
+                 provider=None, profile=None):
+        self._provider = provider
+
+        if self._provider is None:
+            try:
+                from src.models.profile import ModelProfile
+                _profile = profile or ModelProfile.load_or_none()
+                if _profile is not None:
+                    from src.models.providers import build_embedding_provider
+                    candidate = build_embedding_provider(_profile)
+                    if getattr(candidate, "available", True):
+                        self._provider = candidate
+            except Exception:
+                self._provider = None
+
+        if self._provider is not None:
+            self.model = getattr(self._provider, "model", model)
+            self.base_url = getattr(self._provider, "base_url", base_url.rstrip("/"))
+        else:
+            self.model = model
+            self.base_url = base_url.rstrip("/")
+
         self._dimension: Optional[int] = None
 
     # ─────────────────────────────────────────────────────────────────
@@ -105,8 +130,18 @@ class Embedder:
         if not text or not text.strip():
             raise ValueError("Cannot embed empty text")
 
-        # ── CALL OLLAMA API ──
-        # Ollama exposes a REST API at localhost:11434
+        # ── PROFILE PROVIDER PATH ──
+        if self._provider is not None:
+            vector = self._provider.embed(text)
+            self._dimension = len(vector)
+            if len(vector) != EMBEDDING_DIMENSION:
+                logger.warning(
+                    f"Embedding dimension mismatch: expected {EMBEDDING_DIMENSION}, "
+                    f"got {len(vector)}. Model may have changed."
+                )
+            return vector
+
+        # ── LEGACY OLLAMA API PATH ──
         # The /api/embeddings endpoint takes a model name and prompt text
         response = requests.post(
             f"{self.base_url}/api/embeddings",
@@ -171,11 +206,14 @@ class Embedder:
 
     def check_health(self) -> bool:
         """
-        Check if Ollama is running and the embedding model is available.
+        Check if the embedding backend is running and the model is available.
 
         Call this at startup to fail fast with a clear error message
         instead of cryptic errors during embedding.
         """
+        if self._provider is not None:
+            return self._provider.health()
+
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if response.status_code != 200:

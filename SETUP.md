@@ -2,6 +2,17 @@
 
 ## Prerequisites
 
+This pipeline runs on two kinds of hosts:
+
+**macOS (Apple Silicon) — current supported setup**
+
+- macOS 14+ on an M-series Mac with 32GB+ unified memory
+- Homebrew (`ffmpeg`, `llama-server`, `mlx_lm.server`, `ollama`)
+- ~60GB free disk space (models + output)
+- Docker optional (PostgreSQL only; the pipeline degrades gracefully without it)
+
+**Windows 11 + WSL2 (legacy)**
+
 - Windows 11 with WSL2 (Ubuntu 22.04+)
 - NVIDIA GPU with 12GB+ VRAM (RTX 3090/4090 recommended)
 - 32GB+ system RAM
@@ -9,6 +20,21 @@
 - ~50GB free disk space (models + output)
 
 ## 1. Clone and Install
+
+### macOS
+
+```bash
+git clone https://github.com/rafa9-labs/yt-machine.git
+cd yt-machine
+
+# Install dependencies into the uv-managed virtualenv
+uv pip install --python .venv/bin/python -r requirements-macos.txt
+
+# Install Playwright browser (for async scraping)
+.venv/bin/playwright install chromium
+```
+
+### Windows / WSL2
 
 ```bash
 # In WSL
@@ -70,9 +96,23 @@ nano .env
 |---|---|
 | `YOUTUBE_CLIENT_SECRETS_FILE` | Path to OAuth2 credentials JSON (see YouTube setup below) |
 | `YOUTUBE_CREDENTIALS_FILE` | Path where OAuth token will be cached (auto-created) |
+| `YOUTUBE_PRIVACY` | Upload privacy: `private` \| `unlisted` \| `public` (default `public`) |
 | `TIKTOK_CLIENT_KEY` | TikTok Developer app client key |
 | `TIKTOK_CLIENT_SECRET` | TikTok Developer app client secret |
-| `TIKTOK_ACCESS_TOKEN` | TikTok content posting access token |
+| `TIKTOK_ACCESS_TOKEN` | TikTok access token (expires in ~24h; prefer the token file) |
+| `TIKTOK_REFRESH_TOKEN` | Refresh token for unattended daily posting |
+| `TIKTOK_REDIRECT_URI` | Redirect URI registered in the TikTok app (for `--authorize`) |
+| `TIKTOK_TOKEN_FILE` | Token cache path (default `credentials/tiktok_token.json`) |
+
+### macOS automation variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `RUN_TIME` | Daily launchd run time | `06:00` |
+| `WAKE_TIME` | Daily pmset wake time | `05:50:00` |
+| `LAUNCHD_LABEL` | launchd agent label | `com.rafa9labs.ytmachine` |
+| `IDLE_SLEEP_MIN` | AC idle-sleep minutes for `--configure-power` | `20` |
+| `PUBLISH_PLATFORMS` | Platforms the daily wrapper publishes to | `youtube,tiktok` |
 
 ### Notification variables
 
@@ -212,7 +252,147 @@ python src/publish_video.py --dry-run
 
 Output is saved to `output/projects/<project_id>/` with the final MP4 video, manifest, and metadata.
 
-## 9. Automation (Windows Task Scheduler)
+## 9. Automation — macOS (launchd + pmset)
+
+The pipeline runs automatically every day: the Mac wakes from sleep, generates
+the video, publishes to YouTube + TikTok, and sleeps again after the idle timer.
+
+**End-to-end timeline**
+
+```
+05:50  pmset wakes the Mac
+06:00  launchd fires tools/run_daily.sh
+06:00  caffeinate holds the Mac awake for the run
+06:00  pipeline generates the video (~80 min on an M1 Pro)
+07:20  publish to YouTube (+ TikTok once approved)
+07:25  Telegram notification with the published URLs
+07:45  run ends, caffeinate releases, idle timer counts down
+08:05  Mac sleeps
+```
+
+### Step 1 — Install the dependencies
+
+YouTube publishing needs two packages that are not in the base requirements:
+
+```bash
+uv pip install --python .venv/bin/python google-auth-oauthlib google-api-python-client
+```
+
+### Step 2 — One-time YouTube consent
+
+`--dry-run` does **not** trigger OAuth (it returns before the credential flow),
+so use the dedicated helper while you are sitting at the Mac:
+
+```bash
+.venv/bin/python tools/youtube_auth.py
+```
+
+This opens a browser, asks for the upload permission, and caches the token at
+`credentials/youtube_token.json`. The token refreshes itself from then on, so
+unattended runs work. Verify at any time with:
+
+```bash
+.venv/bin/python tools/youtube_auth.py --check
+```
+
+### Step 3 — TikTok (optional, needs app approval)
+
+TikTok access tokens expire in ~24 hours, which breaks a daily unattended job
+unless the token is refreshed. The publisher checks
+`credentials/tiktok_token.json` first and refreshes automatically before each
+upload. Authorize once (requires an approved Content Posting API app):
+
+```bash
+.venv/bin/python tools/tiktok_auth.py --authorize
+# approve in the browser, copy the `code` query param, then:
+.venv/bin/python tools/tiktok_auth.py --authorize --code <CODE>
+.venv/bin/python tools/tiktok_auth.py --check
+```
+
+Until the app is approved, drop `tiktok` from `PUBLISH_PLATFORMS` in
+`tools/run_daily.sh` (or set `PUBLISH_PLATFORMS=youtube` in the environment).
+
+### Step 4 — Install the launchd agent
+
+```bash
+python src/automate.py --install-schedule 06:00
+```
+
+This writes `~/Library/LaunchAgents/com.rafa9labs.ytmachine.plist` and loads it.
+`StartCalendarInterval` (not `StartInterval`) is what makes launchd fire the job
+at wall-clock time rather than counting from load.
+
+### Step 5 — Schedule the wake (needs sudo)
+
+```bash
+sudo pmset repeat wakeorpoweron MTWRFSU 05:50:00
+```
+
+Or let the script print the exact command for you:
+
+```bash
+python src/automate.py --install-wake          # prints the sudo line
+```
+
+`pmset` schedules live in the power controller and require root, so this one
+step must be run manually in a terminal.
+
+### Step 6 — Configure the sleep-after-run cycle
+
+This machine ships with AC idle sleep set to **never** (`sleep 0`), so it would
+stay awake all day after the wake. Set a short AC idle timer:
+
+```bash
+python src/automate.py --configure-power 20    # prints the sudo lines
+# or run directly:
+sudo pmset -c sleep 20
+sudo pmset -c displaysleep 10
+```
+
+Battery settings are deliberately left untouched.
+
+### Verifying the setup
+
+```bash
+python src/automate.py --show-schedule   # launchd state + pmset wake schedule
+python src/automate.py --show-power      # sleep timers
+
+# Fire the job immediately without waiting for 06:00:
+launchctl kickstart gui/$(id -u)/com.rafa9labs.ytmachine
+tail -f output/logs/launchd.out.log
+```
+
+A dry run of publishing (no network):
+
+```bash
+.venv/bin/python src/publish_video.py --platform youtube,tiktok --dry-run
+```
+
+### Removing the automation
+
+```bash
+python src/automate.py --remove-schedule
+sudo pmset repeat cancel
+```
+
+### Troubleshooting (macOS)
+
+| Problem | Cause | Fix |
+|---|---|---|
+| Job never fires | Agent not loaded | `python src/automate.py --show-schedule` then re-install |
+| Job starts but exits 0 immediately | Pipeline lock held | Another run is active; check `/tmp/yt-machine-pipeline.lock` |
+| `ffmpeg: command not found` | launchd has a minimal PATH | `run_daily.sh` exports Homebrew's bin; verify it was not edited |
+| YouTube 401 / no token | Consent never completed | `.venv/bin/python tools/youtube_auth.py` |
+| YouTube upload is private | `YOUTUBE_PRIVACY=private` | Set `YOUTUBE_PRIVACY=public` in `.env` |
+| TikTok 401 after day 1 | Static token expired | Run `tools/tiktok_auth.py --authorize` (daily refresh is automatic) |
+| TikTok rejects the post | Unaudited app | Unaudited apps can only post `SELF_ONLY`; complete app review |
+| Mac does not wake | pmset schedule missing | `sudo pmset repeat wakeorpoweron MTWRFSU 05:50:00` |
+| Mac stays awake all day | AC idle sleep is 0 | `python src/automate.py --configure-power 20` |
+
+## 10. Automation (legacy: Windows Task Scheduler)
+
+> This section documents the original Windows/WSL2 deployment. The macOS path
+> above is the supported setup for this machine.
 
 The pipeline can run automatically every day, even when the PC is asleep.
 
@@ -259,7 +439,7 @@ In Windows Power Settings, configure the PC to sleep after 30 minutes of idle. T
 | YouTube OAuth fails unattended | Run `--dry-run` once manually to cache the token |
 | TikTok returns 401 | Token expired; regenerate from TikTok Developer Portal |
 
-## 10. Troubleshooting Common Errors
+## 11. Troubleshooting Common Errors
 
 | Error | Cause | Fix |
 |---|---|---|
@@ -274,7 +454,7 @@ In Windows Power Settings, configure the PC to sleep after 30 minutes of idle. T
 | `nomic-embed-text not found` | Embedding model not pulled | `ollama pull nomic-embed-text` |
 | `nvidia-cudnn-cu12 not installed` | cuDNN missing | `pip install nvidia-cudnn-cu12` (optional, speeds up faster-whisper) |
 
-## 11. Architecture Overview
+## 12. Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -306,11 +486,11 @@ In Windows Power Settings, configure the PC to sleep after 30 minutes of idle. T
 ┌─────────────────────────────────────────────────────────────┐
 │                     PUBLISHING                               │
 │  YouTube Shorts (OAuth2) + TikTok (Content Posting API)     │
-│  Telegram notification → Windows Task Scheduler daily at 08:00│
+│  Telegram notification → launchd agent daily + pmset wake    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 12. Key Configuration Files
+## 13. Key Configuration Files
 
 | File | Purpose |
 |---|---|
