@@ -2,12 +2,12 @@
 Split-Screen Video Assembler — Scene images top 60% + avatar bottom 40%.
 Composites a 1080x1920 vertical video for TikTok/Reels/Shorts.
 
-PERFORMANCE: Scene zoom/pan effects rendered via ffmpeg-native zoompan filter.
+PERFORMANCE: Pixel-art scenes are rendered as static, grid-preserving clips.
 Moviepy handles only lightweight compositing (layering, subtitles, avatar).
 Expected render time: ~1-2 min (down from 15-20 min with frame-by-frame Python).
 
 Layout (Option A — 60/40 split):
-  - SCENE AREA (1080x1152): Full scene images with ffmpeg zoom/pan (top 60%)
+  - SCENE AREA (1080x1152): Full scene images (top 60%)
   - TITLE OVERLAY: Hook text at the top with fade-in
   - SUBTITLES: Karaoke-style outlined text near the bottom of the scene area
   - AVATAR AREA (1080x768): Looping avatar animation (bottom 40%)
@@ -59,12 +59,19 @@ VIDEO_H = 1920
 TOP_H = 1152
 BOTTOM_H = 768
 FPS = 30
+# RGB lossless H.264 is intentional here. yuv420p chroma subsampling creates
+# new colours at every pixel edge and makes the scene layer visibly soft.
+PIXEL_VIDEO_CODEC = 'libx264rgb'
+PIXEL_VIDEO_PIXEL_FORMAT = 'rgb24'
+PIXEL_VIDEO_CRF = '0'
 
 SCENE_ZOOM_PROFILES = {
-    0: {'name': 'HOOK',      'zoom_start': 1.08, 'zoom_end': 1.02, 'pan_x': 0.0},
-    1: {'name': 'MECHANISM', 'zoom_start': 1.06, 'zoom_end': 1.01, 'pan_x': 0.0},
-    2: {'name': 'TRUTH',     'zoom_start': 1.01, 'zoom_end': 1.07, 'pan_x': 0.0},
-    3: {'name': 'FALLOUT',   'zoom_start': 1.05, 'zoom_end': 1.01, 'pan_x': 0.0},
+    # Retained as scene labels for callers and logs. Continuous camera motion
+    # is disabled for the Qwen pixel-art profile so the logical grid survives.
+    0: {'name': 'HOOK',      'zoom_start': 1.0, 'zoom_end': 1.0, 'pan_x': 0.0},
+    1: {'name': 'MECHANISM', 'zoom_start': 1.0, 'zoom_end': 1.0, 'pan_x': 0.0},
+    2: {'name': 'TRUTH',     'zoom_start': 1.0, 'zoom_end': 1.0, 'pan_x': 0.0},
+    3: {'name': 'FALLOUT',   'zoom_start': 1.0, 'zoom_end': 1.0, 'pan_x': 0.0},
 }
 
 
@@ -171,6 +178,34 @@ def _render_avatar_ffmpeg(
     return result.returncode == 0 and Path(output_path).exists() and Path(output_path).stat().st_size > 1000
 
 
+def _prepare_pixel_scene_frame(img, target_w: int = VIDEO_W, target_h: int = TOP_H):
+    """Scale and center-crop a scene without inventing colours.
+
+    The locked 768x768 -> 1152x1152 transform is exactly 1.5x. A 192x192
+    logical grid therefore becomes 6px cells, and the 1080px crop removes an
+    exact 12 logical cells. NEAREST preserves that structure.
+    """
+    import cv2
+
+    img_h, img_w = img.shape[:2]
+    scale = max(target_w / img_w, target_h / img_h)
+    new_w = max(target_w, int(round(img_w * scale)))
+    new_h = max(target_h, int(round(img_h * scale)))
+    if new_w % 2:
+        new_w += 1
+    if new_h % 2:
+        new_h += 1
+
+    scaled = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    crop_x = max(0, (new_w - target_w) // 2)
+    crop_y = max(0, (new_h - target_h) // 2)
+    cropped = scaled[crop_y:crop_y + target_h, crop_x:crop_x + target_w]
+
+    if cropped.shape[1] != target_w or cropped.shape[0] != target_h:
+        cropped = cv2.resize(cropped, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+    return cropped
+
+
 def _render_scene_opencv(
     img_path: str,
     duration: float,
@@ -180,17 +215,11 @@ def _render_scene_opencv(
     height: int = TOP_H,
 ) -> bool:
     """
-    Render smooth zoom using OpenCV — frame-by-frame with ease-out-cubic easing.
+    Render a static pixel-art frame using OpenCV.
     Falls back to _render_scene_ffmpeg if OpenCV is unavailable.
 
-    Scene-type-aware zoom profiles:
-      HOOK (idx%4==0):      gentle zoom-in  (1.08 → 1.02)
-      MECHANISM (idx%4==1): gentle zoom-out  (1.06 → 1.01)
-      TRUTH (idx%4==2):     gentle zoom-in   (1.01 → 1.07)
-      FALLOUT (idx%4==3):   gentle zoom-out  (1.05 → 1.01)
-    
-    All zooms are center-based (pan_x=0) for smooth, cinematic Ken Burns feel.
-    Uses ease-out-cubic easing for natural deceleration.
+    Continuous zoom is intentionally disabled: fractional resampling creates
+    thousands of intermediate colours and destroys the logical pixel grid.
     """
     try:
         import cv2
@@ -200,85 +229,44 @@ def _render_scene_opencv(
     img = cv2.imread(img_path)
     if img is None:
         return False
+    ffmpeg_exe = _find_ffmpeg()
+    if not ffmpeg_exe:
+        return False
 
-    img_h, img_w = img.shape[:2]
     target_w = width
     target_h = height
-
-    scale_w = target_w / img_w
-    scale_h = target_h / img_h
-    scale = max(scale_w, scale_h)
-    new_w = int(img_w * scale)
-    new_h = int(img_h * scale)
-    new_w += new_w % 2
-    new_h += new_h % 2
-
-    img_scaled = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-
-    crop_x = max(0, (new_w - target_w) // 2)
-    crop_y = max(0, (new_h - target_h) // 2)
+    scene_frame = _prepare_pixel_scene_frame(img, target_w, target_h)
 
     total_frames = max(int(duration * FPS), 2)
 
-    profile = _get_scene_profile(scene_idx)
-    zoom_start = profile['zoom_start']
-    zoom_end = profile['zoom_end']
-    pan_x_factor = profile['pan_x']
-    scene_name = profile['name']
-
-    def ease_out_cubic(t):
-        t = max(0.0, min(1.0, t))
-        return 1.0 - (1.0 - t) ** 3
-
-    tmp_path = output_path.replace('.mp4', '_raw.mp4')
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(tmp_path, fourcc, FPS, (target_w, target_h))
-    if not out.isOpened():
+    # Do not pass the frame through an intermediate YUV codec. That conversion
+    # invents colours before the final encode, even when the source PNG has a
+    # bounded palette.
+    tmp_image_path = output_path.replace('.mp4', '_frame.png')
+    if not cv2.imwrite(tmp_image_path, scene_frame):
         return False
 
-    for frame_num in range(total_frames):
-        progress = frame_num / max(total_frames - 1, 1)
-        eased = ease_out_cubic(progress)
-
-        zoom = zoom_start + (zoom_end - zoom_start) * eased
-
-        crop_w = int(target_w / zoom)
-        crop_h = int(target_h / zoom)
-
-        pan_offset_x = int(crop_w * pan_x_factor * eased)
-        cx = max(0, min((new_w - crop_w) // 2 + pan_offset_x, new_w - crop_w))
-        cy = max(0, min((new_h - crop_h) // 2, new_h - crop_h))
-
-        cropped = img_scaled[cy:cy + crop_h, cx:cx + crop_w]
-        frame = cv2.resize(cropped, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
-        out.write(frame)
-
-    out.release()
-
-    ffmpeg_exe = _find_ffmpeg()
-    if ffmpeg_exe:
-        cmd = [
-            ffmpeg_exe, '-y',
-            '-i', tmp_path,
-            '-c:v', 'libx264',
-            '-pix_fmt', 'yuv420p',
-            '-preset', 'medium',
-            '-crf', '18',
-            '-vf', 'vignette=angle=0.2:mode=forward',
-            '-r', str(FPS),
-            '-movflags', '+faststart',
-            output_path,
-        ]
+    cmd = [
+        ffmpeg_exe, '-y',
+        '-loop', '1',
+        '-i', tmp_image_path,
+        '-frames:v', str(total_frames),
+        '-c:v', PIXEL_VIDEO_CODEC,
+        '-pix_fmt', PIXEL_VIDEO_PIXEL_FORMAT,
+        '-preset', 'medium',
+        '-crf', PIXEL_VIDEO_CRF,
+        '-r', str(FPS),
+        '-movflags', '+faststart',
+        output_path,
+    ]
+    try:
         result = subprocess.run(cmd, capture_output=True, timeout=180, text=True)
+    finally:
         try:
-            Path(tmp_path).unlink()
+            Path(tmp_image_path).unlink()
         except Exception:
             pass
-        return result.returncode == 0 and Path(output_path).exists() and Path(output_path).stat().st_size > 1000
-    else:
-        import shutil
-        shutil.move(tmp_path, output_path)
-        return Path(output_path).exists() and Path(output_path).stat().st_size > 1000
+    return result.returncode == 0 and Path(output_path).exists() and Path(output_path).stat().st_size > 1000
 
 
 def _render_scene_ffmpeg_fallback(
@@ -290,9 +278,9 @@ def _render_scene_ffmpeg_fallback(
     height: int = TOP_H,
 ) -> bool:
     """
-    Fallback: render scene using ffmpeg zoompan with ease-out-cubic easing.
-    Used when OpenCV is unavailable.
-    Scene-type-aware zoom profiles (same as OpenCV path).
+    Fallback: render a static scene using ffmpeg's nearest-neighbour scaler.
+    Used when OpenCV is unavailable. It must preserve the same pixel-safe
+    transform as the OpenCV path.
     """
     ffmpeg_exe = _find_ffmpeg()
     if not ffmpeg_exe:
@@ -318,46 +306,12 @@ def _render_scene_ffmpeg_fallback(
     crop_x = max(0, (scaled_w - target_w) // 2)
     crop_y = max(0, (scaled_h - target_h) // 2)
 
-    profile = _get_scene_profile(scene_idx)
-    zoom_start = profile['zoom_start']
-    zoom_end = profile['zoom_end']
-    pan_x_factor = profile['pan_x']
-    scene_name = profile['name']
-
-    total_frames = int(duration * FPS)
-    if total_frames < 2:
-        total_frames = 2
-
-    safe_total = max(total_frames - 1, 1)
-    zoom_range = zoom_end - zoom_start
-
-    # Ease-out cubic: 1 - (1-t)^3 where t = (on-1)/(total_frames-1)
-    # zoom = zoom_start + zoom_range * (1 - (1-t)^3)
-    # In ffmpeg expr: 1-pow(1-(on-1)/N, 3)
-    if zoom_range >= 0:
-        zoom_expr = f"{zoom_start}+{zoom_range}*(1-pow(1-(on-1)/{safe_total},3))"
-    else:
-        zoom_expr = f"{zoom_start}-{abs(zoom_range)}*(1-pow(1-(on-1)/{safe_total},3))"
-
-    if abs(pan_x_factor) > 0.001:
-        pan_expr = f"iw/2-(iw/zoom/2)+{pan_x_factor}*ow*(on-1)/{safe_total}"
-        x_expr = pan_expr
-    else:
-        x_expr = "iw/2-(iw/zoom/2)"
-
-    y_expr = "ih/2-(ih/zoom/2)"
+    total_frames = max(int(duration * FPS), 2)
 
     vf = (
-        f"[0:v]scale={scaled_w}:{scaled_h},"
+        f"scale={scaled_w}:{scaled_h}:flags=neighbor,"
         f"crop={target_w}:{target_h}:{crop_x}:{crop_y},"
-        f"zoompan=z='{zoom_expr}'"
-        f":x='{x_expr}'"
-        f":y='{y_expr}'"
-        f":d={total_frames}"
-        f":s={target_w}x{target_h}"
-        f":fps={FPS},"
-        f"vignette=angle=0.2:mode=forward,"
-        f"setpts=PTS-STARTPTS[v]"
+        f"fps={FPS},setpts=PTS-STARTPTS"
     )
 
     cmd = [
@@ -365,11 +319,11 @@ def _render_scene_ffmpeg_fallback(
         '-loop', '1',
         '-i', img_path,
         '-vf', vf,
-        '-t', f'{duration:.3f}',
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
+        '-frames:v', str(total_frames),
+        '-c:v', PIXEL_VIDEO_CODEC,
+        '-pix_fmt', PIXEL_VIDEO_PIXEL_FORMAT,
         '-preset', 'medium',
-        '-crf', '18',
+        '-crf', PIXEL_VIDEO_CRF,
         '-r', str(FPS),
         '-movflags', '+faststart',
         output_path,
@@ -395,7 +349,7 @@ def _resize_image_fullscreen(img_path: str) -> ImageClip:
         scale = max(scale_w, scale_h)
         new_w = int(img_w * scale)
         new_h = int(img_h * scale)
-        img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+        img_resized = img.resize((new_w, new_h), Image.Resampling.NEAREST)
         crop_x = max(0, (new_w - visible_w) // 2)
         crop_y = max(0, (new_h - visible_h) // 2)
         cropped = img_resized.crop((crop_x, crop_y, crop_x + visible_w, crop_y + visible_h))
@@ -542,7 +496,7 @@ def _render_scenes_ffmpeg(
     total_dur: float,
 ) -> tuple:
     """
-    Pre-render all scene clips via ffmpeg zoompan filter.
+    Pre-render all scene clips as static, pixel-safe clips.
 
     Returns:
         (scene_clips, bg_layer, scene_video_paths) — clips for compositing,
@@ -552,7 +506,7 @@ def _render_scenes_ffmpeg(
     temp_files = []
 
     if scene_timestamps and len(scene_timestamps) == num_scenes:
-        print(f"  [SPLIT] Using SYNCED scene timestamps (content-driven, ffmpeg zoompan)")
+        print(f"  [SPLIT] Using SYNCED scene timestamps (content-driven, static pixel scenes)")
         timings = []
         for i, ts in enumerate(scene_timestamps):
             start = ts['start']
@@ -644,10 +598,10 @@ def _pre_render_overlay_ffmpeg(
         print(f"  [PRE-RENDER] Base video (bg+avatar, {len(base_layers)} layers)...")
         base_clip.write_videofile(
             base_path,
-            codec='libx264',
+            codec=PIXEL_VIDEO_CODEC,
             audio=False,
             fps=fps,
-            ffmpeg_params=['-pix_fmt', 'yuv420p', '-crf', '18'],
+            ffmpeg_params=['-pix_fmt', PIXEL_VIDEO_PIXEL_FORMAT, '-crf', PIXEL_VIDEO_CRF],
             preset='ultrafast',
             threads=8,
             verbose=False,
@@ -726,7 +680,7 @@ def _assemble_pure_ffmpeg(
     Much more memory-efficient for longer videos (80s+).
     
     Pipeline:
-    1. Render each scene image as MP4 clip via ffmpeg zoompan (no moviepy)
+    1. Render each scene image as a static MP4 clip (no moviepy)
     2. Render looping avatar via ffmpeg
     3. Concatenate scenes into top-half video via ffmpeg concat demuxer
     4. Stack top-half + avatar via ffmpeg overlay
@@ -744,7 +698,7 @@ def _assemble_pure_ffmpeg(
     temp_files = []
 
     try:
-        # ── 1. Render each scene as MP4 via ffmpeg zoompan (no moviepy) ──
+        # ── 1. Render each scene as a static MP4 (no moviepy) ──
         scene_video_paths = []
         if scene_timestamps and len(scene_timestamps) == len(image_paths):
             timings = []
@@ -777,7 +731,7 @@ def _assemble_pure_ffmpeg(
                 scene_video_paths.append(tmp_path)
                 print(f"    [PURE-FF] Scene {idx}: rendered ({dur:.2f}s)")
             else:
-                print(f"    [PURE-FF] Scene {idx}: ffmpeg zoompan FAILED")
+                print(f"    [PURE-FF] Scene {idx}: static scene render FAILED")
                 return False
 
         # ── 2. Pre-render looping avatar via ffmpeg ──
@@ -833,7 +787,7 @@ def _assemble_pure_ffmpeg(
 
         stack_filter = (
             f'[0:v]pad={VIDEO_W}:{VIDEO_H}:0:0:color={bg_color}[padded];'
-            f'[padded][1:v]overlay=0:{TOP_H}:format=auto[stacked]'
+            f'[padded][1:v]overlay=0:{TOP_H}:format=auto,format=rgb24[stacked]'
         )
         stack_cmd = [
             ffmpeg_exe, '-y',
@@ -841,9 +795,8 @@ def _assemble_pure_ffmpeg(
             '-i', avatar_path_out,
             '-filter_complex', stack_filter,
             '-map', '[stacked]',
-            '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-            '-preset', 'fast', '-crf', str(_adaptive_crf(total_dur)),
-            '-profile:v', 'high', '-level', '4.0', '-bf', '2',
+            '-c:v', PIXEL_VIDEO_CODEC, '-pix_fmt', PIXEL_VIDEO_PIXEL_FORMAT,
+            '-preset', 'fast', '-crf', PIXEL_VIDEO_CRF,
             '-t', f'{total_dur:.3f}',
             '-an',
             stacked_path,
@@ -899,6 +852,7 @@ def _assemble_pure_ffmpeg(
             video_filter += f',fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}'
         else:
             video_filter = f'fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}'
+        video_filter += ',format=rgb24'
 
         # ── 7. Mix audio (voiceover + music) ──
         mixed_audio_path = tempfile.mktemp(suffix='_audio.wav')
@@ -943,13 +897,10 @@ def _assemble_pure_ffmpeg(
             '-i', mixed_audio_path,
             '-vf', video_filter,
             '-map', '0:v', '-map', '1:a',
-            '-c:v', 'libx264',
+            '-c:v', PIXEL_VIDEO_CODEC,
             '-preset', 'fast',
-            '-crf', str(_adaptive_crf(total_dur)),
-            '-pix_fmt', 'yuv420p',
-            '-profile:v', 'high',
-            '-level', '4.0',
-            '-bf', '2',
+            '-crf', PIXEL_VIDEO_CRF,
+            '-pix_fmt', PIXEL_VIDEO_PIXEL_FORMAT,
             '-movflags', '+faststart',
             '-c:a', 'aac', '-b:a', '192k',
             '-ar', '44100', '-ac', '2',
@@ -1080,8 +1031,8 @@ def build_split_video(
         total_dur = audio.duration
         print(f"  [SPLIT] Audio duration: {total_dur:.1f}s")
 
-        # ── SCENE BACKGROUNDS: ffmpeg zoompan ──
-        print(f"  [SPLIT] Rendering {len(image_paths)} scenes via ffmpeg zoompan...")
+        # ── SCENE BACKGROUNDS: static pixel-safe clips ──
+        print(f"  [SPLIT] Rendering {len(image_paths)} static pixel-art scenes...")
         render_start = _time.time()
 
         scene_clips, bg_layer, scene_temp = _render_scenes_ffmpeg(
@@ -1261,9 +1212,9 @@ def build_split_video(
                 filter_parts = []
                 if overlay_exists:
                     filter_parts.append(f'[0:v][1:v]overlay=0:0:format=auto[bg]')
-                    filter_parts.append(f'[bg]fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}[vout]')
+                    filter_parts.append(f'[bg]fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION},format=rgb24[vout]')
                 else:
-                    filter_parts.append(f'[0:v]fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}[vout]')
+                    filter_parts.append(f'[0:v]fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION},format=rgb24[vout]')
 
                 filter_str = ';'.join(filter_parts)
 
@@ -1271,17 +1222,14 @@ def build_split_video(
                     '-filter_complex', filter_str,
                     '-map', '[vout]',
                     '-map', f'{audio_idx}:a',
-                    '-c:v', 'libx264',
+                    '-c:v', PIXEL_VIDEO_CODEC,
                     '-preset', 'fast',
-                    '-crf', str(_adaptive_crf(total_dur)),
-                    '-pix_fmt', 'yuv420p',
-                    '-profile:v', 'high',
-                    '-level', '4.0',
-                    '-bf', '2',
+                    '-crf', PIXEL_VIDEO_CRF,
+                    '-pix_fmt', PIXEL_VIDEO_PIXEL_FORMAT,
                     '-movflags', '+faststart',
                     '-c:a', 'aac', '-b:a', '192k',
                     '-ar', '44100', '-ac', '2',
-                    str(out_path)
+                str(out_path)
                 ]
 
                 composite_timeout = max(300, int(total_dur * 5))
@@ -1390,14 +1338,13 @@ def build_split_video(
             print(f"  [SPLIT] moviepy export (fallback) to {out_path}...")
             final.write_videofile(
                 str(out_path),
-                codec="libx264",
+                codec=PIXEL_VIDEO_CODEC,
                 audio_codec="aac",
                 fps=FPS,
                 ffmpeg_params=[
                     '-movflags', '+faststart',
-                    '-pix_fmt', 'yuv420p',
-                    '-crf', str(_adaptive_crf(total_dur)),
-                    '-bf', '2',
+                    '-pix_fmt', PIXEL_VIDEO_PIXEL_FORMAT,
+                    '-crf', PIXEL_VIDEO_CRF,
                 ],
                 preset='ultrafast',
                 threads=8,
@@ -1499,8 +1446,9 @@ def build_split_video(
             "subtitles": len(subtitle_clips),
             "effects_applied": [
                 "full_screen_bg",
-                "ffmpeg_zoompan",
-                "ffmpeg_vignette",
+                "static_pixel_scene",
+                "nearest_neighbor_scaling",
+                "rgb_lossless_encoding",
                 "avatar_loop",
                 "title_overlay",
                 "karaoke_subtitles",

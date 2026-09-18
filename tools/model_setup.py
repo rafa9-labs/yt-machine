@@ -50,6 +50,7 @@ from src.models.registry import (
     discover_all,
     specs_for_capability,
 )
+from src.video.generation_profile import QWEN_IMAGE_MODEL_ID
 
 ROLE_DESCRIPTIONS = {
     ROLE_TEXT: "Text model — analysis, scriptwriting, prompts",
@@ -207,6 +208,15 @@ def build_profile(discovered: Dict[str, List[ModelSpec]], interactive: bool = Tr
         capability = ROLE_CAPABILITY[role]
         candidates = specs_for_capability(discovered, capability)
 
+        # Production image generation is intentionally Qwen-only. Do not let
+        # an older, larger MLX checkpoint win automatic selection again.
+        if role == ROLE_IMAGE:
+            model_marker = QWEN_IMAGE_MODEL_ID.rsplit("/", 1)[-1].lower()
+            candidates = [
+                spec for spec in candidates
+                if model_marker in (spec.id + " " + (spec.path or "")).lower()
+            ]
+
         # Text models can come from GGUF files. Promote them to managed
         # llama.cpp specs so the pipeline knows it must launch the server.
         if role == ROLE_TEXT:
@@ -221,6 +231,10 @@ def build_profile(discovered: Dict[str, List[ModelSpec]], interactive: bool = Tr
         candidates = _sort_specs(candidates, role=role)
         current = profile.get(role)
         chosen = choose_role(role, candidates, current, interactive=interactive)
+        if role == ROLE_IMAGE and chosen is not None:
+            chosen.metadata = dict(chosen.metadata or {})
+            chosen.metadata["model_repo"] = QWEN_IMAGE_MODEL_ID
+            chosen.metadata["generation_profile"] = "qwen_pixel_scene"
         setattr(profile, role, chosen)
 
     profile.preferences = {

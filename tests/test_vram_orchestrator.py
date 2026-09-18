@@ -341,19 +341,19 @@ class TestZoomProfiles:
 class TestResolutionConfig:
     """Test that resolution configuration is correct."""
 
-    def test_render_resolution_is_768x816(self):
+    def test_render_resolution_is_qwen_grid_friendly_768x768(self):
         config_path = Path(__file__).parent.parent / "config" / "image_style.json"
         with open(config_path, 'r') as f:
             config = json.load(f)
-        # 816 (not 810) keeps the height a multiple of 16 as diffusion models
-        # require; the render is later upscaled to the 1088x1152 target.
-        assert config['generation_params']['render_resolution'] == [768, 816]
+        # 768x768 scales to 1152x1152 at exactly 1.5x, preserving the 192px
+        # logical grid before the 1080px center crop.
+        assert config['generation_params']['render_resolution'] == [768, 768]
 
-    def test_inference_steps_is_40(self):
+    def test_inference_steps_is_20(self):
         config_path = Path(__file__).parent.parent / "config" / "image_style.json"
         with open(config_path, 'r') as f:
             config = json.load(f)
-        assert config['generation_params']['num_inference_steps'] == 40
+        assert config['generation_params']['num_inference_steps'] == 20
 
     def test_guidance_scale_is_4(self):
         config_path = Path(__file__).parent.parent / "config" / "image_style.json"
@@ -361,20 +361,23 @@ class TestResolutionConfig:
             config = json.load(f)
         assert config['generation_params']['guidance_scale'] == 4.0
 
-    def test_model_step_config_dev_is_40(self):
-        from src.video.pixel_art_tool import MODEL_STEP_CONFIG
-        assert MODEL_STEP_CONFIG['fal-ai/flux/dev'] == 40
+    def test_generation_profile_selects_qwen(self):
+        from src.video.generation_profile import load_generation_profile
+        profile = load_generation_profile()
+        assert profile['provider'] == 'mlxgen'
+        assert profile['model_id'] == 'AbstractFramework/qwen-image-2512-4bit'
+        assert profile['lora']['scale'] == pytest.approx(0.70)
 
     def test_enforcement_prefix_includes_sharp_focus(self):
         from src.video.pixel_art_tool import PIXEL_ART_ENFORCEMENT_PREFIX
         assert 'sharp focus' in PIXEL_ART_ENFORCEMENT_PREFIX
         assert 'detailed scene composition' in PIXEL_ART_ENFORCEMENT_PREFIX
 
-    def test_target_resolution_unchanged(self):
+    def test_target_resolution_matches_model_output(self):
         config_path = Path(__file__).parent.parent / "config" / "image_style.json"
         with open(config_path, 'r') as f:
             config = json.load(f)
-        assert config['generation_params']['target_resolution'] == [1088, 1152]
+        assert config['generation_params']['target_resolution'] == [768, 768]
 
 
 # ════════════════════════════════════════════════════════════════

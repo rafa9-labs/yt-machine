@@ -6,9 +6,10 @@ visuals and a voiceover, composites a 1080×1920 video with `ffmpeg`, and can
 publish to YouTube Shorts and TikTok on a daily schedule.
 
 Runs locally on a single machine. The default configuration targets Apple
-Silicon with a local LLM and a local image model, so the pipeline produces video
-without any hosted API. Optional cloud backends (fal.ai, ElevenLabs, OpenAI) are
-used only when their API keys are present and are never required.
+Silicon with a local LLM and Qwen-Image-2512 through MLX-Gen, so the pipeline
+produces video without a hosted image-generation API. Optional cloud backends
+(ElevenLabs and OpenAI) are used only when their API keys are present and are
+never required for the primary path.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](requirements-macos.txt)
@@ -69,13 +70,14 @@ structural guarantees the language model cannot be relied on to produce.
 - **Deterministic script enforcement** — a Python-only pass that guarantees
   story count, segue placement, de-duplication, and the closing, regardless of
   what the model returned.
-- **Local pixel-art generation** — eight scenes per video through an MLX-Gen
-  subprocess, with capability probing and a fail-closed policy (no silent cloud
-  substitution).
+- **Local pixel-art generation** — eight Qwen-Image-2512 scenes per video through
+  an MLX-Gen subprocess, with capability probing, deterministic 192×192/32-color
+  post-processing, provenance sidecars, and a fail-closed policy.
 - **Multi-engine TTS with fallbacks** — Kokoro (local) → ElevenLabs → Edge TTS
   → silent track, plus an `ffmpeg` mastering chain.
-- **FFmpeg video composition** — 60/40 split-screen layout, Ken Burns motion,
-  karaoke subtitles in ASS format, avatar loop, and a music bed.
+- **FFmpeg video composition** — 60/40 split-screen layout with static
+  grid-preserving pixel scenes, karaoke subtitles in ASS format, avatar loop,
+  and a music bed.
 - **Memory-safe model lifecycle** — one heavy model resident at a time, with
   verified memory reclamation between phases and an inter-process lock.
 - **Unattended daily automation on macOS** — `launchd` scheduling, `pmset` wake,
@@ -164,13 +166,13 @@ them. The settings that most affect behaviour:
 | Variable | Purpose |
 |---|---|
 | `OLLAMA_HOST` | Endpoint for the Ollama-compatible text server |
-| `USE_LOCAL_FLUX` | `false` uses the MLX-Gen provider; `true`/`auto` uses local CUDA FLUX |
-| `MLXGEN_LORA_PATH` | Optional style LoRA; only applied if the file already exists |
-| `MLXGEN_STEPS`, `MLXGEN_GUIDANCE` | Diffusion sampling parameters |
+| `YT_GENERATION_PROFILE` | Active validated image-generation profile; defaults to `qwen_pixel_scene` |
+| `YT_GENERATION_PROFILES_PATH` | Optional override for the generation-profile JSON |
+| `MLXGEN_BIN`, `MLXGEN_TIMEOUT` | MLX-Gen executable and per-image timeout |
 | `PIPELINE_TIMEOUT` | Hard ceiling for one run in seconds |
 | `YOUTUBE_PRIVACY` | `private`, `unlisted`, or `public` upload visibility |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Enables run notifications and delivery |
-| `FAL_KEY`, `ELEVEN_LABS_KEY` | Cloud image-generation and TTS fallbacks |
+| `ELEVEN_LABS_KEY` | Optional TTS fallback |
 | `POSTGRES_*` | Optional progress persistence; the pipeline runs without it |
 
 Non-secret configuration is version-controlled:
@@ -178,6 +180,7 @@ Non-secret configuration is version-controlled:
 | File | Contents |
 |---|---|
 | `config/model_profile.json` | Active model per role (generated; not committed) |
+| `config/generation_profiles.json` | Qwen sampling, LoRA, seed, post-processing, and zoom policy |
 | `config/system_prompts.json` | All LLM system prompts and per-task timeouts |
 | `config/image_style.json` | Style suffix, negative prompt, palette, layout, LoRA map |
 | `config/rss_feeds.json` | Feed list and collection settings |
@@ -462,8 +465,9 @@ Known gaps in the current implementation, in rough priority order:
   and re-reads the checkpoint, but every step re-runs.
 - **Legacy test scripts need modernising.** The standalone validation scripts
   under `tests/` predate the `src/` layout and are not collected by `pytest`.
-- **Image model evaluation is in progress.** The pipeline runs FLUX.2 Klein;
-  a Qwen-Image alternative is being benchmarked but is not yet adopted.
+- **Qwen image acceptance is in progress.** The active path is Qwen-Image-2512;
+  the final 15-image quality set and end-to-end MP4 palette check are still
+  pending.
 - **TikTok publishing requires app approval.** The integration is implemented
   and refreshes tokens, but posting only works once the Content Posting API
   access is granted.
