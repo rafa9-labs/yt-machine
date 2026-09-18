@@ -155,8 +155,9 @@ images/
 checkpoint.json
 ```
 
-A full run takes roughly 80 minutes on an M1 Pro: most of that is eight image
-generations at about 5–6 minutes each.
+A full run is dominated by the eight image generations. Use `YT_IMAGE_LIMIT=4`
+for a shorter real-pipeline smoke run; the default remains the full production
+count.
 
 ## Configuration
 
@@ -169,6 +170,7 @@ them. The settings that most affect behaviour:
 | `YT_GENERATION_PROFILE` | Active validated image-generation profile; defaults to `qwen_pixel_scene` |
 | `YT_GENERATION_PROFILES_PATH` | Optional override for the generation-profile JSON |
 | `MLXGEN_BIN`, `MLXGEN_TIMEOUT` | MLX-Gen executable and per-image timeout |
+| `YT_IMAGE_LIMIT` | Optional image-count limit for smoke runs; defaults to 8 |
 | `PIPELINE_TIMEOUT` | Hard ceiling for one run in seconds |
 | `YOUTUBE_PRIVACY` | `private`, `unlisted`, or `public` upload visibility |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Enables run notifications and delivery |
@@ -184,6 +186,70 @@ Non-secret configuration is version-controlled:
 | `config/system_prompts.json` | All LLM system prompts and per-task timeouts |
 | `config/image_style.json` | Style suffix, negative prompt, palette, layout, LoRA map |
 | `config/rss_feeds.json` | Feed list and collection settings |
+
+### Inspecting and overriding generation settings
+
+The pipeline can report its resolved configuration without starting a run:
+
+```bash
+# List available image-generation profiles
+python tools/generate_complete_video.py --list-profiles
+
+# Print the effective model + generation configuration
+python tools/generate_complete_video.py --print-config
+
+# Select a different profile for one run
+python tools/generate_complete_video.py --generation-profile my_profile
+```
+
+`--set KEY=VALUE` overrides a single sampling parameter for one run. It is
+repeatable and applies in memory only — a stray experiment cannot alter the
+scheduled daily run:
+
+```bash
+# Try 12 steps at a smaller render size without editing any file
+python tools/generate_complete_video.py --set steps=12 --set width=512 --print-config
+```
+
+Allowed keys are `width`, `height`, `steps`, `guidance`, and `lora.scale`.
+Unknown keys and invalid values are rejected before the run starts. Resolution
+must be a positive multiple of 16, which the Qwen latent route requires.
+
+### Interactive editor
+
+`tools/configure.py` is an arrow-key editor for the generation profiles:
+
+```bash
+python tools/configure.py           # interactive
+python tools/configure.py --show    # print profiles and exit
+```
+
+Every save is validated before it reaches disk, so the tool cannot write a
+profile the pipeline would reject. Editable fields are resolution, diffusion
+steps, guidance, LoRA path/scale/trigger, seed pool, and the pixel-grid
+post-processing (logical size, output size, palette size, resample filters).
+The menu also switches the active profile, duplicates or deletes profiles, and
+delegates model selection to `tools/model_setup.py`.
+
+Values that are **not** editable are shown with an explanation: the default
+2-story / 4-beat / 8-image structure is encoded in the synthesis prompt and
+timeline builder, while `YT_IMAGE_LIMIT` provides a deliberate smoke-run
+override. Continuous camera zoom is disabled because rescaling destroys the
+logical pixel grid the profile exists to preserve.
+
+### Image acceptance corpus
+
+After a real pipeline run has produced `script_segments.json`, generate the
+default 15-image corpus (5 real scenes × 3 seeds) with:
+
+```bash
+python tools/run_image_acceptance.py \
+  --script output/projects/video_<timestamp>/script_segments.json
+```
+
+Results and provenance are written to `output/acceptance/qwen-2512/`. An
+optional guidance experiment can be run separately with `--guidance 3.5` or
+`--guidance 4.5`; the baseline profile remains unchanged.
 
 ## Architecture
 
@@ -369,18 +435,25 @@ Tests use `pytest`. Run the suite:
 ```bash
 .venv/bin/python -m pytest \
   tests/test_automation_macos.py \
+  tests/test_configure_tool.py \
   tests/test_dedup.py \
+  tests/test_generation_profile.py \
+  tests/test_image_acceptance.py \
   tests/test_image_pipeline.py \
   tests/test_local_prompt_building.py \
   tests/test_model_registry.py \
+  tests/test_pipeline_config.py \
   tests/test_pipeline_progress.py \
+  tests/test_postprocess.py \
+  tests/test_qwen_image_pipeline.py \
   tests/test_runtime_lifecycle.py \
+  tests/test_scene_spec.py \
   tests/test_visual_prompts.py \
   tests/test_vram_budget.py \
   tests/test_vram_orchestrator.py
 ```
 
-That set covers 461 tests and runs in under a minute without loading a model or
+That set covers 542 tests and runs in under a minute without loading a model or
 touching the network. The main areas:
 
 | Area | File |
@@ -391,6 +464,10 @@ touching the network. The main areas:
 | Script de-duplication and enforcement | `tests/test_dedup.py`, `tests/test_visual_prompts.py` |
 | Local prompt construction and QA thresholds | `tests/test_local_prompt_building.py`, `tests/test_image_pipeline.py` |
 | Video/VRAM budget calculations | `tests/test_vram_budget.py`, `tests/test_vram_orchestrator.py` |
+| Generation profile validation and overrides | `tests/test_generation_profile.py`, `tests/test_configure_tool.py` |
+| Pipeline smoke-run configuration | `tests/test_pipeline_config.py` |
+| Real-script acceptance corpus | `tests/test_image_acceptance.py`, `tools/run_image_acceptance.py` |
+| Scene spec and post-processing invariants | `tests/test_scene_spec.py`, `tests/test_postprocess.py` |
 
 Some test files under `tests/` are standalone validation scripts from earlier
 iterations rather than `pytest` modules; they import older module paths and are
@@ -404,6 +481,13 @@ python tools/generate_complete_video.py --dry-run
 
 # Inspect which models were discovered and selected
 python tools/model_setup.py --show
+
+# Inspect the effective image-generation configuration
+python tools/generate_complete_video.py --print-config
+python tools/generate_complete_video.py --list-profiles
+
+# Edit generation profiles interactively
+python tools/configure.py
 
 # Start the local LLM stack (MLX server + Ollama-compatible bridge)
 tools/start_llm.sh start

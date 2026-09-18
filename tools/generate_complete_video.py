@@ -72,7 +72,109 @@ parser.add_argument('--skip-images', action='store_true', help='Use placeholder 
 parser.add_argument('--no-telegram', action='store_true', help='Skip Telegram delivery')
 parser.add_argument('--dry-run', action='store_true',
                     help='Run pipeline with canned data (no API calls) to validate wiring')
+parser.add_argument('--generation-profile', type=str, default=None, metavar='NAME',
+                    help='Image generation profile to use (overrides YT_GENERATION_PROFILE)')
+parser.add_argument('--list-profiles', action='store_true',
+                    help='List available image generation profiles and exit')
+parser.add_argument('--print-config', action='store_true',
+                    help='Print the resolved model + generation configuration and exit')
+parser.add_argument('--set', action='append', default=None, metavar='KEY=VALUE',
+                    help='Ephemeral generation override (repeatable). '
+                         'Allowed: width, height, steps, guidance, lora.scale')
 args = parser.parse_args()
+
+# ── GENERATION PROFILE SELECTION + OVERRIDES ──
+# Applied before any profile load so both call sites (here and
+# pixel_art_tool) observe the same values. Nothing is written to disk.
+from src.video.generation_profile import (
+    GenerationProfileError,
+    describe_profiles,
+    get_overrides,
+    load_generation_profile,
+    parse_override,
+    profile_path,
+    set_overrides,
+)
+
+
+def _print_profiles() -> None:
+    print(f"\nGeneration profiles: {profile_path()}\n")
+    try:
+        summaries = describe_profiles()
+    except GenerationProfileError as exc:
+        print(f"  ERROR: {exc}")
+        return
+    for entry in summaries:
+        marker = "*" if entry["active"] else " "
+        if not entry["valid"]:
+            print(f" {marker} {entry['name']}  [INVALID] {entry['error']}")
+            continue
+        print(f" {marker} {entry['name']}")
+        print(f"      model    : {entry['model_id']} ({entry['provider']})")
+        print(f"      sampling : {entry['width']}x{entry['height']}, "
+              f"{entry['steps']} steps, guidance {entry['guidance']}")
+        print(f"      lora     : {entry['lora_name']} (scale {entry['lora_scale']})")
+        print(f"      zoom     : {entry['zoom']}")
+    print("\n  (* = active in file; --generation-profile NAME selects another)\n")
+
+
+if args.list_profiles:
+    _print_profiles()
+    sys.exit(0)
+
+if args.generation_profile:
+    os.environ["YT_GENERATION_PROFILE"] = args.generation_profile
+
+if args.set:
+    try:
+        set_overrides(dict(parse_override(raw) for raw in args.set))
+    except GenerationProfileError as exc:
+        print(f"\nFATAL: {exc}")
+        sys.exit(2)
+
+_OVERRIDE_NOTE = str(get_overrides() or "")
+
+if args.print_config:
+    try:
+        _gen = load_generation_profile()
+    except GenerationProfileError as exc:
+        print(f"\nFATAL: {exc}")
+        sys.exit(2)
+
+    # Imported here rather than at module scope: this path exits before the
+    # heavy pipeline imports further down the file.
+    from src.models.profile import ModelProfile, ProfileError
+    try:
+        _model = ModelProfile.load()
+    except ProfileError as exc:
+        _model = None
+        print(f"\n(no model profile: {exc})")
+
+    print("\nResolved configuration\n" + "=" * 62)
+    if _model is not None:
+        for _role in ("text", "image", "vision", "embedding"):
+            _spec = getattr(_model, _role, None)
+            if _spec is None:
+                print(f"  {_role:<10} (not configured)")
+            else:
+                print(f"  {_role:<10} {_spec.provider:<10} {_spec.id}")
+    print("-" * 62)
+    print(f"  profile    {_gen['name']}")
+    print(f"  model      {_gen['model_id']} ({_gen['provider']})")
+    print(f"  sampling   {_gen['width']}x{_gen['height']}, "
+          f"{_gen['steps']} steps, guidance {_gen['guidance']}")
+    _lora = _gen.get("lora") or {}
+    print(f"  lora       {_lora.get('name')} (scale {_lora.get('scale')})")
+    print(f"  trigger    {_lora.get('trigger')}")
+    print(f"  postproc   {_gen['postprocess']}")
+    print(f"  seeds      {_gen['seed_pool']}")
+    print(f"  zoom       {_gen['zoom']}")
+    if _OVERRIDE_NOTE:
+        print("-" * 62)
+        print(f"  overrides  {_OVERRIDE_NOTE}")
+    print("=" * 62 + "\n")
+    sys.exit(0)
+
 if args.skip_images:
     SKIP_IMAGES = True
 DRY_RUN = args.dry_run

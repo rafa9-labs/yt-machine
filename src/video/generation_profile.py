@@ -22,9 +22,89 @@ DEFAULT_PROFILE_PATH = (
 DEFAULT_PROFILE_NAME = "qwen_pixel_scene"
 QWEN_IMAGE_MODEL_ID = "AbstractFramework/qwen-image-2512-4bit"
 
+# Fields a caller may override at runtime, and the coercion to apply.
+# Deliberately narrow: these are the sampling knobs that are safe to vary for
+# a single experiment. Structure (postprocess grid, zoom policy) is excluded
+# because changing it silently alters the output contract.
+OVERRIDABLE_FIELDS = {
+    "width": int,
+    "height": int,
+    "steps": int,
+    "guidance": float,
+    "lora.scale": float,
+}
+
 
 class GenerationProfileError(RuntimeError):
     """Raised when the selected generation profile is unusable."""
+
+
+# Process-wide overrides applied on every load.
+#
+# WHY A MODULE-LEVEL SETTER rather than a parameter: the profile is loaded at
+# two independent call sites in the same process — the pipeline (for validation
+# and LoRA setup) and pixel_art_tool (per image). Threading an argument through
+# both would change a public signature for what is a run-scoped experiment.
+#
+# Overrides are NEVER written to disk, so an ad-hoc experiment cannot change
+# the scheduled daily run.
+_OVERRIDES: Dict[str, Any] = {}
+
+
+def set_overrides(overrides: Optional[Dict[str, Any]] = None) -> None:
+    """Set process-wide profile overrides. Pass None or {} to clear."""
+    _OVERRIDES.clear()
+    if overrides:
+        _OVERRIDES.update(overrides)
+
+
+def get_overrides() -> Dict[str, Any]:
+    """Return a copy of the active overrides."""
+    return dict(_OVERRIDES)
+
+
+def parse_override(raw: str) -> tuple:
+    """Parse 'key=value' into a validated (key, coerced_value) pair.
+
+    Raises GenerationProfileError for an unknown key or an uncoercible value so
+    a typo is reported immediately rather than silently ignored.
+    """
+    if "=" not in raw:
+        raise GenerationProfileError(
+            f"Override {raw!r} must be in key=value form"
+        )
+    key, _, value = raw.partition("=")
+    key = key.strip()
+    value = value.strip()
+
+    if key not in OVERRIDABLE_FIELDS:
+        allowed = ", ".join(sorted(OVERRIDABLE_FIELDS))
+        raise GenerationProfileError(
+            f"Cannot override {key!r}; allowed overrides: {allowed}"
+        )
+    try:
+        coerced = OVERRIDABLE_FIELDS[key](value)
+    except (TypeError, ValueError) as exc:
+        raise GenerationProfileError(
+            f"Override {key}={value!r} is not a valid "
+            f"{OVERRIDABLE_FIELDS[key].__name__}"
+        ) from exc
+    return key, coerced
+
+
+def _apply_overrides(profile: Dict[str, Any]) -> None:
+    """Apply active overrides in place, supporting one level of nesting."""
+    for key, value in _OVERRIDES.items():
+        if "." in key:
+            section, _, field = key.partition(".")
+            target = profile.get(section)
+            if not isinstance(target, dict):
+                raise GenerationProfileError(
+                    f"Cannot override {key}: profile has no {section!r} object"
+                )
+            target[field] = value
+        else:
+            profile[key] = value
 
 
 def profile_path(path: Optional[Path] = None) -> Path:
@@ -72,6 +152,16 @@ def validate_generation_profile(profile: Dict[str, Any]) -> None:
             raise GenerationProfileError(f"{key} must be an integer") from exc
         if value <= 0:
             raise GenerationProfileError(f"{key} must be positive")
+
+    # mlxgen reports dimension_multiple=16 for the Qwen latent route; a
+    # dimension that is not a multiple of 16 fails at generation time, which
+    # is a far more expensive way to learn about a typo.
+    for key in ("width", "height"):
+        value = int(profile[key])
+        if value % 16:
+            raise GenerationProfileError(
+                f"{key} must be a multiple of 16 (got {value})"
+            )
 
     try:
         guidance = float(profile["guidance"])
@@ -158,5 +248,55 @@ def load_generation_profile(
 
     selected = _expand_profile_paths(profiles[requested])
     selected["name"] = requested
+    _apply_overrides(selected)
     validate_generation_profile(selected)
     return selected
+
+
+def describe_profiles(path: Optional[Path] = None) -> list:
+    """Return a summary of every profile in the file, for CLI listing.
+
+    Validation failures are reported per profile rather than raised, so one
+    malformed profile does not hide the others from an operator.
+    """
+    source = profile_path(path)
+    if not source.exists():
+        raise GenerationProfileError(f"Generation profile not found at {source}")
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GenerationProfileError(
+            f"Generation profile is unreadable: {exc}"
+        ) from exc
+
+    profiles = data.get("profiles") if isinstance(data, dict) else None
+    if not isinstance(profiles, dict):
+        raise GenerationProfileError(
+            "Generation profile file must contain a profiles object"
+        )
+
+    active = data.get("active_profile")
+    summaries = []
+    for name, raw in sorted(profiles.items()):
+        entry = {"name": name, "active": name == active, "valid": True,
+                 "error": None}
+        try:
+            selected = _expand_profile_paths(raw)
+            validate_generation_profile(selected)
+            lora = selected.get("lora") or {}
+            entry.update({
+                "provider": selected.get("provider"),
+                "model_id": selected.get("model_id"),
+                "width": selected.get("width"),
+                "height": selected.get("height"),
+                "steps": selected.get("steps"),
+                "guidance": selected.get("guidance"),
+                "lora_name": lora.get("name"),
+                "lora_scale": lora.get("scale"),
+                "zoom": selected.get("zoom"),
+            })
+        except GenerationProfileError as exc:
+            entry["valid"] = False
+            entry["error"] = str(exc)
+        summaries.append(entry)
+    return summaries
