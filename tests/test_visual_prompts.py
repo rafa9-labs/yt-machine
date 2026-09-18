@@ -146,7 +146,9 @@ class TestExtractKeyEntities:
     def test_extracts_capitalized_entities(self):
         entities = LLMInterface._extract_key_entities("Iran threatens the UAE with military escalation")
         assert "Iran" in entities
-        assert "UAE" not in entities  # UAE is all caps, not Capitalized pattern
+        # Acronyms are extracted too (the _ACRONYM_PATTERN pass picks up all-caps
+        # entities such as UAE), so a bare all-caps name is a valid entity.
+        assert "UAE" in entities
 
     def test_extracts_numbers(self):
         entities = LLMInterface._extract_key_entities("Deployed 5,000 troops to the region")
@@ -363,27 +365,34 @@ _MINIMAL_SCRIPT = {
 
 
 class TestEnforceGreeting:
-    """Tests for LLMInterface._enforce_greeting()"""
+    """Tests for LLMInterface._enforce_greeting().
 
-    def test_empty_greeting_filled(self):
+    Greeting and intro_hook were removed from the script format: the video now
+    opens directly on story 1. Enforcement therefore *clears* any greeting the
+    model may still emit, and must never inject one.
+    """
+
+    def test_greeting_cleared_when_empty(self):
         llm = LLMInterface()
         script = _MINIMAL_SCRIPT.copy()
         script['greeting'] = ''
-        script['intro_hook'] = ''
         result = llm._enforce_greeting(script)
-        assert result['greeting'].strip() != ''
-        assert result['intro_hook'].strip() != ''
+        assert result['greeting'] == ''
 
-    def test_existing_greeting_preserved(self):
+    def test_existing_greeting_cleared(self):
         llm = LLMInterface()
         script = _MINIMAL_SCRIPT.copy()
-        original_greeting = 'Ssssmokin! Good morning, folks!'
-        original_hook = 'Two geopolitical TORNADOS are swirling!'
-        script['greeting'] = original_greeting
-        script['intro_hook'] = original_hook
+        script['greeting'] = 'Ssssmokin! Good morning, folks!'
         result = llm._enforce_greeting(script)
-        assert result['greeting'] == original_greeting
-        assert result['intro_hook'] == original_hook
+        assert result['greeting'] == ''
+
+    def test_ensure_greeting_in_fulltext_is_noop(self):
+        llm = LLMInterface()
+        script = _MINIMAL_SCRIPT.copy()
+        script['greeting'] = ''
+        before = script['full_text']
+        result = llm._ensure_greeting_in_fulltext(script)
+        assert result['full_text'] == before
 
 
 class TestValidateClosing:
@@ -402,8 +411,10 @@ class TestValidateClosing:
         llm = LLMInterface()
         text = "Story one. Story two. That is all for now."
         result = llm._validate_closing(text)
-        assert "Good morning" in result
-        assert "goodnight" in result
+        lowered = result.lower()
+        assert "good morning" in lowered
+        assert "good afternoon" in lowered
+        assert "goodnight" in lowered
 
     def test_mid_text_cta_stripped(self):
         llm = LLMInterface()
@@ -528,13 +539,17 @@ class TestParseCuratedStructures:
         assert result[1]['real_talk'] == 'Real talk text for story two'
         assert result[1]['fallout'] == 'Fallout text for story two'
 
-    def test_without_markers_fallback(self):
+    def test_without_markers_rejected(self):
+        """Unmarked output is rejected rather than guessed at.
+
+        The previous quarter-split fallback assigned text to the wrong beats
+        while reporting success, so unmarked output now returns None and the
+        caller falls back to the original narration.
+        """
         llm = LLMInterface()
         text = "Story one hook. Story one mechanism. Story one truth. Story one fallout. --- Story two hook. Story two mechanism. Story two truth. Story two fallout."
         result = llm._parse_curated_structures(text, 2)
-        assert result is not None
-        assert len(result) == 2
-        assert len(result[0]['hook']) > 0
+        assert result is None
 
     def test_partial_markers(self):
         llm = LLMInterface()
@@ -551,13 +566,16 @@ Story two has no markers at all. Just plain text about something."""
         assert result is not None
         assert len(result) == 2
 
-    def test_too_few_stories_pads_with_empty(self):
+    def test_too_few_stories_rejected(self):
+        """Fewer than the expected story count fails the marker gate.
+
+        The gate requires at least expected_count * 2 markers, so a single
+        story's worth of markers cannot be padded out to the requested count.
+        """
         llm = LLMInterface()
         text = "[HOOK] Only one story here"
         result = llm._parse_curated_structures(text, 2)
-        # When fewer stories than expected, pads with empty dicts
-        assert result is not None
-        assert len(result) == 2
+        assert result is None
 
 
 class TestEnsureVisualPromptEdgeCases:
@@ -620,7 +638,12 @@ class TestEnforcementChain:
         base.update(overrides)
         return base
 
-    def test_full_chain_guarantees_greeting(self):
+    def test_full_chain_clears_greeting_and_preserves_stories(self):
+        """The enforcement chain must leave the script greeting-free.
+
+        Greeting/intro_hook are no longer part of the format, so the chain's
+        contract is to clear them while keeping both stories intact.
+        """
         llm = LLMInterface()
         script = self._make_script()
         script = llm._enforce_greeting(script)
@@ -628,8 +651,8 @@ class TestEnforcementChain:
         script = llm._dedup_segue_overlap(script)
         script = llm._dedup_inter_story_phrases(script)
         script = llm._enforce_fallout(script)
-        assert script['greeting'].strip(), "greeting must not be empty after enforcement"
-        assert script['intro_hook'].strip(), "intro_hook must not be empty after enforcement"
+        assert script['greeting'] == '', "greeting must be cleared after enforcement"
+        assert len(script['stories']) == 2, "both stories must survive enforcement"
 
     def test_full_chain_guarantees_segues(self):
         llm = LLMInterface()
@@ -838,13 +861,16 @@ class TestCurationRoundTrip:
         assert 'Second' in structures[1]['hook']
         assert structures[0]['mechanism'] != structures[1]['mechanism']
 
-    def test_no_markers_falls_back_to_quarter_split(self):
+    def test_no_markers_rejected_not_quarter_split(self):
+        """Unmarked output must be rejected; the quarter-split fallback was removed.
+
+        Quarter-splitting silently mapped text onto the wrong beats, so the
+        parser now returns None for unmarked input.
+        """
         llm = LLMInterface()
         curated_text = "First sentence. Second sentence. Third sentence. Fourth sentence."
         structures = llm._parse_curated_structures(curated_text, 1)
-        assert len(structures) == 1
-        s = structures[0]
-        assert all(key in s for key in ['hook', 'mechanism', 'real_talk', 'fallout'])
+        assert structures is None
 
     def test_empty_input_returns_none(self):
         llm = LLMInterface()
