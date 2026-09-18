@@ -877,46 +877,63 @@ class TestDBConnectionTimeout:
 # ══════════════════════════════════════════════════════════════════
 
 class TestSequentialPhaseTransitions:
-    """Verify the pipeline runs sequentially with proper cleanup between phases."""
+    """Verify the pipeline transitions phases in order with cleanup between them.
 
-    def test_force_cleanup_before_image_gen(self):
-        """Pipeline should call force_cleanup() before image generation."""
+    Historically these tests grepped the pipeline source for direct calls to
+    ``force_cleanup()`` / ``verify_clean_state()``. Those are CUDA-path helpers
+    now superseded by ``ModelRuntime``: the pipeline delegates the "stop the
+    text model and verify memory before loading the image model" guarantee to
+    ``start_image_phase()``, which itself verifies reclamation before returning.
+
+    These tests therefore assert the ordering contract at the pipeline level —
+    the phase transition must happen, and it must happen before image
+    generation — while ``tests/test_runtime_lifecycle.py`` asserts the runtime's
+    internal ordering and memory-verification behaviour.
+    """
+
+    @staticmethod
+    def _pipeline_source() -> str:
         pipeline_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'tools', 'generate_complete_video.py'
         )
         with open(pipeline_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+            return f.read()
 
-        force_cleanup_idx = content.find('force_cleanup')
-        image_gen_idx = content.find('phase_image_generation')
-        assert force_cleanup_idx != -1, "force_cleanup() not found"
-        assert image_gen_idx != -1, "phase_image_generation() not found"
+    def test_phase_transition_precedes_image_generation(self):
+        """The image phase must be entered before the pixel-art step runs."""
+        content = self._pipeline_source()
 
-    def test_verify_clean_state_before_image_gen(self):
-        """Pipeline should call verify_clean_state() before image generation."""
-        pipeline_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            'tools', 'generate_complete_video.py'
-        )
-        with open(pipeline_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        assert 'verify_clean_state' in content, (
-            "verify_clean_state() should be called before image generation"
+        phase_idx = content.find('phase_image_generation()')
+        art_idx = content.find('step="pixel_art"')
+        assert phase_idx != -1, "phase_image_generation() not found in the pipeline"
+        assert art_idx != -1, 'pixel_art step not found in the pipeline'
+        assert phase_idx < art_idx, (
+            "phase_image_generation() must be called before pixel art generation"
         )
 
-    def test_force_cleanup_before_tts(self):
-        """Pipeline should call force_cleanup() between image gen and TTS."""
-        pipeline_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            'tools', 'generate_complete_video.py'
-        )
-        with open(pipeline_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+    def test_image_phase_is_exited_before_tts(self):
+        """The image phase must be closed out before the TTS phase begins."""
+        content = self._pipeline_source()
 
-        assert 'force_cleanup' in content, (
-            "force_cleanup() should be called in the pipeline"
+        done_idx = content.find('phase_image_generation_done()')
+        tts_idx = content.find('phase_tts()')
+        assert done_idx != -1, "phase_image_generation_done() not found"
+        assert tts_idx != -1, "phase_tts() not found"
+        assert done_idx < tts_idx, (
+            "phase_image_generation_done() must run before phase_tts()"
+        )
+
+    def test_text_phase_entered_before_any_llm_step(self):
+        """The LLM phase must be started before the first LLM step runs."""
+        content = self._pipeline_source()
+
+        llm_phase_idx = content.find('phase_llm()')
+        first_llm_step = content.find('step="news_analysis"')
+        assert llm_phase_idx != -1, "phase_llm() not found in the pipeline"
+        assert first_llm_step != -1, 'news_analysis step not found'
+        assert llm_phase_idx < first_llm_step, (
+            "phase_llm() must be called before the first LLM step"
         )
 
 

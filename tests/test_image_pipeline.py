@@ -191,7 +191,12 @@ class TestCategorySafePrompts:
                 f'Category {cat} prompt does not start with expected prefix: {prompt[:40]}'
 
     def test_all_prompts_have_lighting(self):
-        lighting_terms = ['lighting', 'atmosphere', 'sky', 'glow', 'hour']
+        # Atmospheric language varies by scene: some prompts use time-of-day
+        # ("sunset", "dawn", "night"), others lighting/glow terminology.
+        lighting_terms = [
+            'lighting', 'atmosphere', 'sky', 'glow', 'hour',
+            'sunset', 'sunrise', 'dawn', 'dusk', 'night', 'daylight',
+        ]
         for cat, prompt in _CATEGORY_SAFE_PROMPTS.items():
             has_lighting = any(term in prompt.lower() for term in lighting_terms)
             assert has_lighting, f'Category {cat} prompt has no lighting term: {prompt}'

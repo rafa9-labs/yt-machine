@@ -386,11 +386,13 @@ class TestRebuildTimeline:
 # 6. _enforce_greeting — trademark enforcement
 # ══════════════════════════════════════════════════════════════
 class TestEnforceGreeting:
+    """Greeting was removed from the script format, so enforcement clears it."""
+
     def setup_method(self):
         self.llm = _make_llm()
 
-    def test_trademark_greeting_forced(self):
-        """Greeting must always be the trademark"""
+    def test_greeting_cleared(self):
+        """Any greeting the model emits must be cleared."""
         script = {
             'greeting': 'Ssssmokin!',
             'full_text': 'Ssssmokin! ... India and Turkey rebooted.',
@@ -399,19 +401,19 @@ class TestEnforceGreeting:
             ],
         }
         result = self.llm._enforce_greeting(script)
-        assert result['greeting'] == 'Baby you are not ready for this!'
+        assert result['greeting'] == ''
 
-    def test_existing_trademark_preserved(self):
-        """If greeting is already the trademark, leave it"""
+    def test_already_empty_stays_empty(self):
+        """An absent greeting stays absent — the script opens on story 1."""
         script = {
-            'greeting': 'Baby you are not ready for this!',
-            'full_text': 'Baby you are not ready for this! ... Content.',
+            'greeting': '',
+            'full_text': 'India and Turkey rebooted.',
             'stories': [
-                {'part_1_narration': 'Content.'},
+                {'part_1_narration': 'India and Turkey rebooted.'},
             ],
         }
         result = self.llm._enforce_greeting(script)
-        assert result['greeting'] == 'Baby you are not ready for this!'
+        assert result['greeting'] == ''
 
 
 # ══════════════════════════════════════════════════════════════
