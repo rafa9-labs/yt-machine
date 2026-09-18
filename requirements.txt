@@ -62,6 +62,11 @@ playwright>=1.40.0
 # If structlog fails to import → silently falls back to standard logging module.
 structlog>=24.1.0
 
+# ── Interactive Configuration ──
+# WHY: Arrow-key menus for tools/configure.py (generation profiles).
+# Prompt toolkit with validation so an invalid value cannot be saved.
+questionary>=2.0.0
+
 # LoRA local training (install separately - requires CUDA + ~25GB disk for FLUX.1-dev)
 # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 torch>=2.3.0
