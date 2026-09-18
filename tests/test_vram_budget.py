@@ -219,14 +219,14 @@ class TestModelSwitching:
     @patch('src.video.model_orchestrator.ModelOrchestrator._wait_for_vram', return_value=True)
     @patch('src.video.pixel_art_tool.signal_flux_keep_alive')
     @patch('src.video.pixel_art_tool.preload_flux_pipeline', return_value=True)
-    def test_phase_image_gen_swaps_ollama_for_flux(self, mock_preload, mock_signal, mock_wait, mock_vram):
+    def test_phase_image_gen_swaps_ollama_for_image_model(self, mock_preload, mock_signal, mock_wait, mock_vram):
         with patch.object(self.orch, '_flush_flux_if_loaded'):
             self.orch.phase_llm()
         assert 'ollama' in self.orch.loaded_models
 
         self.orch.phase_image_generation()
         assert 'ollama' not in self.orch.loaded_models
-        assert 'flux_dev_8bit' in self.orch.loaded_models
+        assert any(name.startswith('flux_dev_') for name in self.orch.loaded_models)
 
     @patch('src.video.model_orchestrator.ModelOrchestrator._get_free_vram', return_value=22.0)
     @patch('src.video.model_orchestrator.ModelOrchestrator._wait_for_vram', return_value=True)

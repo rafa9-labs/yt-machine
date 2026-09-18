@@ -346,7 +346,7 @@ llm = LLMInterface()
 log.info("llm.raw.loaded")
 
 # Video server components
-from src.video.pixel_art_tool import generate_pixel_art, _detect_failed_image, _progressive_content_scrub, _detect_visual_type, _CATEGORY_SAFE_PROMPTS
+from src.video.pixel_art_tool import generate_pixel_art
 from src.video.pexels_tool import fetch_vertical_footage
 from src.video.tts_tool import generate_voiceover
 from src.video.split_video_assembler import build_split_video
@@ -651,7 +651,7 @@ if DRY_RUN:
 if not orchestrator.phase_pre_pipeline():
     print("\nFATAL: Insufficient GPU VRAM to start the pipeline.")
     print("Close other GPU processes (Ollama, browser tabs, ComfyUI) and retry.")
-    print("Or set USE_LOCAL_FLUX=false to use cloud API instead.")
+    print("Verify the Qwen MLX-Gen model and close other memory-heavy processes, then retry.")
     sys.exit(1)
 
 # ── GPU MODEL LIFECYCLE: Transition to LLM phase ──
@@ -1341,51 +1341,85 @@ _advance_phase(PipelinePhase.TIMELINE_DONE)
 # memory returned before the image model is allowed to load.
 log.info("orchestrator.transition", phase="image_gen", note="stop text model, verify memory, enter image phase")
 
+image_generation_profile = None
 if SKIP_IMAGES:
     log.info("orchestrator.skip_images", note="Images skipped — text model lifecycle untouched")
-    flux_preloaded = False
+    image_phase_ready = False
 else:
-    # Install the MLX-Gen provider when the profile selected one.
-    if runtime is not None and _profile is not None and _profile.image is not None:
-        from src.models.registry import PROVIDER_MLXGEN
-        if _profile.image.provider == PROVIDER_MLXGEN:
-            from src.video.mlxgen_provider import MLXGenImageProvider
-            mlx_provider = MLXGenImageProvider(
-                model_path=_profile.image.path or _profile.image.id,
-                executable=(_profile.image.metadata or {}).get(
-                    "executable", os.getenv("MLXGEN_BIN",
-                    "/Users/rafa9-labs/AI/FluxSprites/.venv/bin/mlxgen")
-                ),
+    from src.models.registry import PROVIDER_MLXGEN
+    from src.video.generation_profile import (
+        GenerationProfileError,
+        QWEN_IMAGE_MODEL_ID,
+        load_generation_profile,
+    )
+
+    try:
+        image_generation_profile = load_generation_profile()
+    except GenerationProfileError as profile_error:
+        print(f"\nFATAL: Invalid Qwen generation profile — {profile_error}")
+        runtime.finish() if runtime else None
+        sys.exit(4)
+
+    if _profile is None or _profile.image is None:
+        print("\nFATAL: No Qwen image model is configured in config/model_profile.json")
+        runtime.finish() if runtime else None
+        sys.exit(4)
+    if _profile.image.provider != PROVIDER_MLXGEN:
+        print(
+            "\nFATAL: The production image provider must be MLX-Gen/Qwen; "
+            f"configured provider is {_profile.image.provider!r}"
+        )
+        runtime.finish() if runtime else None
+        sys.exit(4)
+    configured_model = (_profile.image.metadata or {}).get("model_repo", _profile.image.id)
+    model_identity = " ".join(
+        str(value or "")
+        for value in (_profile.image.id, _profile.image.path, configured_model)
+    ).lower()
+    model_marker = QWEN_IMAGE_MODEL_ID.rsplit("/", 1)[-1].lower()
+    if (
+        image_generation_profile["model_id"] != QWEN_IMAGE_MODEL_ID
+        or (
+            configured_model != image_generation_profile["model_id"]
+            and model_marker not in model_identity
+        )
+    ):
+        print(
+            "\nFATAL: Model profile is not the selected Qwen Image-2512 model — "
+            f"{configured_model!r} / {image_generation_profile['model_id']!r}"
+        )
+        runtime.finish() if runtime else None
+        sys.exit(4)
+
+    from src.video.mlxgen_provider import MLXGenImageProvider
+    mlx_provider = MLXGenImageProvider(
+        model_path=_profile.image.path or _profile.image.id,
+        executable=(_profile.image.metadata or {}).get(
+            "executable", os.getenv(
+                "MLXGEN_BIN", "/Users/rafa9-labs/AI/FluxSprites/.venv/bin/mlxgen"
             )
-            if not mlx_provider.available():
-                print(f"\nFATAL: MLX-Gen image model unavailable — {mlx_provider.missing_reason()}")
-                runtime.finish()
-                sys.exit(4)
+        ),
+    )
+    if not mlx_provider.available():
+        print(f"\nFATAL: MLX-Gen image model unavailable — {mlx_provider.missing_reason()}")
+        runtime.finish() if runtime else None
+        sys.exit(4)
 
-            # Optional style LoRA. Only applied when it already exists on
-            # disk — we never auto-download multi-GB weights mid-run, and
-            # the configured default is a FLUX.1 adapter whose
-            # compatibility with FLUX.2 Klein is unverified.
-            _lora_path = os.environ.get("MLXGEN_LORA_PATH", "")
-            if _lora_path:
-                if Path(_lora_path).exists():
-                    mlx_provider.set_loras(
-                        [_lora_path],
-                        [float(os.environ.get("MLXGEN_LORA_SCALE", "0.8"))],
-                    )
-                    log.info("mlxgen.lora_configured", path=_lora_path)
-                else:
-                    log.warning("mlxgen.lora_missing", path=_lora_path)
+    lora = image_generation_profile.get("lora") or {}
+    lora_path = lora.get("path")
+    if lora_path and not Path(lora_path).exists():
+        print(f"\nFATAL: Configured Qwen LoRA is missing — {lora_path}")
+        runtime.finish() if runtime else None
+        sys.exit(4)
+    if lora_path:
+        mlx_provider.set_loras([lora_path], [float(lora.get("scale", 1.0))])
+        log.info("mlxgen.lora_configured", path=lora_path, scale=lora.get("scale"))
 
-            from src.video.pixel_art_tool import set_mlxgen_provider
-            set_mlxgen_provider(mlx_provider)
-        else:
-            log.warning("orchestrator.image_provider_unsupported",
-                        provider=_profile.image.provider,
-                        note="Only MLX-Gen is supported on Apple Silicon; continuing with legacy path")
+    from src.video.pixel_art_tool import set_mlxgen_provider
+    set_mlxgen_provider(mlx_provider)
 
-    flux_preloaded = orchestrator.phase_image_generation()
-    if flux_preloaded:
+    image_phase_ready = orchestrator.phase_image_generation()
+    if image_phase_ready:
         log.info("orchestrator.image_phase_ready", note="Text model stopped, image phase active")
     else:
         log.error("orchestrator.image_phase_failed", note="Image phase could not start")
@@ -1426,8 +1460,10 @@ try:
         import shutil
         from PIL import Image as PILImage
 
-        base_seed = project_id % (2 ** 32)
-        log.info("pixel_art.batch_seed", seed=base_seed)
+        seed_pool = list((image_generation_profile or {}).get(
+            "seed_pool", [project_id % (2 ** 32)]
+        ))
+        log.info("pixel_art.seed_pool", seeds=seed_pool)
 
         # When a managed local image provider is active, a generation failure
         # is an error to fix — not a reason to emit placeholders.
@@ -1502,7 +1538,7 @@ try:
             scrub_level = 0
 
             for attempt in range(4):
-                seed = base_seed + scene_idx + (attempt * 100)
+                seed = seed_pool[(scene_idx + attempt) % len(seed_pool)]
                 log.debug("pixel_art.attempt", scene=scene_name, attempt=attempt + 1)
                 art_result = generate_pixel_art(current_prompt, script_text=story_text, seed=seed)
 
@@ -1518,12 +1554,12 @@ try:
                 if art_result.get('success') and art_result.get('detected_failure'):
                     log.warning("pixel_art.failed_detection", scene=scene_name, reason=art_result['detected_failure'])
                     scrub_level = min(scrub_level + 1, 3)
-                    visual_type = _detect_visual_type(current_prompt)
-                    scrubbed = _progressive_content_scrub(full_prompt, visual_type, level=scrub_level)
-                    if scrubbed != full_prompt:
-                        current_prompt = scrubbed
-                    elif fallback_desc:
-                        current_prompt = fallback_desc
+                    adjusted = adjust_prompt_for_retry(
+                        current_prompt, art_result['detected_failure'], attempt + 1
+                    )
+                    if adjusted == current_prompt and fallback_desc:
+                        adjusted = fallback_desc
+                    current_prompt = adjusted
                     if attempt < 3:
                         continue
                     else:
@@ -1537,12 +1573,6 @@ try:
                         if adjusted == full_prompt and fallback_desc:
                             adjusted = fallback_desc
                         current_prompt = adjusted
-                        # On 4th attempt (last), use category-safe prompt
-                        if attempt == 2:
-                            visual_type = _detect_visual_type(full_prompt)
-                            safe_prompt = _CATEGORY_SAFE_PROMPTS.get(visual_type, _CATEGORY_SAFE_PROMPTS.get('general', ''))
-                            if safe_prompt:
-                                current_prompt = safe_prompt
                         continue
                     else:
                         break
@@ -1575,14 +1605,7 @@ try:
                         adjusted = adjust_prompt_for_retry(full_prompt, qa_result.get('reason', ''), attempt + 1)
                         if adjusted == full_prompt and fallback_desc:
                             adjusted = fallback_desc
-                        # On last QA retry, use category-safe prompt
-                        if attempt == 2:
-                            visual_type = _detect_visual_type(full_prompt)
-                            safe_prompt = _CATEGORY_SAFE_PROMPTS.get(visual_type, _CATEGORY_SAFE_PROMPTS.get('general', ''))
-                            if safe_prompt:
-                                current_prompt = safe_prompt
-                        else:
-                            current_prompt = adjusted
+                        current_prompt = adjusted
 
             if not accepted:
                 # FAIL CLOSED for managed local image models.
@@ -1962,6 +1985,14 @@ manifest = {
         'images': [str(Path(p).name) for p in generated_images],
         'voiceover': 'voiceover.mp3',
         'video': video_filename if final_video_path else None
+    },
+    'image_generation': {
+        'profile': (image_generation_profile or {}).get('name'),
+        'model': (image_generation_profile or {}).get('model_id'),
+        'lora': ((image_generation_profile or {}).get('lora') or {}).get('name'),
+        'seed_pool': (image_generation_profile or {}).get('seed_pool'),
+        'postprocess': (image_generation_profile or {}).get('postprocess'),
+        'zoom': (image_generation_profile or {}).get('zoom'),
     },
     'tts': {
         'word_timestamps': word_timestamps,

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "description": "Single source of truth for image generation style. 16 geopolitical visual categories with structured prompting.",
+  "description": "Shared pixel-art style vocabulary. Sampling and post-processing are defined in generation_profiles.json.",
 
   "style_suffix": "Retro Pixel, true 16-bit pixel art, retro SNES style, chunky pixels, low resolution, 8-bit color, isometric perspective, hard pixel edges, limited color palette, flat colors, dramatic lighting",
 
@@ -22,14 +22,14 @@
   "color_palette_prompt": "color palette: dark navy blue (#0A1628), amber orange (#FFA500), cyan blue (#00D4FF), slate gray (#4A5568)",
 
   "generation_params": {
-    "provider": "fal_ai",
-    "model": "fal-ai/flux/dev",
-    "num_inference_steps": 40,
+    "provider": "mlxgen",
+    "model": "AbstractFramework/qwen-image-2512-4bit",
+    "num_inference_steps": 20,
     "guidance_scale": 4.0,
     "output_format": "png",
     "enable_safety_checker": false,
-    "render_resolution": [768, 816],
-    "target_resolution": [1088, 1152],
+    "render_resolution": [768, 768],
+    "target_resolution": [768, 768],
     "upscale_method": "nearest",
     "max_pixels": 1000000,
     "pixel_art_enforcement_prefix": "Clean 32-bit pixel art, high contrast news graphic, isometric style, uniform grid-aligned pixels, no anti-aliasing, no color bleeding, no soft gradients",
@@ -45,14 +45,14 @@
       "PinguPlay": { "width": 512, "height": 512 },
       "PinguQuest": { "width": 768, "height": 768 },
       "PinguHero": { "width": 1024, "height": 1024 },
-      "Default": { "width": 1088, "height": 1152 }
+      "Default": { "width": 768, "height": 768 }
     }
   },
 
   "lora_defaults": {
-    "path": "prithivMLmods/Retro-Pixel-Flux-LoRA",
-    "scale": 0.85,
-    "trigger_word": "Retro Pixel"
+    "path": "$HOME/AI/FluxSprites/loras/qwen-prithiv/Qwen-Image-2512-Master-Pixel-Art-LoRA.safetensors",
+    "scale": 0.70,
+    "trigger_word": "Pixel Art"
   },
 
   "lora_by_visual_type": {
