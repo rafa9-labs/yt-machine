@@ -2,11 +2,41 @@
 
 import pytest
 
-from tools.run_image_acceptance import parse_seeds, select_scenes
+from tools.run_image_acceptance import (
+    build_lora_variants,
+    parse_lora_values,
+    parse_seeds,
+    select_scenes,
+)
 
 
 def test_parse_seeds():
     assert parse_seeds("42, 137,891") == [42, 137, 891]
+
+
+def test_parse_lora_values_accepts_repeatable_and_comma_separated_choices():
+    assert parse_lora_values(["none,/tmp/redmond.safetensors", "/tmp/prithiv.safetensors"]) == [
+        "none",
+        "/tmp/redmond.safetensors",
+        "/tmp/prithiv.safetensors",
+    ]
+
+
+def test_build_lora_variants_accepts_base_model_choice():
+    profile = {"model": {"family": "qwen-image"}, "lora": None}
+
+    variants = build_lora_variants(profile, ["none"], compare=False)
+
+    assert len(variants) == 1
+    assert variants[0].label == "none"
+    assert variants[0].path is None
+
+
+def test_build_lora_variants_requires_two_choices_for_comparison():
+    profile = {"model": {"family": "qwen-image"}, "lora": None}
+
+    with pytest.raises(ValueError, match="at least two"):
+        build_lora_variants(profile, ["none"], compare=True)
 
 
 def test_select_scenes_uses_saved_real_scene_descriptions():

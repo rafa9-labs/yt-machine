@@ -624,8 +624,8 @@ def _check_dependencies():
     import torch
     if not torch.cuda.is_available():
         print("ERROR: CUDA not available. Local training requires a GPU.")
-        print("  For CPU-only environments, use fal.ai training instead:")
-        print("  python tools/train_style_lora.py training_data/")
+        print("  This trainer does not support Apple MPS or CPU-only training.")
+        print("  Run it on a CUDA machine with the required dependencies installed.")
         sys.exit(1)
 
     vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9

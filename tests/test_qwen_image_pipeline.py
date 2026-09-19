@@ -7,6 +7,7 @@ from PIL import Image
 
 from src.video import pixel_art_tool
 from src.video.generation_profile import GenerationProfileError
+from src.video.lora_registry import LoraSpec
 
 
 def _profile():
@@ -128,3 +129,38 @@ def test_qwen_tool_rejects_reference_images():
     )
     assert result["success"] is False
     assert "text-to-image only" in result["error"]
+
+
+def test_qwen_tool_rejects_a_lora_for_another_model_family(tmp_path):
+    provider = FakeQwenProvider()
+    lora_path = tmp_path / "flux-adapter.safetensors"
+    lora_path.write_bytes(b"adapter")
+    profile = _profile()
+    profile["lora"] = {
+        "name": "flux-adapter",
+        "path": str(lora_path),
+        "scale": 0.8,
+        "trigger": "Pixel Art",
+    }
+
+    with patch.object(pixel_art_tool, "_MLXGEN_PROVIDER", provider), \
+         patch(
+             "src.video.generation_profile.load_generation_profile",
+             return_value=profile,
+         ), \
+         patch(
+             "src.video.generation_profile.resolve_profile_model",
+             side_effect=lambda p, **kw: _resolved(),
+         ), \
+         patch(
+             "src.video.lora_registry.describe_lora",
+             return_value=LoraSpec(
+                 path=lora_path,
+                 name="flux-adapter",
+                 base_family="flux2-klein",
+             ),
+         ):
+        result = pixel_art_tool.generate_pixel_art("A radar tower.")
+
+    assert result["success"] is False
+    assert "incompatible" in result["error"]

@@ -41,6 +41,7 @@ structlog>=24.1.0
 # Interactive configuration tool (tools/configure.py). Arrow-key menus,
 # validation prompts, and confirmations for editing generation profiles.
 questionary>=2.0.0
+safetensors>=0.4.3
 
 faster-whisper>=1.0.0
 sentence-transformers>=2.7.0

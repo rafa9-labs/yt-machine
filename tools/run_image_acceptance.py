@@ -8,13 +8,18 @@ is copied immediately into a unique acceptance directory.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import copy
 import json
+import os
 import re
 import shutil
 import sys
+import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator, Optional
 
 from dotenv import load_dotenv
 
@@ -65,6 +70,138 @@ def _safe_name(value: str) -> str:
     return name[:60] or "scene"
 
 
+@dataclass(frozen=True)
+class LoraVariant:
+    """One adapter choice in a single-profile or comparison run."""
+
+    label: str
+    path: str | None
+    scale: float | None
+    spec: Any = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "path": self.path,
+            "scale": self.scale,
+            "adapter": self.spec.to_dict() if self.spec is not None else None,
+        }
+
+
+def parse_lora_values(raw_values: Iterable[str]) -> list[str]:
+    """Parse repeatable ``--lora`` values, accepting comma-separated paths."""
+    if isinstance(raw_values, str):
+        raw_values = [raw_values]
+    values: list[str] = []
+    for raw in raw_values:
+        values.extend(part.strip() for part in str(raw).split(",") if part.strip())
+    return values
+
+
+def _lora_variant_from_value(profile: dict[str, Any], raw: str) -> LoraVariant:
+    from src.video.generation_profile import model_family
+    from src.video.lora_registry import describe_lora, lora_matches_model
+
+    if raw.strip().lower() in {"none", "off", "disabled"}:
+        return LoraVariant(label="none", path=None, scale=None)
+
+    spec = describe_lora(Path(raw).expanduser())
+    if spec.error:
+        raise ValueError(f"LoRA {raw!r} cannot be used: {spec.error}")
+    compatible, reason = lora_matches_model(spec, model_family(profile))
+    if not compatible:
+        raise ValueError(f"LoRA {raw!r} is incompatible: {reason}")
+
+    active_lora = profile.get("lora") or {}
+    scale = float(active_lora.get("scale", 1.0))
+    return LoraVariant(
+        label=_safe_name(spec.name),
+        path=str(spec.path),
+        scale=scale,
+        spec=spec,
+    )
+
+
+def build_lora_variants(
+    profile: dict[str, Any],
+    requested: Iterable[str] = (),
+    *,
+    compare: bool = False,
+) -> list[LoraVariant]:
+    """Resolve requested adapters without changing the saved profile."""
+    values = parse_lora_values(requested)
+    if not values:
+        active_lora = profile.get("lora") or {}
+        active_path = active_lora.get("path")
+        values = [str(active_path)] if active_path else ["none"]
+
+    if compare and len(values) < 2:
+        raise ValueError("--compare requires at least two --lora choices")
+    if not compare and len(values) > 1:
+        raise ValueError("pass --compare when running more than one LoRA choice")
+
+    variants: list[LoraVariant] = []
+    seen: set[str] = set()
+    label_counts: dict[str, int] = {}
+    for raw in values:
+        variant = _lora_variant_from_value(profile, raw)
+        key = variant.path or "__none__"
+        if key in seen:
+            raise ValueError(f"duplicate LoRA choice: {raw}")
+        seen.add(key)
+        label_counts[variant.label] = label_counts.get(variant.label, 0) + 1
+        if label_counts[variant.label] > 1:
+            variant = LoraVariant(
+                label=f"{variant.label}-{label_counts[variant.label]}",
+                path=variant.path,
+                scale=variant.scale,
+                spec=variant.spec,
+            )
+        variants.append(variant)
+    return variants
+
+
+def _variant_profile(profile: dict[str, Any], variant: LoraVariant) -> dict[str, Any]:
+    """Create an in-memory profile with one adapter choice applied."""
+    selected = copy.deepcopy(profile)
+    selected.pop("name", None)
+    if variant.path is None:
+        selected["lora"] = None
+        return selected
+
+    previous = selected.get("lora") or {}
+    adapter = variant.spec
+    selected["lora"] = {
+        "name": adapter.name if adapter is not None else variant.label,
+        "path": variant.path,
+        "scale": variant.scale if variant.scale is not None else 1.0,
+        "trigger": (
+            adapter.trigger if adapter is not None and adapter.trigger
+            else previous.get("trigger", "Pixel Art")
+        ),
+    }
+    if adapter is not None:
+        selected["lora"].update({
+            "base_family": adapter.base_family,
+            "rank": adapter.rank,
+        })
+    return selected
+
+
+@contextlib.contextmanager
+def _use_profile_file(path: Path) -> Iterator[None]:
+    """Temporarily point profile loading at a comparison-only JSON file."""
+    previous = os.environ.get("YT_GENERATION_PROFILES_PATH")
+    os.environ["YT_GENERATION_PROFILES_PATH"] = str(path)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("YT_GENERATION_PROFILES_PATH", None)
+        else:
+            os.environ["YT_GENERATION_PROFILES_PATH"] = previous
+
+
 def _copy_result(
     result: dict[str, Any],
     target: Path,
@@ -72,6 +209,7 @@ def _copy_result(
     scene_name: str,
     seed: int,
     source_script: Path,
+    variant: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Copy one production result and attach acceptance metadata."""
     from PIL import Image
@@ -95,6 +233,7 @@ def _copy_result(
         "scene": scene_name,
         "seed": seed,
         "source_script": str(source_script),
+        "variant": variant,
     }
     provenance_target = write_provenance(target, payload)
 
@@ -118,6 +257,7 @@ def _copy_result(
         "steps": result.get("steps"),
         "guidance": result.get("guidance"),
         "lora_scale": (result.get("postprocess") or {}).get("lora_scale"),
+        "variant": variant,
     }
 
 
@@ -137,6 +277,7 @@ def run(args: argparse.Namespace) -> int:
     payload = json.loads(source_script.read_text(encoding="utf-8"))
     scenes = select_scenes(payload, args.scenes)
     seeds = parse_seeds(args.seeds)
+    compare = bool(getattr(args, "compare", False))
 
     if args.guidance is not None:
         set_overrides({"guidance": args.guidance})
@@ -157,13 +298,11 @@ def run(args: argparse.Namespace) -> int:
     if not provider.available():
         raise ValueError(f"MLX-Gen unavailable: {provider.missing_reason()}")
 
-    lora = profile.get("lora") or {}
-    lora_path = lora.get("path")
-    if lora_path:
-        if not Path(lora_path).exists():
-            raise ValueError(f"configured LoRA is missing: {lora_path}")
-        provider.set_loras([lora_path], [float(lora.get("scale", 1.0))])
-    set_mlxgen_provider(provider)
+    variants = build_lora_variants(
+        profile,
+        getattr(args, "lora", []),
+        compare=compare,
+    )
 
     # Default the corpus directory to the profile that produced it, so runs
     # against different models do not overwrite each other.
@@ -171,51 +310,98 @@ def run(args: argparse.Namespace) -> int:
     output_dir = Path(output_arg).expanduser()
     if not output_dir.is_absolute():
         output_dir = ROOT / output_dir
+    if compare:
+        output_dir = output_dir / "compare"
     output_dir.mkdir(parents=True, exist_ok=True)
     script_text_path = source_script.with_name("script.txt")
     script_text = script_text_path.read_text(encoding="utf-8") if script_text_path.exists() else ""
 
     records: list[dict[str, Any]] = []
     started = time.monotonic()
-    report = output_dir / "acceptance_report.json"
+    report = output_dir / (
+        "comparison_report.json" if compare else "acceptance_report.json"
+    )
     status = "running"
     error = None
     try:
-        total = len(scenes) * len(seeds)
-        for scene_index, scene in enumerate(scenes, 1):
-            scene_name = str(scene.get("scene") or f"scene_{scene_index}")
-            prompt = str(scene["description"]).strip()
-            for seed in seeds:
-                completed = len(records) + 1
-                print(f"[{completed}/{total}] {scene_name} seed={seed}", flush=True)
-                image_started = time.monotonic()
-                result = generate_pixel_art(prompt, script_text=script_text, seed=seed)
-                if not result.get("success"):
-                    raise RuntimeError(
-                        f"generation failed for {scene_name} seed {seed}: "
-                        f"{result.get('error', 'unknown error')}"
-                    )
-                if result.get("detected_failure"):
-                    raise RuntimeError(
-                        f"quality check failed for {scene_name} seed {seed}: "
-                        f"{result['detected_failure']}"
-                    )
-                target = output_dir / (
-                    f"{scene_index:02d}_{_safe_name(scene_name)}_seed{seed}.png"
+        with tempfile.TemporaryDirectory(prefix="yt-machine-lora-") as temp_dir:
+            temp_root = Path(temp_dir)
+            for variant_index, variant in enumerate(variants, 1):
+                variant_dir = output_dir / variant.label if compare else output_dir
+                variant_dir.mkdir(parents=True, exist_ok=True)
+                variant_profile = _variant_profile(profile, variant)
+                profile_file = temp_root / f"profile_{variant_index}.json"
+                profile_file.write_text(
+                    json.dumps({
+                        "version": 1,
+                        "active_profile": profile["name"],
+                        "profiles": {profile["name"]: variant_profile},
+                    }, indent=2),
+                    encoding="utf-8",
                 )
-                record = _copy_result(
-                    result, target, scene_index, scene_name, seed, source_script
-                )
-                record["lora_scale"] = float(
-                    (profile.get("lora") or {}).get("scale", 1.0)
-                )
-                record["duration_s"] = round(time.monotonic() - image_started, 2)
-                records.append(record)
-                print(
-                    f"  OK {record['size'][0]}x{record['size'][1]}, "
-                    f"{record['colors']} colors, {record['duration_s']}s",
-                    flush=True,
-                )
+
+                with _use_profile_file(profile_file):
+                    if variant.path:
+                        provider.set_loras([variant.path], [variant.scale or 1.0])
+                    else:
+                        provider.set_loras([], [])
+                    set_mlxgen_provider(provider)
+
+                    total = len(scenes) * len(seeds)
+                    for scene_index, scene in enumerate(scenes, 1):
+                        scene_name = str(scene.get("scene") or f"scene_{scene_index}")
+                        prompt = str(scene["description"]).strip()
+                        for seed in seeds:
+                            completed = len(
+                                [
+                                    record
+                                    for record in records
+                                    if record["variant"]["label"] == variant.label
+                                ]
+                            ) + 1
+                            print(
+                                f"[{variant.label} {completed}/{total}] "
+                                f"{scene_name} seed={seed}",
+                                flush=True,
+                            )
+                            image_started = time.monotonic()
+                            result = generate_pixel_art(
+                                prompt, script_text=script_text, seed=seed
+                            )
+                            if not result.get("success"):
+                                raise RuntimeError(
+                                    f"generation failed for {variant.label} / "
+                                    f"{scene_name} seed {seed}: "
+                                    f"{result.get('error', 'unknown error')}"
+                                )
+                            if result.get("detected_failure"):
+                                raise RuntimeError(
+                                    f"quality check failed for {variant.label} / "
+                                    f"{scene_name} seed {seed}: "
+                                    f"{result['detected_failure']}"
+                                )
+                            target = variant_dir / (
+                                f"{scene_index:02d}_{_safe_name(scene_name)}_seed{seed}.png"
+                            )
+                            record = _copy_result(
+                                result,
+                                target,
+                                scene_index,
+                                scene_name,
+                                seed,
+                                source_script,
+                                variant=variant.to_dict(),
+                            )
+                            record["lora_scale"] = variant.scale
+                            record["duration_s"] = round(
+                                time.monotonic() - image_started, 2
+                            )
+                            records.append(record)
+                            print(
+                                f"  OK {record['size'][0]}x{record['size'][1]}, "
+                                f"{record['colors']} colors, {record['duration_s']}s",
+                                flush=True,
+                            )
         status = "complete"
     except Exception as exc:
         status = "failed"
@@ -229,11 +415,13 @@ def run(args: argparse.Namespace) -> int:
                     "error": error,
                     "source_script": str(source_script),
                     "profile": profile["name"],
-                    "model": profile["model_id"],
+                    "model": model_match_key(profile),
                     "scenes_requested": len(scenes),
                     "seeds": seeds,
                     "guidance_override": args.guidance,
-                    "expected_images": len(scenes) * len(seeds),
+                    "compare": compare,
+                    "variants": [variant.to_dict() for variant in variants],
+                    "expected_images": len(scenes) * len(seeds) * len(variants),
                     "completed_images": len(records),
                     "duration_s": round(time.monotonic() - started, 2),
                     "images": records,
@@ -260,6 +448,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--guidance", type=float, default=None,
         help="optional one-run guidance override; baseline uses the profile value",
+    )
+    parser.add_argument(
+        "--lora", action="append", default=[], metavar="PATH|none",
+        help=("adapter choice; repeat or comma-separate for --compare. "
+              "Use 'none' for the base model"),
+    )
+    parser.add_argument(
+        "--compare", action="store_true",
+        help="render every --lora choice with identical scenes and seeds",
     )
     return parser
 
