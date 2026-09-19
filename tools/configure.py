@@ -51,6 +51,12 @@ from src.video.generation_profile import (  # noqa: E402
     validate_generation_profile,
 )
 
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DISABLE_LORA = object()
+_MANUAL_LORA = object()
+_KEEP_LORA = object()
+
 try:
     import questionary
     from questionary import Style
@@ -216,6 +222,7 @@ def _edit_model_block(profile: Dict[str, Any]) -> None:
     from src.models.registry import list_mlxgen_models
 
     from src.video.generation_profile import model_family, model_match_key
+    from src.video.lora_registry import normalize_family
 
     current = model_match_key(profile)
     try:
@@ -244,15 +251,125 @@ def _edit_model_block(profile: Dict[str, Any]) -> None:
         return
 
     label = selected
-    profile["model"] = {"match": label, "family": model_family(profile) or ""}
+    selected_spec = next((spec for spec in specs if spec.id == selected), None)
+    family = normalize_family(label)
+    if selected_spec:
+        family = normalize_family(selected_spec.id) or normalize_family(selected_spec.path)
+    profile["model"] = {"match": label, "family": family or model_family(profile) or ""}
     profile.pop("model_id", None)  # superseded by the model block
     print(f"  Model set to {label}")
+
+
+def _lora_label(spec, current_path: str, model_family_name: str) -> str:
+    """Build a compact choice label without hiding compatibility information."""
+    marker = "  (current)" if str(spec.path) == current_path else ""
+    rank = f"rank {spec.rank}" if spec.rank else "rank ?"
+    family = spec.base_family or "family ?"
+    label = f"{spec.name}  [{rank}; {family}]{marker}"
+    if spec.error:
+        return f"{label}  [unreadable: {spec.error}]"
+
+    from src.video.lora_registry import lora_matches_model
+
+    compatible, reason = lora_matches_model(spec, model_family_name)
+    if not compatible:
+        return f"{label}  [incompatible: {reason}]"
+    return label
+
+
+def _select_lora(profile: Dict[str, Any]):
+    """Return a discovered adapter, or a sentinel for disable/keep/manual."""
+    from src.video.generation_profile import model_family
+    from src.video.lora_registry import (
+        describe_lora,
+        discover_loras,
+        lora_matches_model,
+    )
+
+    current = profile.get("lora") or {}
+    current_path = str(current.get("path") or "")
+    current_path = str(Path(current_path).expanduser()) if current_path else ""
+    family = model_family(profile)
+    specs = discover_loras()
+    choices = [questionary.Choice("Disable LoRA", value=_DISABLE_LORA)]
+    discovered_paths = set()
+
+    for spec in specs:
+        path_key = str(spec.path)
+        discovered_paths.add(path_key)
+        compatible, reason = lora_matches_model(spec, family)
+        disabled = spec.error or (not compatible and reason)
+        choices.append(
+            questionary.Choice(
+                _lora_label(spec, current_path, family),
+                value=spec,
+                disabled=disabled or None,
+            )
+        )
+
+    if current_path and current_path not in discovered_paths:
+        choices.append(
+            questionary.Choice(
+                f"Keep current (not discovered): {Path(current_path).name}",
+                value=_KEEP_LORA,
+            )
+        )
+
+    choices.extend([
+        questionary.Separator(),
+        questionary.Choice("Enter a local adapter path", value=_MANUAL_LORA),
+    ])
+    selected = questionary.select(
+        f"Style LoRA for {family or 'the selected model'}",
+        choices=choices,
+        style=QSTYLE,
+    ).ask()
+    if selected is None:
+        raise KeyboardInterrupt
+    if selected in (_DISABLE_LORA, _KEEP_LORA):
+        return selected
+    if selected is _MANUAL_LORA:
+        path = _ask_text("LoRA path", current_path, required=True)
+        spec = describe_lora(path)
+        if spec.error:
+            raise GenerationProfileError(f"LoRA cannot be used: {spec.error}")
+        compatible, reason = lora_matches_model(spec, family)
+        if not compatible:
+            raise GenerationProfileError(f"LoRA is incompatible: {reason}")
+        return spec
+    return selected
+
+
+def _edit_lora(profile: Dict[str, Any]) -> None:
+    """Choose an adapter and edit its scale/trigger metadata."""
+    selected = _select_lora(profile)
+    if selected is _DISABLE_LORA:
+        profile["lora"] = None
+        return
+    if selected is not _KEEP_LORA:
+        previous = profile.get("lora") or {}
+        profile["lora"] = {
+            "name": selected.name,
+            "path": str(selected.path),
+            "scale": previous.get("scale", 0.8),
+            "trigger": previous.get("trigger") or selected.trigger or "Pixel Art",
+            "base_family": selected.base_family,
+            "rank": selected.rank,
+        }
+
+    lora = profile.get("lora") or {}
+    lora["scale"] = _ask_float(
+        "LoRA scale", float(lora.get("scale", 0.8)), minimum=0.0
+    )
+    lora["trigger"] = _ask_text(
+        "LoRA trigger words", lora.get("trigger", "Pixel Art")
+    )
+    profile["lora"] = lora
 
 
 def edit_profile(data: Dict[str, Any], name: str) -> bool:
     """Edit one profile in place. Returns True if anything changed."""
     profile = data["profiles"][name]
-    lora = profile.setdefault("lora", {})
     post = profile.setdefault("postprocess", {})
 
     print(f"\nEditing profile: {name}")
@@ -289,12 +406,7 @@ def edit_profile(data: Dict[str, Any], name: str) -> bool:
             "Guidance scale", float(profile.get("guidance", 4.0)), minimum=0.1)
 
         print()
-        lora["path"] = _ask_text("LoRA path (blank to disable)", lora.get("path", ""))
-        if lora.get("path"):
-            lora["scale"] = _ask_float(
-                "LoRA scale", float(lora.get("scale", 0.8)), minimum=0.0)
-            lora["trigger"] = _ask_text(
-                "LoRA trigger words", lora.get("trigger", "Pixel Art"))
+        _edit_lora(profile)
 
         seeds_raw = _ask_text(
             "Seed pool (comma-separated integers)",
@@ -421,6 +533,66 @@ def action_configure_models() -> bool:
     return False
 
 
+def action_train_lora() -> bool:
+    """Offer the repository's CUDA-only local trainer, never a cloud backend."""
+    from src.video.lora_training import check_local_training
+
+    status = check_local_training()
+    print(f"\n  {status.menu_label()}")
+    if not status.available:
+        print("  Local training was not started. Use a CUDA machine with the")
+        print("  dependencies installed, then select the generated adapter here.\n")
+        return False
+
+    try:
+        data_raw = _ask_text("Training data directory", "training_data", required=True)
+        data_dir = Path(data_raw).expanduser()
+        if not data_dir.is_absolute():
+            data_dir = PROJECT_ROOT / data_dir
+        data_dir = data_dir.resolve()
+        if not data_dir.is_dir():
+            print(f"  Training data directory not found: {data_dir}")
+            return False
+
+        steps = _ask_int("Training steps", 1200, minimum=1)
+        rank = _ask_int("LoRA rank", 16, minimum=1)
+        learning_rate = _ask_float("Learning rate", 0.0001, minimum=0.0)
+        output_raw = _ask_text("Output directory", "output/lora", required=True)
+        output_dir = Path(output_raw).expanduser()
+        if not output_dir.is_absolute():
+            output_dir = PROJECT_ROOT / output_dir
+
+        if not questionary.confirm(
+            f"Start local LoRA training in {data_dir}?",
+            default=False,
+            style=QSTYLE,
+        ).ask():
+            return False
+
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "train_lora_local.py"),
+            str(data_dir),
+            "--steps", str(steps),
+            "--rank", str(rank),
+            "--lr", str(learning_rate),
+            "--output", str(output_dir),
+        ]
+        result = subprocess.run(command, cwd=PROJECT_ROOT, check=False)
+    except (KeyboardInterrupt, GenerationProfileError, ValueError) as exc:
+        print(f"\n  Training cancelled: {exc}\n")
+        return False
+    except OSError as exc:
+        print(f"\n  Could not start local training: {exc}\n")
+        return False
+
+    if result.returncode == 0:
+        print("\n  Local training finished. Reopen profile editing to select the new adapter.\n")
+    else:
+        print(f"\n  Local training exited with status {result.returncode}.\n")
+    return False
+
+
 def action_delete(data: Dict[str, Any]) -> bool:
     names = sorted(data["profiles"])
     if len(names) <= 1:
@@ -474,6 +646,9 @@ def main() -> int:
                 label = f"{'* ' if name == active else '  '}{name}"
                 choices.append(questionary.Choice(label, value=("edit", name)))
 
+            from src.video.lora_training import check_local_training
+
+            training_status = check_local_training()
             choices.extend([
                 questionary.Separator(),
                 questionary.Choice("Switch active profile", value=("switch", None)),
@@ -482,6 +657,8 @@ def main() -> int:
                 questionary.Separator(),
                 questionary.Choice("Configure models (model_setup.py)",
                                   value=("models", None)),
+                questionary.Choice(training_status.menu_label(),
+                                  value=("train", None)),
                 questionary.Choice("Show resolved configuration", value=("show", None)),
                 questionary.Choice("Explain fixed settings", value=("fixed", None)),
                 questionary.Separator(),
@@ -512,6 +689,8 @@ def main() -> int:
                 changed = action_delete(data)
             elif kind == "models":
                 action_configure_models()
+            elif kind == "train":
+                action_train_lora()
             elif kind == "show":
                 print_profiles(path)
             elif kind == "fixed":
