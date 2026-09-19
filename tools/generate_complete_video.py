@@ -84,7 +84,7 @@ parser.add_argument('--set', action='append', default=None, metavar='KEY=VALUE',
 args = parser.parse_args()
 
 # ── GENERATION PROFILE SELECTION + OVERRIDES ──
-# Applied before any profile load so both call sites (here and
+# These are applied before any profile load so both call sites (here and
 # pixel_art_tool) observe the same values. Nothing is written to disk.
 from src.video.generation_profile import (
     GenerationProfileError,
@@ -94,6 +94,12 @@ from src.video.generation_profile import (
     parse_override,
     profile_path,
     set_overrides,
+)
+from src.video.pipeline_config import (
+    DEFAULT_NUM_IMAGES,
+    IMAGES_PER_STORY,
+    DEFAULT_NUM_STORIES,
+    resolve_image_limit,
 )
 
 
@@ -564,9 +570,22 @@ def _save_checkpoint(step_name, project_folder, data=None):
 
 
 # ── PIPELINE CONSTANTS ──
-NUM_STORIES = 2
-IMAGES_PER_STORY = 4
-NUM_IMAGES = NUM_STORIES * IMAGES_PER_STORY  # = 8
+NUM_STORIES = DEFAULT_NUM_STORIES
+try:
+    NUM_IMAGES = resolve_image_limit(
+        os.environ.get("YT_IMAGE_LIMIT"), maximum=DEFAULT_NUM_IMAGES
+    )
+except ValueError as exc:
+    print(f"\nFATAL: {exc}", file=sys.stderr)
+    sys.exit(2)
+IMAGE_LIMITED = NUM_IMAGES < DEFAULT_NUM_IMAGES
+if IMAGE_LIMITED:
+    log.info(
+        "pipeline.image_limit",
+        images=NUM_IMAGES,
+        full_run_images=DEFAULT_NUM_IMAGES,
+        assembly="even_scene_split",
+    )
 
 # ── LLM STEP TIMEOUTS ──
 # These are wall-clock ceilings for one LLM step. Defaults are sized for a
@@ -1530,7 +1549,7 @@ else:
         sys.exit(5)
 
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 5: PIXEL ART GENERATION (3 per story = 6 total)
+# STEP 5: PIXEL ART GENERATION (up to 8 total)
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="pixel_art")
 _step_banner("PIXEL ART GENERATION (GPU)")
@@ -1550,7 +1569,7 @@ try:
             scene_names.append(f'story_{i+1}_real_talk')
             scene_names.append(f'story_{i+1}_fallout')
 
-        for scene_name in scene_names:
+        for scene_name in scene_names[:NUM_IMAGES]:
             placeholder = PILImage.new('RGB', (1088, 1152), (10, 5, 25))
             placeholder_path = image_folder / f"{scene_name}_placeholder.png"
             placeholder.save(str(placeholder_path))
@@ -1604,6 +1623,7 @@ try:
             scene_names.append(f'story_{i+1}_part2')
             scene_names.append(f'story_{i+1}_real_talk')
             scene_names.append(f'story_{i+1}_fallout')
+        scene_names = scene_names[:NUM_IMAGES]
 
         for scene_idx, scene_name in enumerate(scene_names):
             log.debug("pixel_art.generating", scene=scene_name)
@@ -1836,7 +1856,16 @@ try:
     scene_timestamps = None
     segment_timeline = script.get('segment_timeline', [])
 
-    if segment_timeline and word_timestamps:
+    if IMAGE_LIMITED:
+        # A partial image run still uses the complete two-story audio/script.
+        # Even splitting keeps every generated image visible instead of
+        # assigning missing story-two indices to the final image.
+        log.info(
+            "assembly.even_scene_split",
+            images=len(generated_images),
+            full_run_images=DEFAULT_NUM_IMAGES,
+        )
+    elif segment_timeline and word_timestamps:
         num_images = len(generated_images)
         image_times = [{'start': None, 'end': None} for _ in range(num_images)]
 
