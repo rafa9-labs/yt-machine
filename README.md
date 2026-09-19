@@ -171,6 +171,7 @@ them. The settings that most affect behaviour:
 | `OLLAMA_HOST` | Endpoint for the Ollama-compatible text server |
 | `YT_GENERATION_PROFILE` | Active validated image-generation profile; defaults to `qwen_pixel_scene` |
 | `YT_GENERATION_PROFILES_PATH` | Optional override for the generation-profile JSON |
+| `YT_LORA_ROOTS` | Optional colon-separated adapter directories discovered by the TUI and comparison runner |
 | `MLXGEN_BIN`, `MLXGEN_TIMEOUT` | MLX-Gen executable and per-image timeout |
 | `YT_IMAGE_LIMIT` | Optional image-count limit for smoke runs; defaults to 8 |
 | `PIPELINE_TIMEOUT` | Hard ceiling for one run in seconds |
@@ -251,31 +252,200 @@ real reasons — see the notes below.
 To use a different checkpoint, add a profile naming it. Any discovered
 MLX-Gen model is eligible; the pipeline never substitutes one silently.
 
-### Interactive editor
+## TUI Guide
 
-`tools/configure.py` is an arrow-key editor for the generation profiles:
+YT Machine has two configuration tools with different responsibilities:
+
+| Tool | Configures |
+|---|---|
+| `tools/model_setup.py` | Text, image, vision, and optional embedding model roles in `config/model_profile.json` |
+| `tools/configure.py` | Image-generation profiles: checkpoint, sampling, LoRA, seeds, and pixel post-processing |
+
+Run both tools after installation. Model discovery is read-only; weights are
+not loaded until a real pipeline phase starts.
+
+### 1. Configure model roles
 
 ```bash
-python tools/configure.py           # interactive
-python tools/configure.py --show    # print profiles and exit
+python tools/model_setup.py --show
+python tools/model_setup.py
 ```
 
-Every save is validated before it reaches disk, so the tool cannot write a
-profile the pipeline would reject. Editable fields are the target model,
-resolution, diffusion steps, guidance, LoRA path/scale/trigger, seed pool, and
-the pixel-grid post-processing (logical size, output size, palette size,
-resample filters). The menu also switches the active profile, duplicates or
-deletes profiles, and delegates text-model selection to `tools/model_setup.py`.
+The interactive role setup walks through:
 
-Validation is structural, so the editor works on a machine with no image model
-installed — whether the model a profile names is actually present is checked
-separately, at pipeline start.
+1. **Text**: required; used for article analysis, scriptwriting, and visual prompts.
+2. **Image**: required in the role profile; the generation profile selects the actual MLX-Gen checkpoint used at runtime.
+3. **Vision**: optional; used for image-quality checks.
+4. **Embedding**: optional; used by vector memory and semantic deduplication.
 
-Values that are **not** editable are shown with an explanation: the default
-2-story / 4-beat / 8-image structure is encoded in the synthesis prompt and
-timeline builder, while `YT_IMAGE_LIMIT` provides a deliberate smoke-run
-override. Continuous camera zoom is disabled because rescaling destroys the
-logical pixel grid the profile exists to preserve.
+Press Enter to keep an existing role selection. Optional roles can be skipped.
+The saved file is `config/model_profile.json`. For non-interactive setup, use
+`python tools/model_setup.py --auto`.
+
+### 2. Open the generation TUI
+
+```bash
+python tools/configure.py
+```
+
+To inspect profiles without opening the interactive menu:
+
+```bash
+python tools/configure.py --show
+```
+
+Use `--path /path/to/generation_profiles.json` when editing a separate profile
+file. The active profile is marked with `*`.
+Use the Up/Down arrows to move, Enter to select, and Ctrl-C to leave without
+saving.
+
+### 3. Use the main menu
+
+The top-level menu contains one entry for each profile and these actions:
+
+| Menu item | Action |
+|---|---|
+| A profile name | Edit that profile's model, sampling, LoRA, seeds, and post-processing |
+| `Switch active profile` | Change the default profile written in the profile file |
+| `Duplicate a profile` | Create a separate profile for experiments without changing the source profile |
+| `Delete a profile` | Remove a profile; the active profile is moved to another remaining profile |
+| `Configure models (model_setup.py)` | Open the role-based model selector |
+| `Train a LoRA locally` | Run the CUDA-only local trainer when the required hardware and packages are available |
+| `Show resolved configuration` | Print profile summaries, model paths, sampling, LoRA, seeds, and post-processing |
+| `Explain fixed settings` | Explain the fixed 2-story, 4-beat, 8-image video contract |
+| `Save and exit` | Validate and atomically write changes |
+| `Exit without saving` | Discard all changes made during this TUI session |
+
+If local training is unavailable, its menu label includes the reason. Selecting
+it only prints the status; it never switches to cloud training.
+
+### 4. Edit a generation profile
+
+Select a profile name, then follow the prompts:
+
+1. **Change the model**: choose a discovered MLX-Gen checkpoint or keep the current one. The profile owns the image model, so this is the model-switching step.
+2. **Edit sampling and resolution**: set width, height, diffusion steps, and guidance. Qwen dimensions must be multiples of 16.
+3. **Select a LoRA**: choose `Disable LoRA`, a discovered compatible adapter, or enter a local `.safetensors` path. The TUI displays adapter rank and base family; incompatible families are disabled.
+4. **Set LoRA scale and trigger words**: keep the adapter defaults or adjust them for the profile.
+5. **Set the seed pool**: enter comma-separated unique non-negative integers. The same pool makes later comparisons reproducible.
+6. **Edit pixel-grid post-processing**: optionally set logical size, output size, palette colors, and resampling filters.
+
+Every save is structurally validated before it reaches disk. Model files and
+LoRA files are checked separately when generation starts. Press Ctrl-C during
+editing to abandon the current edit without saving.
+
+Continuous camera zoom and the 2-story / 4-beat / 8-image structure are not
+editable here. Use `YT_IMAGE_LIMIT` only for a deliberate smoke run.
+
+### LoRA adapters and local training
+
+The editor discovers `.safetensors` adapters under `output/lora`,
+`$HOME/AI/FluxSprites/loras`, `$HOME/models/loras`, and any directories in
+`YT_LORA_ROOTS`. It reads adapter metadata without loading model weights and
+shows the rank and base family before selection:
+
+| Choice | Meaning |
+|---|---|
+| `none` | Base model, useful as the comparison baseline |
+| Qwen Redmond | Qwen-Image adapter, rank 32, pixel-art trigger metadata |
+| Qwen Prithiv | Qwen-Image adapter, rank 64, current default |
+
+Adapters targeting another family are marked incompatible and cannot be chosen
+for the profile. The runtime repeats this check before generation. A manually
+entered adapter path is accepted only when it exists and its metadata is
+readable.
+
+The `Train a LoRA locally` menu item delegates only to
+`tools/train_lora_local.py`. That trainer is CUDA-only, targets FLUX.1-dev, and
+does not support Apple MPS. On Apple Silicon the TUI reports the missing
+capability instead of attempting a long failing run. The tracked
+`training_data/` corpus was prepared for FLUX.1-dev and is not a Qwen-Image
+training set.
+
+### 5. Generate a video
+
+Use this sequence after configuring the model roles and image profile.
+
+**Inspect the configuration first**
+
+```bash
+python tools/model_setup.py --show
+python tools/configure.py --show
+python tools/generate_complete_video.py --list-profiles
+python tools/generate_complete_video.py --print-config
+```
+
+`--print-config` resolves the selected image checkpoint when possible and shows
+the active profile, LoRA, sampling values, seeds, and post-processing. Fix any
+`NOT FOUND` model before starting a real run.
+
+**Run the wiring check**
+
+```bash
+python tools/generate_complete_video.py --dry-run
+```
+
+The dry-run uses canned articles and script data. It does not fetch news, call
+models, generate images, or send Telegram. It writes a small project artifact
+under `output/projects/`.
+
+**Run a real smoke test**
+
+```bash
+YT_IMAGE_LIMIT=4 python tools/generate_complete_video.py --no-telegram
+```
+
+This performs a real pipeline run but limits image generation to four images.
+The production default is eight images. `--no-telegram` keeps the video local
+even when Telegram credentials are configured.
+
+**Generate the full video**
+
+```bash
+python tools/generate_complete_video.py --no-telegram
+```
+
+The full run collects news, analyzes and scripts two stories, generates eight
+pixel-art scenes, creates voiceover, assembles the 1080x1920 video with
+`ffmpeg`, and writes platform metadata. Omit `--no-telegram` only when the
+Telegram variables are configured and delivery is intended.
+
+Useful run-time options:
+
+```bash
+# Use another image profile for this run without editing the file
+python tools/generate_complete_video.py \
+  --generation-profile flux_klein_pixel_scene --no-telegram
+
+# Change sampling in memory for one experiment
+python tools/generate_complete_video.py \
+  --set steps=12 --set lora.scale=0.55 --no-telegram
+
+# Assemble/test the pipeline with placeholder images
+python tools/generate_complete_video.py --skip-images --no-telegram
+
+# Resume a failed project that contains checkpoint.json
+python tools/generate_complete_video.py \
+  --resume output/projects/video_<timestamp> --no-telegram
+```
+
+Do not combine `--dry-run` with a real model experiment. Use `--dry-run` for
+installation validation, `YT_IMAGE_LIMIT=4` for a real smoke test, and the
+default command for the complete production run.
+
+The project directory contains the final assets:
+
+```text
+output/projects/video_<timestamp>/
+  video_<timestamp>.mp4
+  voiceover.mp3
+  script.txt
+  script_segments.json
+  images/
+  platform_metadata.json
+  manifest.json
+  checkpoint.json
+```
 
 ### Image acceptance corpus
 
@@ -292,6 +462,22 @@ whichever model the active generation profile names, so the corpus can be
 regenerated against any profile. An optional guidance experiment can be run
 separately with `--guidance 3.5` or `--guidance 4.5`; the baseline profile
 remains unchanged.
+
+To compare adapters fairly, use the same scenes and seeds for every choice.
+The command does not modify the saved profile:
+
+```bash
+python tools/run_image_acceptance.py \
+  --script output/projects/video_<timestamp>/script_segments.json \
+  --scenes 2 --seeds 42 --compare \
+  --lora none \
+  --lora "$HOME/AI/FluxSprites/loras/qwen-redmond/[Qwen.Image]PixelArt_Redmond.safetensors" \
+  --lora "$HOME/AI/FluxSprites/loras/qwen-prithiv/Qwen-Image-2512-Master-Pixel-Art-LoRA.safetensors"
+```
+
+Comparison images are grouped under `output/acceptance/<profile>/compare/`,
+with `comparison_report.json` recording each adapter, seed, duration, and
+provenance.
 
 ## Architecture
 
