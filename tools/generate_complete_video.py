@@ -72,7 +72,129 @@ parser.add_argument('--skip-images', action='store_true', help='Use placeholder 
 parser.add_argument('--no-telegram', action='store_true', help='Skip Telegram delivery')
 parser.add_argument('--dry-run', action='store_true',
                     help='Run pipeline with canned data (no API calls) to validate wiring')
+parser.add_argument('--generation-profile', type=str, default=None, metavar='NAME',
+                    help='Image generation profile to use (overrides YT_GENERATION_PROFILE)')
+parser.add_argument('--list-profiles', action='store_true',
+                    help='List available image generation profiles and exit')
+parser.add_argument('--print-config', action='store_true',
+                    help='Print the resolved model + generation configuration and exit')
+parser.add_argument('--set', action='append', default=None, metavar='KEY=VALUE',
+                    help='Ephemeral generation override (repeatable). '
+                         'Allowed: width, height, steps, guidance, lora.scale')
 args = parser.parse_args()
+
+# ── GENERATION PROFILE SELECTION + OVERRIDES ──
+# These are applied before any profile load so both call sites (here and
+# pixel_art_tool) observe the same values. Nothing is written to disk.
+from src.video.generation_profile import (
+    GenerationProfileError,
+    describe_profiles,
+    get_overrides,
+    load_generation_profile,
+    model_display_name,
+    model_family,
+    model_match_key,
+    parse_override,
+    profile_path,
+    resolve_profile_model,
+    set_overrides,
+)
+from src.video.pipeline_config import (
+    DEFAULT_NUM_IMAGES,
+    IMAGES_PER_STORY,
+    DEFAULT_NUM_STORIES,
+    resolve_image_limit,
+)
+
+
+def _print_profiles() -> None:
+    print(f"\nGeneration profiles: {profile_path()}\n")
+    try:
+        summaries = describe_profiles()
+    except GenerationProfileError as exc:
+        print(f"  ERROR: {exc}")
+        return
+    for entry in summaries:
+        marker = "*" if entry["active"] else " "
+        if not entry["valid"]:
+            print(f" {marker} {entry['name']}  [INVALID] {entry['error']}")
+            continue
+        print(f" {marker} {entry['name']}")
+        print(f"      model    : {entry['model_id']} ({entry['provider']})")
+        print(f"      family   : {entry.get('model_family') or '(unspecified)'}")
+        print(f"      sampling : {entry['width']}x{entry['height']}, "
+              f"{entry['steps']} steps, guidance {entry['guidance']}")
+        print(f"      lora     : {entry['lora_name']} (scale {entry['lora_scale']})")
+        print(f"      zoom     : {entry['zoom']}")
+    print("\n  (* = active in file; --generation-profile NAME selects another)\n")
+
+
+if args.list_profiles:
+    _print_profiles()
+    sys.exit(0)
+
+if args.generation_profile:
+    os.environ["YT_GENERATION_PROFILE"] = args.generation_profile
+
+if args.set:
+    try:
+        set_overrides(dict(parse_override(raw) for raw in args.set))
+    except GenerationProfileError as exc:
+        print(f"\nFATAL: {exc}")
+        sys.exit(2)
+
+_OVERRIDE_NOTE = str(get_overrides() or "")
+
+if args.print_config:
+    try:
+        _gen = load_generation_profile()
+    except GenerationProfileError as exc:
+        print(f"\nFATAL: {exc}")
+        sys.exit(2)
+
+    # Imported here rather than at module scope: this path exits before the
+    # heavy pipeline imports further down the file.
+    from src.models.profile import ModelProfile, ProfileError
+    try:
+        _model = ModelProfile.load()
+    except ProfileError as exc:
+        _model = None
+        print(f"\n(no model profile: {exc})")
+
+    print("\nResolved configuration\n" + "=" * 62)
+    if _model is not None:
+        for _role in ("text", "image", "vision", "embedding"):
+            _spec = getattr(_model, _role, None)
+            if _spec is None:
+                print(f"  {_role:<10} (not configured)")
+            else:
+                print(f"  {_role:<10} {_spec.provider:<10} {_spec.id}")
+    print("-" * 62)
+    print(f"  profile    {_gen['name']}")
+    print(f"  model      {model_match_key(_gen)} ({_gen['provider']})")
+    print(f"  family     {model_family(_gen)}")
+    # Resolution is attempted but never fatal here: --print-config is the
+    # command you run to find out WHY a model is not working.
+    try:
+        _resolved = resolve_profile_model(_gen)
+        print(f"  resolved   {model_display_name({**_gen, 'resolved_model_path': _resolved['path']})}")
+        print(f"  path       {_resolved['path']}")
+    except GenerationProfileError as _resolve_err:
+        print(f"  resolved   NOT FOUND — {_resolve_err}")
+    print(f"  sampling   {_gen['width']}x{_gen['height']}, "
+          f"{_gen['steps']} steps, guidance {_gen['guidance']}")
+    _lora = _gen.get("lora") or {}
+    print(f"  lora       {_lora.get('name')} (scale {_lora.get('scale')})")
+    print(f"  trigger    {_lora.get('trigger')}")
+    print(f"  postproc   {_gen['postprocess']}")
+    print(f"  seeds      {_gen['seed_pool']}")
+    print(f"  zoom       {_gen['zoom']}")
+    if _OVERRIDE_NOTE:
+        print("-" * 62)
+        print(f"  overrides  {_OVERRIDE_NOTE}")
+    print("=" * 62 + "\n")
+    sys.exit(0)
+
 if args.skip_images:
     SKIP_IMAGES = True
 DRY_RUN = args.dry_run
@@ -346,7 +468,7 @@ llm = LLMInterface()
 log.info("llm.raw.loaded")
 
 # Video server components
-from src.video.pixel_art_tool import generate_pixel_art, _detect_failed_image, _progressive_content_scrub, _detect_visual_type, _CATEGORY_SAFE_PROMPTS
+from src.video.pixel_art_tool import generate_pixel_art
 from src.video.pexels_tool import fetch_vertical_footage
 from src.video.tts_tool import generate_voiceover
 from src.video.split_video_assembler import build_split_video
@@ -462,9 +584,22 @@ def _save_checkpoint(step_name, project_folder, data=None):
 
 
 # ── PIPELINE CONSTANTS ──
-NUM_STORIES = 2
-IMAGES_PER_STORY = 4
-NUM_IMAGES = NUM_STORIES * IMAGES_PER_STORY  # = 8
+NUM_STORIES = DEFAULT_NUM_STORIES
+try:
+    NUM_IMAGES = resolve_image_limit(
+        os.environ.get("YT_IMAGE_LIMIT"), maximum=DEFAULT_NUM_IMAGES
+    )
+except ValueError as exc:
+    print(f"\nFATAL: {exc}", file=sys.stderr)
+    sys.exit(2)
+IMAGE_LIMITED = NUM_IMAGES < DEFAULT_NUM_IMAGES
+if IMAGE_LIMITED:
+    log.info(
+        "pipeline.image_limit",
+        images=NUM_IMAGES,
+        full_run_images=DEFAULT_NUM_IMAGES,
+        assembly="even_scene_split",
+    )
 
 # ── LLM STEP TIMEOUTS ──
 # These are wall-clock ceilings for one LLM step. Defaults are sized for a
@@ -651,7 +786,7 @@ if DRY_RUN:
 if not orchestrator.phase_pre_pipeline():
     print("\nFATAL: Insufficient GPU VRAM to start the pipeline.")
     print("Close other GPU processes (Ollama, browser tabs, ComfyUI) and retry.")
-    print("Or set USE_LOCAL_FLUX=false to use cloud API instead.")
+    print("Verify the Qwen MLX-Gen model and close other memory-heavy processes, then retry.")
     sys.exit(1)
 
 # ── GPU MODEL LIFECYCLE: Transition to LLM phase ──
@@ -1341,51 +1476,103 @@ _advance_phase(PipelinePhase.TIMELINE_DONE)
 # memory returned before the image model is allowed to load.
 log.info("orchestrator.transition", phase="image_gen", note="stop text model, verify memory, enter image phase")
 
+image_generation_profile = None
 if SKIP_IMAGES:
     log.info("orchestrator.skip_images", note="Images skipped — text model lifecycle untouched")
-    flux_preloaded = False
+    image_phase_ready = False
 else:
-    # Install the MLX-Gen provider when the profile selected one.
-    if runtime is not None and _profile is not None and _profile.image is not None:
-        from src.models.registry import PROVIDER_MLXGEN
-        if _profile.image.provider == PROVIDER_MLXGEN:
-            from src.video.mlxgen_provider import MLXGenImageProvider
-            mlx_provider = MLXGenImageProvider(
-                model_path=_profile.image.path or _profile.image.id,
-                executable=(_profile.image.metadata or {}).get(
-                    "executable", os.getenv("MLXGEN_BIN",
-                    "/Users/rafa9-labs/AI/FluxSprites/.venv/bin/mlxgen")
-                ),
+    from src.models.registry import PROVIDER_MLXGEN
+    from src.video.generation_profile import (
+        GenerationProfileError,
+        load_generation_profile,
+        model_display_name,
+        resolve_profile_model,
+    )
+
+    try:
+        image_generation_profile = load_generation_profile()
+    except GenerationProfileError as profile_error:
+        print(f"\nFATAL: Invalid image generation profile — {profile_error}")
+        runtime.finish() if runtime else None
+        sys.exit(4)
+
+    # ── Resolve the image model from the generation profile ──
+    # The profile owns the image model, so switching models is a profile
+    # change. config/model_profile.json still records a selection for the
+    # model_setup UI; if the two disagree we warn rather than abort, because
+    # the profile is authoritative and the mismatch is a configuration
+    # staleness signal, not a reason to refuse an otherwise valid run.
+    try:
+        resolved_image = resolve_profile_model(image_generation_profile)
+    except GenerationProfileError as resolve_error:
+        print(f"\nFATAL: Cannot resolve the image model — {resolve_error}")
+        runtime.finish() if runtime else None
+        sys.exit(4)
+
+    image_model_path = resolved_image["path"]
+    image_model_label = model_display_name(
+        {**image_generation_profile, "resolved_model_path": image_model_path}
+    )
+    log.info("image.model_resolved", profile=image_generation_profile["name"],
+             model=image_model_label)
+
+    if _profile is not None and _profile.image is not None:
+        if _profile.image.provider != PROVIDER_MLXGEN:
+            print(
+                "\nFATAL: The image provider must be MLX-Gen; "
+                f"configured provider is {_profile.image.provider!r}"
             )
-            if not mlx_provider.available():
-                print(f"\nFATAL: MLX-Gen image model unavailable — {mlx_provider.missing_reason()}")
-                runtime.finish()
-                sys.exit(4)
+            runtime.finish() if runtime else None
+            sys.exit(4)
+        recorded = " ".join(
+            str(value or "")
+            for value in (_profile.image.id, _profile.image.path)
+        ).lower()
+        if image_model_label.lower() not in recorded and \
+                str(image_model_path).lower() not in recorded:
+            log.warning(
+                "image.model_profile_stale",
+                note="config/model_profile.json records a different image model "
+                     "than the active generation profile; the profile wins",
+                recorded=_profile.image.id,
+                resolved=image_model_label,
+            )
+            print(
+                f"\n  NOTE: model_profile.json records {_profile.image.id!r} but the "
+                f"active generation profile resolves to {image_model_label!r}.\n"
+                f"        Using the generation profile. Re-run tools/model_setup.py "
+                f"to sync.\n"
+            )
 
-            # Optional style LoRA. Only applied when it already exists on
-            # disk — we never auto-download multi-GB weights mid-run, and
-            # the configured default is a FLUX.1 adapter whose
-            # compatibility with FLUX.2 Klein is unverified.
-            _lora_path = os.environ.get("MLXGEN_LORA_PATH", "")
-            if _lora_path:
-                if Path(_lora_path).exists():
-                    mlx_provider.set_loras(
-                        [_lora_path],
-                        [float(os.environ.get("MLXGEN_LORA_SCALE", "0.8"))],
-                    )
-                    log.info("mlxgen.lora_configured", path=_lora_path)
-                else:
-                    log.warning("mlxgen.lora_missing", path=_lora_path)
+    from src.models.registry import DEFAULT_MLXGEN_BIN
+    from src.video.mlxgen_provider import MLXGenImageProvider
+    _executable = os.getenv("MLXGEN_BIN", DEFAULT_MLXGEN_BIN)
+    if _profile is not None and _profile.image is not None:
+        _executable = (_profile.image.metadata or {}).get("executable", _executable)
+    mlx_provider = MLXGenImageProvider(
+        model_path=image_model_path,
+        executable=_executable,
+    )
+    if not mlx_provider.available():
+        print(f"\nFATAL: MLX-Gen image model unavailable — {mlx_provider.missing_reason()}")
+        runtime.finish() if runtime else None
+        sys.exit(4)
 
-            from src.video.pixel_art_tool import set_mlxgen_provider
-            set_mlxgen_provider(mlx_provider)
-        else:
-            log.warning("orchestrator.image_provider_unsupported",
-                        provider=_profile.image.provider,
-                        note="Only MLX-Gen is supported on Apple Silicon; continuing with legacy path")
+    lora = image_generation_profile.get("lora") or {}
+    lora_path = lora.get("path")
+    if lora_path and not Path(lora_path).exists():
+        print(f"\nFATAL: Configured LoRA is missing — {lora_path}")
+        runtime.finish() if runtime else None
+        sys.exit(4)
+    if lora_path:
+        mlx_provider.set_loras([lora_path], [float(lora.get("scale", 1.0))])
+        log.info("mlxgen.lora_configured", path=lora_path, scale=lora.get("scale"))
 
-    flux_preloaded = orchestrator.phase_image_generation()
-    if flux_preloaded:
+    from src.video.pixel_art_tool import set_mlxgen_provider
+    set_mlxgen_provider(mlx_provider)
+
+    image_phase_ready = orchestrator.phase_image_generation()
+    if image_phase_ready:
         log.info("orchestrator.image_phase_ready", note="Text model stopped, image phase active")
     else:
         log.error("orchestrator.image_phase_failed", note="Image phase could not start")
@@ -1394,7 +1581,7 @@ else:
         sys.exit(5)
 
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 5: PIXEL ART GENERATION (3 per story = 6 total)
+# STEP 5: PIXEL ART GENERATION (up to 8 total)
 # ══════════════════════════════════════════════════════════════════════════
 log.info("step.start", step="pixel_art")
 _step_banner("PIXEL ART GENERATION (GPU)")
@@ -1414,7 +1601,7 @@ try:
             scene_names.append(f'story_{i+1}_real_talk')
             scene_names.append(f'story_{i+1}_fallout')
 
-        for scene_name in scene_names:
+        for scene_name in scene_names[:NUM_IMAGES]:
             placeholder = PILImage.new('RGB', (1088, 1152), (10, 5, 25))
             placeholder_path = image_folder / f"{scene_name}_placeholder.png"
             placeholder.save(str(placeholder_path))
@@ -1426,8 +1613,10 @@ try:
         import shutil
         from PIL import Image as PILImage
 
-        base_seed = project_id % (2 ** 32)
-        log.info("pixel_art.batch_seed", seed=base_seed)
+        seed_pool = list((image_generation_profile or {}).get(
+            "seed_pool", [project_id % (2 ** 32)]
+        ))
+        log.info("pixel_art.seed_pool", seeds=seed_pool)
 
         # When a managed local image provider is active, a generation failure
         # is an error to fix — not a reason to emit placeholders.
@@ -1466,6 +1655,7 @@ try:
             scene_names.append(f'story_{i+1}_part2')
             scene_names.append(f'story_{i+1}_real_talk')
             scene_names.append(f'story_{i+1}_fallout')
+        scene_names = scene_names[:NUM_IMAGES]
 
         for scene_idx, scene_name in enumerate(scene_names):
             log.debug("pixel_art.generating", scene=scene_name)
@@ -1502,7 +1692,7 @@ try:
             scrub_level = 0
 
             for attempt in range(4):
-                seed = base_seed + scene_idx + (attempt * 100)
+                seed = seed_pool[(scene_idx + attempt) % len(seed_pool)]
                 log.debug("pixel_art.attempt", scene=scene_name, attempt=attempt + 1)
                 art_result = generate_pixel_art(current_prompt, script_text=story_text, seed=seed)
 
@@ -1518,12 +1708,12 @@ try:
                 if art_result.get('success') and art_result.get('detected_failure'):
                     log.warning("pixel_art.failed_detection", scene=scene_name, reason=art_result['detected_failure'])
                     scrub_level = min(scrub_level + 1, 3)
-                    visual_type = _detect_visual_type(current_prompt)
-                    scrubbed = _progressive_content_scrub(full_prompt, visual_type, level=scrub_level)
-                    if scrubbed != full_prompt:
-                        current_prompt = scrubbed
-                    elif fallback_desc:
-                        current_prompt = fallback_desc
+                    adjusted = adjust_prompt_for_retry(
+                        current_prompt, art_result['detected_failure'], attempt + 1
+                    )
+                    if adjusted == current_prompt and fallback_desc:
+                        adjusted = fallback_desc
+                    current_prompt = adjusted
                     if attempt < 3:
                         continue
                     else:
@@ -1537,12 +1727,6 @@ try:
                         if adjusted == full_prompt and fallback_desc:
                             adjusted = fallback_desc
                         current_prompt = adjusted
-                        # On 4th attempt (last), use category-safe prompt
-                        if attempt == 2:
-                            visual_type = _detect_visual_type(full_prompt)
-                            safe_prompt = _CATEGORY_SAFE_PROMPTS.get(visual_type, _CATEGORY_SAFE_PROMPTS.get('general', ''))
-                            if safe_prompt:
-                                current_prompt = safe_prompt
                         continue
                     else:
                         break
@@ -1575,14 +1759,7 @@ try:
                         adjusted = adjust_prompt_for_retry(full_prompt, qa_result.get('reason', ''), attempt + 1)
                         if adjusted == full_prompt and fallback_desc:
                             adjusted = fallback_desc
-                        # On last QA retry, use category-safe prompt
-                        if attempt == 2:
-                            visual_type = _detect_visual_type(full_prompt)
-                            safe_prompt = _CATEGORY_SAFE_PROMPTS.get(visual_type, _CATEGORY_SAFE_PROMPTS.get('general', ''))
-                            if safe_prompt:
-                                current_prompt = safe_prompt
-                        else:
-                            current_prompt = adjusted
+                        current_prompt = adjusted
 
             if not accepted:
                 # FAIL CLOSED for managed local image models.
@@ -1711,7 +1888,16 @@ try:
     scene_timestamps = None
     segment_timeline = script.get('segment_timeline', [])
 
-    if segment_timeline and word_timestamps:
+    if IMAGE_LIMITED:
+        # A partial image run still uses the complete two-story audio/script.
+        # Even splitting keeps every generated image visible instead of
+        # assigning missing story-two indices to the final image.
+        log.info(
+            "assembly.even_scene_split",
+            images=len(generated_images),
+            full_run_images=DEFAULT_NUM_IMAGES,
+        )
+    elif segment_timeline and word_timestamps:
         num_images = len(generated_images)
         image_times = [{'start': None, 'end': None} for _ in range(num_images)]
 
@@ -1962,6 +2148,14 @@ manifest = {
         'images': [str(Path(p).name) for p in generated_images],
         'voiceover': 'voiceover.mp3',
         'video': video_filename if final_video_path else None
+    },
+    'image_generation': {
+        'profile': (image_generation_profile or {}).get('name'),
+        'model': (image_generation_profile or {}).get('model_id'),
+        'lora': ((image_generation_profile or {}).get('lora') or {}).get('name'),
+        'seed_pool': (image_generation_profile or {}).get('seed_pool'),
+        'postprocess': (image_generation_profile or {}).get('postprocess'),
+        'zoom': (image_generation_profile or {}).get('zoom'),
     },
     'tts': {
         'word_timestamps': word_timestamps,

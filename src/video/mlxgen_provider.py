@@ -2,8 +2,8 @@
 MLX-Gen Image Provider — subprocess-per-image generation.
 ==========================================================
 
-The selected Flux model is an MLX-Gen checkpoint:
-    /Users/rafa9-labs/AI/FluxSprites/models/flux2-klein-base-9b-uncensored-8bit
+The selected Qwen model is an MLX-Gen checkpoint:
+    AbstractFramework/qwen-image-2512-4bit
 
 It cannot be loaded by the CUDA/Diffusers code path, and it is far too
 large to keep resident while other models run. So generation happens as:
@@ -78,10 +78,8 @@ class MLXGenImageProvider:
             run. Probing first means we simply omit flags the model does
             not accept.
 
-            `--negative-prompt` is the concrete trap: it is rejected on
-            flux2.text for step-distilled FLUX.2 Klein checkpoints
-            (supports_negative_prompt=False) because there is no
-            classifier-free guidance branch to steer.
+            `--negative-prompt` is model-dependent. Capability probing keeps
+            optional flags from being sent to routes that reject them.
         """
         if self._capabilities is not None and not force:
             return self._capabilities

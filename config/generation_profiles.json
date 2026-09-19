@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "active_profile": "qwen_pixel_scene",
+  "profiles": {
+    "qwen_pixel_scene": {
+      "provider": "mlxgen",
+      "model": {
+        "match": "qwen-image-2512-4bit",
+        "family": "qwen-image"
+      },
+      "width": 768,
+      "height": 768,
+      "dimension_multiple": 16,
+      "steps": 20,
+      "guidance": 4.0,
+      "lora": {
+        "name": "Qwen-Image-2512-Master-Pixel-Art-LoRA",
+        "path": "$HOME/AI/FluxSprites/loras/qwen-prithiv/Qwen-Image-2512-Master-Pixel-Art-LoRA.safetensors",
+        "scale": 0.70,
+        "trigger": "Pixel Art"
+      },
+      "seed_pool": [42, 137, 891, 2048, 7341],
+      "postprocess": {
+        "logical_size": [192, 192],
+        "output_size": [768, 768],
+        "colors": 32,
+        "downsample": "box",
+        "upscale": "nearest"
+      },
+      "zoom": "disabled",
+      "provenance": true
+    },
+    "flux_klein_pixel_scene": {
+      "provider": "mlxgen",
+      "model": {
+        "match": "flux2-klein-base-9b-uncensored-8bit",
+        "family": "flux2-klein"
+      },
+      "width": 768,
+      "height": 768,
+      "steps": 8,
+      "guidance": 3.5,
+      "negative_prompt": null,
+      "lora": null,
+      "seed_pool": [42, 137, 891, 2048, 7341],
+      "postprocess": {
+        "logical_size": [192, 192],
+        "output_size": [768, 768],
+        "colors": 32,
+        "downsample": "box",
+        "upscale": "nearest"
+      },
+      "zoom": "disabled",
+      "provenance": true
+    }
+  }
+}

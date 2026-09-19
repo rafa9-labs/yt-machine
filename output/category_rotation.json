@@ -1,14 +1,10 @@
 {
   "current_cycle": {
-    "day_index": 0,
-    "category": "middle_east_conflict",
-    "date": "2026-09-15"
+    "day_index": 1,
+    "category": "great_power_competition",
+    "date": "2026-09-19"
   },
   "history": [
-    {
-      "date": "2026-03-31",
-      "category": "regional_flashpoints"
-    },
     {
       "date": "2026-04-01",
       "category": "middle_east_conflict"
@@ -124,6 +120,10 @@
     {
       "date": "2026-05-05",
       "category": "middle_east_conflict"
+    },
+    {
+      "date": "2026-09-15",
+      "category": "great_power_competition"
     }
   ]
 }
