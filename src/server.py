@@ -95,7 +95,7 @@ _generation_status = {
 # Generation on this machine loads a 20 GB text model and a 17 GB image
 # model sequentially. The old 600s ceiling cut off healthy runs, so the
 # limit is now explicit and configurable.
-_PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT", "7200"))
+_PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT", "14400"))
 
 
 def _kill_process_group(process: subprocess.Popen) -> None:
