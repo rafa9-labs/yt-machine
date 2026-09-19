@@ -1,4 +1,4 @@
-"""Tests for the exposed Qwen-only image generation tool."""
+"""Tests for the exposed image generation tool."""
 
 from pathlib import Path
 from unittest.mock import patch
@@ -6,15 +6,17 @@ from unittest.mock import patch
 from PIL import Image
 
 from src.video import pixel_art_tool
+from src.video.generation_profile import GenerationProfileError
 
 
 def _profile():
     return {
         "name": "qwen_pixel_scene",
         "provider": "mlxgen",
-        "model_id": "AbstractFramework/qwen-image-2512-4bit",
+        "model": {"match": "qwen-image-2512-4bit", "family": "qwen-image"},
         "width": 768,
         "height": 768,
+        "dimension_multiple": 16,
         "steps": 20,
         "guidance": 4.0,
         "lora": {"trigger": "Pixel Art"},
@@ -27,6 +29,11 @@ def _profile():
         "zoom": "disabled",
         "provenance": True,
     }
+
+
+def _resolved(path: str = "/models/qwen-image-2512-4bit"):
+    """Stub the registry resolution so tests never touch real discovery."""
+    return {"spec": None, "path": path, "id": path}
 
 
 class FakeQwenProvider:
@@ -54,6 +61,10 @@ def test_qwen_tool_generates_processed_asset_and_provenance(tmp_path):
          patch(
              "src.video.generation_profile.load_generation_profile",
              return_value=_profile(),
+         ), \
+         patch(
+             "src.video.generation_profile.resolve_profile_model",
+             side_effect=lambda p, **kw: _resolved(),
          ):
         result = pixel_art_tool.generate_pixel_art(
             "A radar tower in the desert at dusk.",
@@ -62,7 +73,7 @@ def test_qwen_tool_generates_processed_asset_and_provenance(tmp_path):
         )
 
     assert result["success"] is True
-    assert result["source"] == "qwen"
+    assert result["source"] == "mlxgen"
     assert result["provider"] == "mlxgen"
     assert result["steps"] == 20
     assert result["guidance"] == 4.0
@@ -78,10 +89,37 @@ def test_qwen_tool_generates_processed_asset_and_provenance(tmp_path):
 
 
 def test_qwen_tool_fails_closed_without_provider():
-    with patch.object(pixel_art_tool, "_MLXGEN_PROVIDER", None):
+    with patch.object(pixel_art_tool, "_MLXGEN_PROVIDER", None), \
+         patch(
+             "src.video.generation_profile.load_generation_profile",
+             return_value=_profile(),
+         ), \
+         patch(
+             "src.video.generation_profile.resolve_profile_model",
+             side_effect=lambda p, **kw: _resolved(),
+         ):
         result = pixel_art_tool.generate_pixel_art("A radar tower.")
     assert result["success"] is False
     assert "provider is not configured" in result["error"]
+
+
+def test_qwen_tool_fails_closed_when_model_cannot_be_resolved():
+    """An unresolvable profile is reported, not silently substituted."""
+    provider = FakeQwenProvider()
+    with patch.object(pixel_art_tool, "_MLXGEN_PROVIDER", provider), \
+         patch(
+             "src.video.generation_profile.load_generation_profile",
+             return_value=_profile(),
+         ), \
+         patch(
+             "src.video.generation_profile.resolve_profile_model",
+             side_effect=GenerationProfileError(
+                 "No MLX-Gen image model matches 'nope'"
+             ),
+         ):
+        result = pixel_art_tool.generate_pixel_art("A radar tower.")
+    assert result["success"] is False
+    assert "No MLX-Gen image model matches" in result["error"]
 
 
 def test_qwen_tool_rejects_reference_images():

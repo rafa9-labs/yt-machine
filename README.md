@@ -70,9 +70,11 @@ structural guarantees the language model cannot be relied on to produce.
 - **Deterministic script enforcement** — a Python-only pass that guarantees
   story count, segue placement, de-duplication, and the closing, regardless of
   what the model returned.
-- **Local pixel-art generation** — eight Qwen-Image-2512 scenes per video through
-  an MLX-Gen subprocess, with capability probing, deterministic 192×192/32-color
-  post-processing, provenance sidecars, and a fail-closed policy.
+- **Local pixel-art generation** — eight scenes per video through an MLX-Gen
+  subprocess, with capability probing, deterministic 192×192/32-color
+  post-processing, provenance sidecars, and a fail-closed policy. The model is
+  chosen by the active generation profile, so it can be swapped without code
+  changes.
 - **Multi-engine TTS with fallbacks** — Kokoro (local) → ElevenLabs → Edge TTS
   → silent track, plus an `ffmpeg` mastering chain.
 - **FFmpeg video composition** — 60/40 split-screen layout with static
@@ -215,6 +217,40 @@ Allowed keys are `width`, `height`, `steps`, `guidance`, and `lora.scale`.
 Unknown keys and invalid values are rejected before the run starts. Resolution
 must be a positive multiple of 16, which the Qwen latent route requires.
 
+### Image generation profiles
+
+A generation profile answers *which* image model runs and *how* it is sampled.
+The profile owns the model, so switching models is a profile change rather than
+an edit in two places:
+
+```bash
+# List profiles with the model each one targets
+python tools/generate_complete_video.py --list-profiles
+
+# Run once with a different model
+python tools/generate_complete_video.py --generation-profile flux_klein_pixel_scene
+
+# Make it the default: edit "active_profile" in config/generation_profiles.json
+```
+
+The profile names its model with a short match key; the actual checkpoint is
+resolved at startup against the MLX-Gen models discovered on the machine. If
+nothing matches, the run stops and lists what *was* found.
+
+Two profiles ship: `qwen_pixel_scene` (Qwen-Image-2512, 20 steps, pixel-art
+LoRA) and `flux_klein_pixel_scene` (FLUX.2 Klein, 8 steps). They differ for
+real reasons — see the notes below.
+
+| | `qwen_pixel_scene` | `flux_klein_pixel_scene` |
+|---|---|---|
+| Steps / guidance | 20 / 4.0 | 8 / 3.5 |
+| Negative prompt | yes | **no** — the model has no CFG branch |
+| Style LoRA | Qwen pixel-art adapter | **none installed** (both on-disk adapters are Qwen-family) |
+| Dimension constraint | multiple of 16 | none declared |
+
+To use a different checkpoint, add a profile naming it. Any discovered
+MLX-Gen model is eligible; the pipeline never substitutes one silently.
+
 ### Interactive editor
 
 `tools/configure.py` is an arrow-key editor for the generation profiles:
@@ -225,11 +261,15 @@ python tools/configure.py --show    # print profiles and exit
 ```
 
 Every save is validated before it reaches disk, so the tool cannot write a
-profile the pipeline would reject. Editable fields are resolution, diffusion
-steps, guidance, LoRA path/scale/trigger, seed pool, and the pixel-grid
-post-processing (logical size, output size, palette size, resample filters).
-The menu also switches the active profile, duplicates or deletes profiles, and
-delegates model selection to `tools/model_setup.py`.
+profile the pipeline would reject. Editable fields are the target model,
+resolution, diffusion steps, guidance, LoRA path/scale/trigger, seed pool, and
+the pixel-grid post-processing (logical size, output size, palette size,
+resample filters). The menu also switches the active profile, duplicates or
+deletes profiles, and delegates text-model selection to `tools/model_setup.py`.
+
+Validation is structural, so the editor works on a machine with no image model
+installed — whether the model a profile names is actually present is checked
+separately, at pipeline start.
 
 Values that are **not** editable are shown with an explanation: the default
 2-story / 4-beat / 8-image structure is encoded in the synthesis prompt and
@@ -247,9 +287,11 @@ python tools/run_image_acceptance.py \
   --script output/projects/video_<timestamp>/script_segments.json
 ```
 
-Results and provenance are written to `output/acceptance/qwen-2512/`. An
-optional guidance experiment can be run separately with `--guidance 3.5` or
-`--guidance 4.5`; the baseline profile remains unchanged.
+Results and provenance are written under `output/acceptance/`. The run uses
+whichever model the active generation profile names, so the corpus can be
+regenerated against any profile. An optional guidance experiment can be run
+separately with `--guidance 3.5` or `--guidance 4.5`; the baseline profile
+remains unchanged.
 
 ## Architecture
 
@@ -430,31 +472,13 @@ which is all the ledger and the summary need.
 
 ## Testing
 
-Tests use `pytest`. Run the suite:
+Tests use `pytest`. Run the whole suite:
 
 ```bash
-.venv/bin/python -m pytest \
-  tests/test_automation_macos.py \
-  tests/test_configure_tool.py \
-  tests/test_dedup.py \
-  tests/test_generation_profile.py \
-  tests/test_image_acceptance.py \
-  tests/test_image_pipeline.py \
-  tests/test_local_prompt_building.py \
-  tests/test_model_registry.py \
-  tests/test_pipeline_config.py \
-  tests/test_pipeline_progress.py \
-  tests/test_postprocess.py \
-  tests/test_qwen_image_pipeline.py \
-  tests/test_runtime_lifecycle.py \
-  tests/test_scene_spec.py \
-  tests/test_unit.py \
-  tests/test_visual_prompts.py \
-  tests/test_vram_budget.py \
-  tests/test_vram_orchestrator.py
+.venv/bin/python -m pytest tests/
 ```
 
-That set covers 571 tests and runs in under a minute without loading a model or
+That covers 599 tests and runs in under a minute without loading a model or
 touching the network. The main areas:
 
 | Area | File |
@@ -466,6 +490,7 @@ touching the network. The main areas:
 | Local prompt construction and QA thresholds | `tests/test_local_prompt_building.py`, `tests/test_image_pipeline.py` |
 | Video/VRAM budget calculations | `tests/test_vram_budget.py`, `tests/test_vram_orchestrator.py` |
 | Generation profile validation and overrides | `tests/test_generation_profile.py`, `tests/test_configure_tool.py` |
+| Image-model resolution and interchangeability | `tests/test_model_interchangeability.py` |
 | Pipeline smoke-run configuration | `tests/test_pipeline_config.py` |
 | Real-script acceptance corpus | `tests/test_image_acceptance.py`, `tools/run_image_acceptance.py` |
 | Scene spec and post-processing invariants | `tests/test_scene_spec.py`, `tests/test_postprocess.py` |

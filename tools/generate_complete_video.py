@@ -91,8 +91,12 @@ from src.video.generation_profile import (
     describe_profiles,
     get_overrides,
     load_generation_profile,
+    model_display_name,
+    model_family,
+    model_match_key,
     parse_override,
     profile_path,
+    resolve_profile_model,
     set_overrides,
 )
 from src.video.pipeline_config import (
@@ -117,6 +121,7 @@ def _print_profiles() -> None:
             continue
         print(f" {marker} {entry['name']}")
         print(f"      model    : {entry['model_id']} ({entry['provider']})")
+        print(f"      family   : {entry.get('model_family') or '(unspecified)'}")
         print(f"      sampling : {entry['width']}x{entry['height']}, "
               f"{entry['steps']} steps, guidance {entry['guidance']}")
         print(f"      lora     : {entry['lora_name']} (scale {entry['lora_scale']})")
@@ -166,7 +171,16 @@ if args.print_config:
                 print(f"  {_role:<10} {_spec.provider:<10} {_spec.id}")
     print("-" * 62)
     print(f"  profile    {_gen['name']}")
-    print(f"  model      {_gen['model_id']} ({_gen['provider']})")
+    print(f"  model      {model_match_key(_gen)} ({_gen['provider']})")
+    print(f"  family     {model_family(_gen)}")
+    # Resolution is attempted but never fatal here: --print-config is the
+    # command you run to find out WHY a model is not working.
+    try:
+        _resolved = resolve_profile_model(_gen)
+        print(f"  resolved   {model_display_name({**_gen, 'resolved_model_path': _resolved['path']})}")
+        print(f"  path       {_resolved['path']}")
+    except GenerationProfileError as _resolve_err:
+        print(f"  resolved   NOT FOUND — {_resolve_err}")
     print(f"  sampling   {_gen['width']}x{_gen['height']}, "
           f"{_gen['steps']} steps, guidance {_gen['guidance']}")
     _lora = _gen.get("lora") or {}
@@ -1470,56 +1484,74 @@ else:
     from src.models.registry import PROVIDER_MLXGEN
     from src.video.generation_profile import (
         GenerationProfileError,
-        QWEN_IMAGE_MODEL_ID,
         load_generation_profile,
+        model_display_name,
+        resolve_profile_model,
     )
 
     try:
         image_generation_profile = load_generation_profile()
     except GenerationProfileError as profile_error:
-        print(f"\nFATAL: Invalid Qwen generation profile — {profile_error}")
+        print(f"\nFATAL: Invalid image generation profile — {profile_error}")
         runtime.finish() if runtime else None
         sys.exit(4)
 
-    if _profile is None or _profile.image is None:
-        print("\nFATAL: No Qwen image model is configured in config/model_profile.json")
-        runtime.finish() if runtime else None
-        sys.exit(4)
-    if _profile.image.provider != PROVIDER_MLXGEN:
-        print(
-            "\nFATAL: The production image provider must be MLX-Gen/Qwen; "
-            f"configured provider is {_profile.image.provider!r}"
-        )
-        runtime.finish() if runtime else None
-        sys.exit(4)
-    configured_model = (_profile.image.metadata or {}).get("model_repo", _profile.image.id)
-    model_identity = " ".join(
-        str(value or "")
-        for value in (_profile.image.id, _profile.image.path, configured_model)
-    ).lower()
-    model_marker = QWEN_IMAGE_MODEL_ID.rsplit("/", 1)[-1].lower()
-    if (
-        image_generation_profile["model_id"] != QWEN_IMAGE_MODEL_ID
-        or (
-            configured_model != image_generation_profile["model_id"]
-            and model_marker not in model_identity
-        )
-    ):
-        print(
-            "\nFATAL: Model profile is not the selected Qwen Image-2512 model — "
-            f"{configured_model!r} / {image_generation_profile['model_id']!r}"
-        )
+    # ── Resolve the image model from the generation profile ──
+    # The profile owns the image model, so switching models is a profile
+    # change. config/model_profile.json still records a selection for the
+    # model_setup UI; if the two disagree we warn rather than abort, because
+    # the profile is authoritative and the mismatch is a configuration
+    # staleness signal, not a reason to refuse an otherwise valid run.
+    try:
+        resolved_image = resolve_profile_model(image_generation_profile)
+    except GenerationProfileError as resolve_error:
+        print(f"\nFATAL: Cannot resolve the image model — {resolve_error}")
         runtime.finish() if runtime else None
         sys.exit(4)
 
-    from src.video.mlxgen_provider import MLXGenImageProvider
-    mlx_provider = MLXGenImageProvider(
-        model_path=_profile.image.path or _profile.image.id,
-        executable=(_profile.image.metadata or {}).get(
-            "executable", os.getenv(
-                "MLXGEN_BIN", "/Users/rafa9-labs/AI/FluxSprites/.venv/bin/mlxgen"
+    image_model_path = resolved_image["path"]
+    image_model_label = model_display_name(
+        {**image_generation_profile, "resolved_model_path": image_model_path}
+    )
+    log.info("image.model_resolved", profile=image_generation_profile["name"],
+             model=image_model_label)
+
+    if _profile is not None and _profile.image is not None:
+        if _profile.image.provider != PROVIDER_MLXGEN:
+            print(
+                "\nFATAL: The image provider must be MLX-Gen; "
+                f"configured provider is {_profile.image.provider!r}"
             )
-        ),
+            runtime.finish() if runtime else None
+            sys.exit(4)
+        recorded = " ".join(
+            str(value or "")
+            for value in (_profile.image.id, _profile.image.path)
+        ).lower()
+        if image_model_label.lower() not in recorded and \
+                str(image_model_path).lower() not in recorded:
+            log.warning(
+                "image.model_profile_stale",
+                note="config/model_profile.json records a different image model "
+                     "than the active generation profile; the profile wins",
+                recorded=_profile.image.id,
+                resolved=image_model_label,
+            )
+            print(
+                f"\n  NOTE: model_profile.json records {_profile.image.id!r} but the "
+                f"active generation profile resolves to {image_model_label!r}.\n"
+                f"        Using the generation profile. Re-run tools/model_setup.py "
+                f"to sync.\n"
+            )
+
+    from src.models.registry import DEFAULT_MLXGEN_BIN
+    from src.video.mlxgen_provider import MLXGenImageProvider
+    _executable = os.getenv("MLXGEN_BIN", DEFAULT_MLXGEN_BIN)
+    if _profile is not None and _profile.image is not None:
+        _executable = (_profile.image.metadata or {}).get("executable", _executable)
+    mlx_provider = MLXGenImageProvider(
+        model_path=image_model_path,
+        executable=_executable,
     )
     if not mlx_provider.available():
         print(f"\nFATAL: MLX-Gen image model unavailable — {mlx_provider.missing_reason()}")
@@ -1529,7 +1561,7 @@ else:
     lora = image_generation_profile.get("lora") or {}
     lora_path = lora.get("path")
     if lora_path and not Path(lora_path).exists():
-        print(f"\nFATAL: Configured Qwen LoRA is missing — {lora_path}")
+        print(f"\nFATAL: Configured LoRA is missing — {lora_path}")
         runtime.finish() if runtime else None
         sys.exit(4)
     if lora_path:

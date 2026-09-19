@@ -590,6 +590,67 @@ def find_spec(capability: str, provider: Optional[str] = None,
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Cached MLX-Gen resolution
+# ─────────────────────────────────────────────────────────────────────
+
+# WHY A CACHE: the pipeline resolves the image model once per generated image
+# (eight times per run, plus retries). A full discover_all() probes Ollama over
+# HTTP and walks the model roots — measured at ~0.3s here — so resolving
+# uncached would add seconds to every run for an answer that cannot change
+# while the process is alive. Models are not hot-plugged mid-run, so a
+# process-lifetime cache is safe.
+_MLXGEN_SPEC_CACHE: Dict[str, Optional[ModelSpec]] = {}
+
+
+def resolve_mlxgen_model(match: str, *, use_cache: bool = True) -> Optional[ModelSpec]:
+    """Resolve a substring to one discovered MLX-Gen image model.
+
+    The generation profile names its model by a short identifier (for example
+    ``qwen-image-2512-4bit``) rather than an absolute path, because the path
+    differs between machines and between an HF cache snapshot and a local
+    checkpoint folder. Resolution matches against both ``id`` and ``path``.
+
+    Returns None when nothing matches. Callers decide whether that is fatal.
+    """
+    key = (match or "").strip().lower()
+    if not key:
+        return None
+    if use_cache and key in _MLXGEN_SPEC_CACHE:
+        return _MLXGEN_SPEC_CACHE[key]
+
+    discovered = discover_all()
+    found: Optional[ModelSpec] = None
+    for spec in specs_for_capability(discovered, CAP_IMAGE):
+        if spec.provider != PROVIDER_MLXGEN:
+            continue
+        haystack = f"{spec.id} {spec.path or ''}".lower()
+        if key in haystack:
+            found = spec
+            break
+
+    if use_cache:
+        _MLXGEN_SPEC_CACHE[key] = found
+    return found
+
+
+def clear_mlxgen_cache() -> None:
+    """Drop the resolver cache. Used by tests that change discovery inputs."""
+    _MLXGEN_SPEC_CACHE.clear()
+
+
+def list_mlxgen_models() -> List[ModelSpec]:
+    """Every discovered MLX-Gen image model, largest first.
+
+    Used to tell an operator what a profile *could* have matched when its
+    configured model is missing.
+    """
+    discovered = discover_all()
+    return [s for s in specs_for_capability(discovered, CAP_IMAGE)
+            if s.provider == PROVIDER_MLXGEN]
+
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Payload builders ("prepare", not "launch")
 # ─────────────────────────────────────────────────────────────────────
 

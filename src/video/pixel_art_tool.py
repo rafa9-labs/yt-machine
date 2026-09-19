@@ -2547,31 +2547,60 @@ def generate_pixel_art(
     if reference_image:
         return {
             "success": False,
-            "error": "The Qwen production profile supports text-to-image only; reference_image is disabled",
+            "error": "The image generation profile supports text-to-image only; "
+                     "reference_image is disabled",
         }
 
     try:
         from src.video.generation_profile import (
             GenerationProfileError,
             load_generation_profile,
+            model_display_name,
+            resolve_profile_model,
         )
         from src.video.postprocess import process_pixel_art_file, write_provenance
         from src.video.scene_spec import STYLE_PIXEL_SCENE, from_visual_scene
 
         profile = load_generation_profile()
+
+        # The generation profile owns the image model. Resolving here means the
+        # profile alone decides which checkpoint runs, so switching models is a
+        # profile change rather than an edit in two files. Resolution is cached
+        # in the registry, so the per-image cost is a dict lookup.
+        try:
+            resolved = resolve_profile_model(profile)
+        except GenerationProfileError as exc:
+            return {"success": False, "error": str(exc)}
+        model_label = model_display_name({**profile,
+                                          "resolved_model_path": resolved["path"]})
+
         provider = get_mlxgen_provider()
         if provider is None:
             return {
                 "success": False,
-                "error": "Qwen MLX-Gen provider is not configured",
+                "error": "MLX-Gen provider is not configured",
             }
+        # Rebind only when the bound provider declares a DIFFERENT checkpoint
+        # than the profile resolves to. A provider without a `model_path`
+        # attribute is either an explicitly injected stub or one that manages
+        # its own model, and is left untouched.
+        bound_path = getattr(provider, "model_path", None)
+        if bound_path is not None and str(bound_path) != str(resolved["path"]):
+            from src.models.registry import DEFAULT_MLXGEN_BIN
+            from src.video.mlxgen_provider import MLXGenImageProvider
+            provider = MLXGenImageProvider(
+                model_path=resolved["path"],
+                executable=(profile.get("executable")
+                            or os.getenv("MLXGEN_BIN", DEFAULT_MLXGEN_BIN)),
+            )
+            set_mlxgen_provider(provider)
 
         lora = profile.get("lora") or {}
         lora_path = lora.get("path")
         if lora_path and not Path(lora_path).exists():
             return {
                 "success": False,
-                "error": f"Configured Qwen LoRA is missing: {lora_path}",
+                "error": f"Configured LoRA is missing: {lora_path}",
             }
         if lora_path and not getattr(provider, "lora_paths", None):
             provider.set_loras([lora_path], [float(lora.get("scale", 1.0))])
@@ -2594,7 +2623,7 @@ def generate_pixel_art(
         ).strip("_") or "scene"
         import hashlib
         prompt_hash = hashlib.sha256(local_prompt.encode("utf-8")).hexdigest()[:12]
-        output_path = OUTPUT_DIR / f"qwen_{safe_name}_{prompt_hash}.png"
+        output_path = OUTPUT_DIR / f"scene_{safe_name}_{prompt_hash}.png"
         raw_path = output_path.with_name(output_path.stem + "__raw.png")
 
         result = provider.generate(
@@ -2609,7 +2638,7 @@ def generate_pixel_art(
         )
         if not result.get("success"):
             result.update({
-                "model": profile["model_id"],
+                "model": model_label,
                 "generation_profile": profile["name"],
                 "prompt_used": local_prompt,
                 "text_requests_rewritten": text_requests,
@@ -2631,7 +2660,7 @@ def generate_pixel_art(
             provenance_path = write_provenance(
                 output_path,
                 {
-                    "model": profile["model_id"],
+                    "model": model_label,
                     "provider": profile["provider"],
                     "generation_profile": profile["name"],
                     "prompt": local_prompt,
@@ -2664,9 +2693,9 @@ def generate_pixel_art(
             "raw_path": str(raw_path),
             "prompt_used": local_prompt,
             "original_prompt": prompt,
-            "model": profile["model_id"],
+            "model": model_label,
             "provider": profile["provider"],
-            "source": "qwen",
+            "source": "mlxgen",
             "generation_profile": profile["name"],
             "width": width,
             "height": height,

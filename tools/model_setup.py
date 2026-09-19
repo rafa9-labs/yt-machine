@@ -50,7 +50,6 @@ from src.models.registry import (
     discover_all,
     specs_for_capability,
 )
-from src.video.generation_profile import QWEN_IMAGE_MODEL_ID
 
 ROLE_DESCRIPTIONS = {
     ROLE_TEXT: "Text model — analysis, scriptwriting, prompts",
@@ -208,13 +207,15 @@ def build_profile(discovered: Dict[str, List[ModelSpec]], interactive: bool = Tr
         capability = ROLE_CAPABILITY[role]
         candidates = specs_for_capability(discovered, capability)
 
-        # Production image generation is intentionally Qwen-only. Do not let
-        # an older, larger MLX checkpoint win automatic selection again.
+        # Image models are filtered by capability and provider rather than by
+        # name. specs_for_capability already requires CAP_IMAGE; restricting to
+        # MLX-Gen is what keeps a cloud or CUDA-only backend out of a local
+        # profile. Which MLX checkpoint runs is decided by the active
+        # generation profile, not here.
         if role == ROLE_IMAGE:
-            model_marker = QWEN_IMAGE_MODEL_ID.rsplit("/", 1)[-1].lower()
             candidates = [
                 spec for spec in candidates
-                if model_marker in (spec.id + " " + (spec.path or "")).lower()
+                if spec.provider == PROVIDER_MLXGEN
             ]
 
         # Text models can come from GGUF files. Promote them to managed
@@ -231,10 +232,6 @@ def build_profile(discovered: Dict[str, List[ModelSpec]], interactive: bool = Tr
         candidates = _sort_specs(candidates, role=role)
         current = profile.get(role)
         chosen = choose_role(role, candidates, current, interactive=interactive)
-        if role == ROLE_IMAGE and chosen is not None:
-            chosen.metadata = dict(chosen.metadata or {})
-            chosen.metadata["model_repo"] = QWEN_IMAGE_MODEL_ID
-            chosen.metadata["generation_profile"] = "qwen_pixel_scene"
         setattr(profile, role, chosen)
 
     profile.preferences = {

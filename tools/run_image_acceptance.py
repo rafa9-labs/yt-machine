@@ -1,4 +1,4 @@
-"""Generate the real-script Qwen image acceptance corpus.
+"""Generate a real-script image acceptance corpus.
 
 This intentionally calls the same ``generate_pixel_art`` path as the video
 pipeline. The provider's cache name is prompt-based, so each scene/seed result
@@ -122,10 +122,10 @@ def _copy_result(
 
 
 def run(args: argparse.Namespace) -> int:
-    from src.models.profile import ModelProfile
     from src.video.generation_profile import (
-        QWEN_IMAGE_MODEL_ID,
         load_generation_profile,
+        model_match_key,
+        resolve_profile_model,
         set_overrides,
     )
     from src.video.mlxgen_provider import MLXGenImageProvider
@@ -141,16 +141,17 @@ def run(args: argparse.Namespace) -> int:
     if args.guidance is not None:
         set_overrides({"guidance": args.guidance})
     profile = load_generation_profile()
-    model_profile = ModelProfile.load()
-    image_model = model_profile.image
-    if image_model is None or image_model.provider != "mlxgen":
-        raise ValueError("config/model_profile.json does not select an MLX-Gen image model")
-    if profile["model_id"] != QWEN_IMAGE_MODEL_ID:
-        raise ValueError(f"acceptance requires {QWEN_IMAGE_MODEL_ID}, got {profile['model_id']}")
 
-    executable = (image_model.metadata or {}).get("executable") or None
+    # The acceptance run uses whichever model the active generation profile
+    # names, so it can validate any profile rather than only Qwen.
+    resolved = resolve_profile_model(profile)
+    if resolved["spec"] is None or resolved["spec"].provider != "mlxgen":
+        raise ValueError("the active generation profile does not resolve to an "
+                         "MLX-Gen image model")
+
+    executable = (resolved["spec"].metadata or {}).get("executable") or None
     provider = MLXGenImageProvider(
-        model_path=image_model.path or image_model.id,
+        model_path=resolved["path"],
         **({"executable": executable} if executable else {}),
     )
     if not provider.available():
@@ -160,11 +161,14 @@ def run(args: argparse.Namespace) -> int:
     lora_path = lora.get("path")
     if lora_path:
         if not Path(lora_path).exists():
-            raise ValueError(f"configured Qwen LoRA is missing: {lora_path}")
+            raise ValueError(f"configured LoRA is missing: {lora_path}")
         provider.set_loras([lora_path], [float(lora.get("scale", 1.0))])
     set_mlxgen_provider(provider)
 
-    output_dir = Path(args.output).expanduser()
+    # Default the corpus directory to the profile that produced it, so runs
+    # against different models do not overwrite each other.
+    output_arg = args.output or f"output/acceptance/{profile['name']}"
+    output_dir = Path(output_arg).expanduser()
     if not output_dir.is_absolute():
         output_dir = ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -246,7 +250,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--script", required=True, help="real script_segments.json")
     parser.add_argument(
-        "--output", default="output/acceptance/qwen-2512", help="corpus output directory"
+        "--output", default=None,
+        help="corpus output directory (default: output/acceptance/<active profile>)",
     )
     parser.add_argument("--scenes", type=int, default=5, help="number of real scenes")
     parser.add_argument(
