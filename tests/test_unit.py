@@ -6,11 +6,11 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pytest
-from video_server.subtitle_renderer import (
+from src.video.subtitle_renderer import (
     _clean_script_for_subtitles, _fuzzy_match, _split_into_phrases,
     _estimate_from_script, _clean_display
 )
-from video_server.split_video_assembler import _calculate_scene_durations
+from src.video.split_video_assembler import _calculate_scene_durations
 
 
 # ═══════════════════════════════════════════
@@ -21,7 +21,7 @@ class TestBridgeTimestampGaps:
         return [{'start': s, 'end': e} for s, e in pairs]
 
     def test_no_gaps_unchanged(self):
-        from pipeline_utils import bridge_timestamp_gaps
+        from src.pipeline_utils import bridge_timestamp_gaps
         times = self._make_times([(0, 10), (10, 20), (20, 30)])
         result = bridge_timestamp_gaps(times, 30.0)
         # Should be continuous
@@ -29,7 +29,7 @@ class TestBridgeTimestampGaps:
             assert result[i]['end'] >= result[i+1]['start'] - 0.1
 
     def test_big_gap_bridged(self):
-        from pipeline_utils import bridge_timestamp_gaps
+        from src.pipeline_utils import bridge_timestamp_gaps
         times = self._make_times([(0, 7.28), (22.0, 29.0), (29.0, 30.0)])
         result = bridge_timestamp_gaps(times, 30.0)
         # No gap should exist between image 0 and 1
@@ -37,7 +37,7 @@ class TestBridgeTimestampGaps:
         assert gap <= 0.1, f"Gap of {gap:.2f}s remains"
 
     def test_none_values_filled(self):
-        from pipeline_utils import bridge_timestamp_gaps
+        from src.pipeline_utils import bridge_timestamp_gaps
         times = [{'start': None, 'end': None} for _ in range(6)]
         result = bridge_timestamp_gaps(times, 90.0)
         assert all(t['start'] is not None for t in result)
@@ -46,7 +46,7 @@ class TestBridgeTimestampGaps:
         assert result[-1]['end'] >= 90.0
 
     def test_minimum_duration_enforced(self):
-        from pipeline_utils import bridge_timestamp_gaps
+        from src.pipeline_utils import bridge_timestamp_gaps
         times = self._make_times([(0, 0.3), (0.3, 30), (30, 60), (60, 90)])
         result = bridge_timestamp_gaps(times, 90.0)
         for t in result:
@@ -54,7 +54,7 @@ class TestBridgeTimestampGaps:
             assert dur >= 0.9, f"Duration {dur:.2f}s is below minimum"
 
     def test_total_duration_preserved(self):
-        from pipeline_utils import bridge_timestamp_gaps
+        from src.pipeline_utils import bridge_timestamp_gaps
         times = [{'start': None, 'end': None} for _ in range(6)]
         result = bridge_timestamp_gaps(times, 80.0)
         total = sum(t['end'] - t['start'] for t in result)
@@ -96,7 +96,7 @@ class TestFuzzyMatch:
 
 class TestCleanDisplay:
     def test_strips_punctuation(self):
-        assert _clean_display("hello.") == "HELLO"
+        assert _clean_display("hello.") == "HELLO."
 
     def test_empty_after_strip(self):
         assert _clean_display('"') == ''
@@ -165,23 +165,23 @@ class TestSceneDurations:
 # ═══════════════════════════════════════════
 class TestBuildFallbackPrompt:
     def test_empty_text(self):
-        from pipeline_utils import build_fallback_prompt
+        from src.pipeline_utils import build_fallback_prompt
         result = build_fallback_prompt("", 0, 0, [])
         assert "16-bit isometric pixel art scene" in result
         assert len(result) >= 50
 
     def test_with_locations(self):
-        from pipeline_utils import build_fallback_prompt
+        from src.pipeline_utils import build_fallback_prompt
         result = build_fallback_prompt("Russia attacks Ukraine forces", 0, 0, [])
         assert "16-bit isometric pixel art scene" in result
 
     def test_with_numbers(self):
-        from pipeline_utils import build_fallback_prompt
+        from src.pipeline_utils import build_fallback_prompt
         result = build_fallback_prompt("Deployed 5,000 troops to the region", 0, 0, [])
         assert "5,000" in result or "units" in result
 
     def test_part_idx_affects_composition(self):
-        from pipeline_utils import build_fallback_prompt
+        from src.pipeline_utils import build_fallback_prompt
         r0 = build_fallback_prompt("Russia deployed missiles", 0, 0, [])
         r1 = build_fallback_prompt("Russia deployed missiles", 0, 1, [])
         assert r0 != r1

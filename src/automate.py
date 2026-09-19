@@ -49,10 +49,10 @@ LOG_DIR = PROJECT_ROOT / "output" / "logs"
 WOL_WAIT_SECONDS = int(os.getenv("WOL_WAIT_SECONDS", "120"))
 WOL_PING_HOST = os.getenv("WOL_PING_HOST", "localhost")
 WOL_PING_PORT = int(os.getenv("WOL_PING_PORT", "11434"))
-# A full run measured ~80 minutes on an M1 Pro (8 images at ~5.5 min each plus
-# LLM/TTS/assembly). The old 900s default killed every scheduled run mid-way.
-# 7200s matches src/server.py's ceiling for the same pipeline.
-PIPELINE_TIMEOUT = int(os.getenv("PIPELINE_TIMEOUT", "7200"))
+# A full run is dominated by eight image generations plus LLM/TTS/assembly.
+# The old 900s default killed healthy runs mid-way; keep the automation and
+# API ceilings aligned for the same pipeline.
+PIPELINE_TIMEOUT = int(os.getenv("PIPELINE_TIMEOUT", "14400"))
 
 # Empty on a standalone Mac: there is no remote PC to wake, so the wake phase
 # is skipped instead of aborting the run. Set this only for remote-WOL setups.

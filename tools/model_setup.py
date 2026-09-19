@@ -207,6 +207,17 @@ def build_profile(discovered: Dict[str, List[ModelSpec]], interactive: bool = Tr
         capability = ROLE_CAPABILITY[role]
         candidates = specs_for_capability(discovered, capability)
 
+        # Image models are filtered by capability and provider rather than by
+        # name. specs_for_capability already requires CAP_IMAGE; restricting to
+        # MLX-Gen is what keeps a cloud or CUDA-only backend out of a local
+        # profile. Which MLX checkpoint runs is decided by the active
+        # generation profile, not here.
+        if role == ROLE_IMAGE:
+            candidates = [
+                spec for spec in candidates
+                if spec.provider == PROVIDER_MLXGEN
+            ]
+
         # Text models can come from GGUF files. Promote them to managed
         # llama.cpp specs so the pipeline knows it must launch the server.
         if role == ROLE_TEXT:

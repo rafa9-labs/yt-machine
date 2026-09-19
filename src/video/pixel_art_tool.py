@@ -710,7 +710,7 @@ def _resolve_lora_path(custom_lora: dict) -> str:
     If the stored path is a local .safetensors file, upload it to fal.ai CDN once
     and cache the returned URL back into custom_lora.json.
     """
-    lora_url = custom_lora.get('lora_url', '')
+    lora_url = os.path.expandvars(os.path.expanduser(custom_lora.get('lora_url', '')))
     hub_url = custom_lora.get('hub_url')
 
     # Prefer HuggingFace Hub URL if available (permanent, fastest)
@@ -728,7 +728,7 @@ def _resolve_lora_path(custom_lora: dict) -> str:
     # Local file path — upload to fal.ai CDN and cache the URL
     local_path = Path(lora_url) if lora_url else None
     if not local_path:
-        local_path_str = custom_lora.get('lora_local_path', '')
+        local_path_str = os.path.expandvars(os.path.expanduser(custom_lora.get('lora_local_path', '')))
         local_path = Path(local_path_str) if local_path_str else None
 
     if local_path and local_path.exists() and local_path.suffix == '.safetensors':
@@ -748,12 +748,16 @@ def _resolve_lora_path(custom_lora: dict) -> str:
             print(f"  [IMG] Falling back to default HuggingFace LoRA")
 
     # Fallback to default
-    return _lora_defaults.get('path', 'prithivMLmods/Retro-Pixel-Flux-LoRA')
+    return os.path.expandvars(os.path.expanduser(
+        _lora_defaults.get('path', 'prithivMLmods/Retro-Pixel-LoRA')
+    ))
 
 
 _resolved_lora_path = (
     _resolve_lora_path(_custom_lora) if _custom_lora
-    else _lora_defaults.get('path', 'prithivMLmods/Retro-Pixel-Flux-LoRA')
+    else os.path.expandvars(os.path.expanduser(
+        _lora_defaults.get('path', 'prithivMLmods/Retro-Pixel-LoRA')
+    ))
 )
 
 PIXEL_ART_LORA = {
@@ -1987,8 +1991,10 @@ def _resolve_size(target_app: str = "Default") -> Dict[str, int]:
     return IMAGE_SIZE_MAP.get(target_app, IMAGE_SIZE_MAP["Default"])
 
 
-@server.tool()
-def generate_pixel_art(
+# Retained as source-compatible reference code while the Qwen path is being
+# stabilized. It is deliberately not registered as an MCP tool or called by
+# the production pipeline.
+def _legacy_generate_pixel_art(
     prompt: str, 
     script_text: str = None, 
     seed: int = None,
@@ -2515,3 +2521,203 @@ def generate_pixel_art(
                 "success": False,
                 "error": f"Placeholder generation failed: {str(e)}",
             }
+
+
+@server.tool()
+def generate_pixel_art(
+    prompt: str,
+    script_text: str = None,
+    seed: int = None,
+    reference_image: str = None,
+    i2i_mode: str = "balanced",
+    i2i_strength: float = None,
+    i2i_guidance: float = None,
+    i2i_steps: int = None,
+    use_pixel_art_model: bool = True,
+) -> dict:
+    """Generate one Qwen pixel-art scene and its deterministic final asset.
+
+    Qwen is the only production image backend. A failed local generation is
+    returned to the caller instead of silently changing models or creating a
+    placeholder. The unused I2I arguments remain in the public signature for
+    MCP clients, but Qwen's production profile is text-to-image only.
+    """
+    if not prompt or not prompt.strip():
+        return {"success": False, "error": "Prompt cannot be empty"}
+    if reference_image:
+        return {
+            "success": False,
+            "error": "The image generation profile supports text-to-image only; "
+                     "reference_image is disabled",
+        }
+
+    try:
+        from src.video.generation_profile import (
+            GenerationProfileError,
+            load_generation_profile,
+            model_display_name,
+            resolve_profile_model,
+        )
+        from src.video.postprocess import process_pixel_art_file, write_provenance
+        from src.video.scene_spec import STYLE_PIXEL_SCENE, from_visual_scene
+
+        profile = load_generation_profile()
+
+        # The generation profile owns the image model. Resolving here means the
+        # profile alone decides which checkpoint runs, so switching models is a
+        # profile change rather than an edit in two files. Resolution is cached
+        # in the registry, so the per-image cost is a dict lookup.
+        try:
+            resolved = resolve_profile_model(profile)
+        except GenerationProfileError as exc:
+            return {"success": False, "error": str(exc)}
+        model_label = model_display_name({**profile,
+                                          "resolved_model_path": resolved["path"]})
+
+        provider = get_mlxgen_provider()
+        if provider is None:
+            return {
+                "success": False,
+                "error": "MLX-Gen provider is not configured",
+            }
+        # Rebind only when the bound provider declares a DIFFERENT checkpoint
+        # than the profile resolves to. A provider without a `model_path`
+        # attribute is either an explicitly injected stub or one that manages
+        # its own model, and is left untouched.
+        bound_path = getattr(provider, "model_path", None)
+        if bound_path is not None and str(bound_path) != str(resolved["path"]):
+            from src.models.registry import DEFAULT_MLXGEN_BIN
+            from src.video.mlxgen_provider import MLXGenImageProvider
+            provider = MLXGenImageProvider(
+                model_path=resolved["path"],
+                executable=(profile.get("executable")
+                            or os.getenv("MLXGEN_BIN", DEFAULT_MLXGEN_BIN)),
+            )
+            set_mlxgen_provider(provider)
+
+        lora = profile.get("lora") or {}
+        lora_path = lora.get("path")
+        if lora_path and not Path(lora_path).exists():
+            return {
+                "success": False,
+                "error": f"Configured LoRA is missing: {lora_path}",
+            }
+        if lora_path and not getattr(provider, "lora_paths", None):
+            provider.set_loras([lora_path], [float(lora.get("scale", 1.0))])
+
+        # Keep the LLM's prose contract unchanged while making the final
+        # prompt's composition and text policy explicit.
+        cleaned_scene, text_requests = sanitize_text_requests(prompt.strip())
+        spec = from_visual_scene(
+            {"description": cleaned_scene},
+            trigger=lora.get("trigger", "Pixel Art"),
+            style=profile.get("prompt_style", STYLE_PIXEL_SCENE),
+        )
+        local_prompt = spec.to_prompt()
+
+        width = int(profile["width"])
+        height = int(profile["height"])
+        safe_name = "".join(
+            char if char.isalnum() or char in "-_" else "_"
+            for char in prompt[:40]
+        ).strip("_") or "scene"
+        import hashlib
+        prompt_hash = hashlib.sha256(local_prompt.encode("utf-8")).hexdigest()[:12]
+        output_path = OUTPUT_DIR / f"scene_{safe_name}_{prompt_hash}.png"
+        raw_path = output_path.with_name(output_path.stem + "__raw.png")
+
+        result = provider.generate(
+            prompt=local_prompt,
+            output_path=raw_path,
+            width=width,
+            height=height,
+            steps=int(profile["steps"]),
+            guidance=float(profile["guidance"]),
+            seed=seed,
+            negative_prompt=profile.get("negative_prompt", NEGATIVE_PROMPT),
+        )
+        if not result.get("success"):
+            result.update({
+                "model": model_label,
+                "generation_profile": profile["name"],
+                "prompt_used": local_prompt,
+                "text_requests_rewritten": text_requests,
+            })
+            return result
+
+        postprocess = process_pixel_art_file(
+            raw_path,
+            output_path=output_path,
+            profile=profile,
+        )
+        failed, failure_reason = _detect_failed_image(str(output_path))
+        geo_validation = GeopoliticalValidator().validate_prompt_geopolitical_accuracy(
+            local_prompt, script_text
+        )
+
+        provenance_path = None
+        if profile.get("provenance", True):
+            provenance_path = write_provenance(
+                output_path,
+                {
+                    "model": model_label,
+                    "provider": profile["provider"],
+                    "generation_profile": profile["name"],
+                    "prompt": local_prompt,
+                    "original_prompt": prompt,
+                    "sampling": {
+                        "steps": int(profile["steps"]),
+                        "guidance": float(profile["guidance"]),
+                        "seed": seed,
+                        "width": width,
+                        "height": height,
+                    },
+                    "lora": {
+                        "name": lora.get("name"),
+                        "path": lora_path,
+                        "scale": float(lora.get("scale", 1.0)) if lora else None,
+                    },
+                    "raw_output": str(raw_path),
+                    "processed_output": str(output_path),
+                    "postprocess": postprocess,
+                    "text_requests_rewritten": text_requests,
+                    "deferred_text": spec.deferred_text,
+                    "accuracy_score": geo_validation.get("accuracy_score"),
+                },
+            )
+
+        result.update({
+            "success": True,
+            "filename": output_path.name,
+            "path": str(output_path),
+            "raw_path": str(raw_path),
+            "prompt_used": local_prompt,
+            "original_prompt": prompt,
+            "model": model_label,
+            "provider": profile["provider"],
+            "source": "mlxgen",
+            "generation_profile": profile["name"],
+            "width": width,
+            "height": height,
+            "steps": int(profile["steps"]),
+            "guidance": float(profile["guidance"]),
+            "seed": seed,
+            "visual_type": _detect_visual_type(prompt),
+            "specificity_score": _score_prompt_specificity(prompt),
+            "text_requests_rewritten": text_requests,
+            "deferred_text": spec.deferred_text,
+            "postprocess": postprocess,
+            "provenance_path": str(provenance_path) if provenance_path else None,
+            "geopolitical_validation": geo_validation,
+            "accuracy_score": geo_validation.get("accuracy_score"),
+        })
+        if failed:
+            result["detected_failure"] = failure_reason
+        return result
+    except GenerationProfileError as exc:
+        return {"success": False, "error": str(exc)}
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"Qwen image generation failed: {type(exc).__name__}: {exc}",
+        }

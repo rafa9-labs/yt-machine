@@ -6,9 +6,10 @@ visuals and a voiceover, composites a 1080×1920 video with `ffmpeg`, and can
 publish to YouTube Shorts and TikTok on a daily schedule.
 
 Runs locally on a single machine. The default configuration targets Apple
-Silicon with a local LLM and a local image model, so the pipeline produces video
-without any hosted API. Optional cloud backends (fal.ai, ElevenLabs, OpenAI) are
-used only when their API keys are present and are never required.
+Silicon with a local LLM and Qwen-Image-2512 through MLX-Gen, so the pipeline
+produces video without a hosted image-generation API. Optional cloud backends
+(ElevenLabs and OpenAI) are used only when their API keys are present and are
+never required for the primary path.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](requirements-macos.txt)
@@ -70,12 +71,15 @@ structural guarantees the language model cannot be relied on to produce.
   story count, segue placement, de-duplication, and the closing, regardless of
   what the model returned.
 - **Local pixel-art generation** — eight scenes per video through an MLX-Gen
-  subprocess, with capability probing and a fail-closed policy (no silent cloud
-  substitution).
+  subprocess, with capability probing, deterministic 192×192/32-color
+  post-processing, provenance sidecars, and a fail-closed policy. The model is
+  chosen by the active generation profile, so it can be swapped without code
+  changes.
 - **Multi-engine TTS with fallbacks** — Kokoro (local) → ElevenLabs → Edge TTS
   → silent track, plus an `ffmpeg` mastering chain.
-- **FFmpeg video composition** — 60/40 split-screen layout, Ken Burns motion,
-  karaoke subtitles in ASS format, avatar loop, and a music bed.
+- **FFmpeg video composition** — 60/40 split-screen layout with static
+  grid-preserving pixel scenes, karaoke subtitles in ASS format, avatar loop,
+  and a music bed.
 - **Memory-safe model lifecycle** — one heavy model resident at a time, with
   verified memory reclamation between phases and an inter-process lock.
 - **Unattended daily automation on macOS** — `launchd` scheduling, `pmset` wake,
@@ -153,8 +157,9 @@ images/
 checkpoint.json
 ```
 
-A full run takes roughly 80 minutes on an M1 Pro: most of that is eight image
-generations at about 5–6 minutes each.
+A full run is dominated by the eight image generations. Use `YT_IMAGE_LIMIT=4`
+for a shorter real-pipeline smoke run; the default remains the full production
+count.
 
 ## Configuration
 
@@ -164,13 +169,14 @@ them. The settings that most affect behaviour:
 | Variable | Purpose |
 |---|---|
 | `OLLAMA_HOST` | Endpoint for the Ollama-compatible text server |
-| `USE_LOCAL_FLUX` | `false` uses the MLX-Gen provider; `true`/`auto` uses local CUDA FLUX |
-| `MLXGEN_LORA_PATH` | Optional style LoRA; only applied if the file already exists |
-| `MLXGEN_STEPS`, `MLXGEN_GUIDANCE` | Diffusion sampling parameters |
+| `YT_GENERATION_PROFILE` | Active validated image-generation profile; defaults to `qwen_pixel_scene` |
+| `YT_GENERATION_PROFILES_PATH` | Optional override for the generation-profile JSON |
+| `MLXGEN_BIN`, `MLXGEN_TIMEOUT` | MLX-Gen executable and per-image timeout |
+| `YT_IMAGE_LIMIT` | Optional image-count limit for smoke runs; defaults to 8 |
 | `PIPELINE_TIMEOUT` | Hard ceiling for one run in seconds |
 | `YOUTUBE_PRIVACY` | `private`, `unlisted`, or `public` upload visibility |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Enables run notifications and delivery |
-| `FAL_KEY`, `ELEVEN_LABS_KEY` | Cloud image-generation and TTS fallbacks |
+| `ELEVEN_LABS_KEY` | Optional TTS fallback |
 | `POSTGRES_*` | Optional progress persistence; the pipeline runs without it |
 
 Non-secret configuration is version-controlled:
@@ -178,9 +184,114 @@ Non-secret configuration is version-controlled:
 | File | Contents |
 |---|---|
 | `config/model_profile.json` | Active model per role (generated; not committed) |
+| `config/generation_profiles.json` | Qwen sampling, LoRA, seed, post-processing, and zoom policy |
 | `config/system_prompts.json` | All LLM system prompts and per-task timeouts |
 | `config/image_style.json` | Style suffix, negative prompt, palette, layout, LoRA map |
 | `config/rss_feeds.json` | Feed list and collection settings |
+
+### Inspecting and overriding generation settings
+
+The pipeline can report its resolved configuration without starting a run:
+
+```bash
+# List available image-generation profiles
+python tools/generate_complete_video.py --list-profiles
+
+# Print the effective model + generation configuration
+python tools/generate_complete_video.py --print-config
+
+# Select a different profile for one run
+python tools/generate_complete_video.py --generation-profile my_profile
+```
+
+`--set KEY=VALUE` overrides a single sampling parameter for one run. It is
+repeatable and applies in memory only — a stray experiment cannot alter the
+scheduled daily run:
+
+```bash
+# Try 12 steps at a smaller render size without editing any file
+python tools/generate_complete_video.py --set steps=12 --set width=512 --print-config
+```
+
+Allowed keys are `width`, `height`, `steps`, `guidance`, and `lora.scale`.
+Unknown keys and invalid values are rejected before the run starts. Resolution
+must be a positive multiple of 16, which the Qwen latent route requires.
+
+### Image generation profiles
+
+A generation profile answers *which* image model runs and *how* it is sampled.
+The profile owns the model, so switching models is a profile change rather than
+an edit in two places:
+
+```bash
+# List profiles with the model each one targets
+python tools/generate_complete_video.py --list-profiles
+
+# Run once with a different model
+python tools/generate_complete_video.py --generation-profile flux_klein_pixel_scene
+
+# Make it the default: edit "active_profile" in config/generation_profiles.json
+```
+
+The profile names its model with a short match key; the actual checkpoint is
+resolved at startup against the MLX-Gen models discovered on the machine. If
+nothing matches, the run stops and lists what *was* found.
+
+Two profiles ship: `qwen_pixel_scene` (Qwen-Image-2512, 20 steps, pixel-art
+LoRA) and `flux_klein_pixel_scene` (FLUX.2 Klein, 8 steps). They differ for
+real reasons — see the notes below.
+
+| | `qwen_pixel_scene` | `flux_klein_pixel_scene` |
+|---|---|---|
+| Steps / guidance | 20 / 4.0 | 8 / 3.5 |
+| Negative prompt | yes | **no** — the model has no CFG branch |
+| Style LoRA | Qwen pixel-art adapter | **none installed** (both on-disk adapters are Qwen-family) |
+| Dimension constraint | multiple of 16 | none declared |
+
+To use a different checkpoint, add a profile naming it. Any discovered
+MLX-Gen model is eligible; the pipeline never substitutes one silently.
+
+### Interactive editor
+
+`tools/configure.py` is an arrow-key editor for the generation profiles:
+
+```bash
+python tools/configure.py           # interactive
+python tools/configure.py --show    # print profiles and exit
+```
+
+Every save is validated before it reaches disk, so the tool cannot write a
+profile the pipeline would reject. Editable fields are the target model,
+resolution, diffusion steps, guidance, LoRA path/scale/trigger, seed pool, and
+the pixel-grid post-processing (logical size, output size, palette size,
+resample filters). The menu also switches the active profile, duplicates or
+deletes profiles, and delegates text-model selection to `tools/model_setup.py`.
+
+Validation is structural, so the editor works on a machine with no image model
+installed — whether the model a profile names is actually present is checked
+separately, at pipeline start.
+
+Values that are **not** editable are shown with an explanation: the default
+2-story / 4-beat / 8-image structure is encoded in the synthesis prompt and
+timeline builder, while `YT_IMAGE_LIMIT` provides a deliberate smoke-run
+override. Continuous camera zoom is disabled because rescaling destroys the
+logical pixel grid the profile exists to preserve.
+
+### Image acceptance corpus
+
+After a real pipeline run has produced `script_segments.json`, generate the
+default 15-image corpus (5 real scenes × 3 seeds) with:
+
+```bash
+python tools/run_image_acceptance.py \
+  --script output/projects/video_<timestamp>/script_segments.json
+```
+
+Results and provenance are written under `output/acceptance/`. The run uses
+whichever model the active generation profile names, so the corpus can be
+regenerated against any profile. An optional guidance experiment can be run
+separately with `--guidance 3.5` or `--guidance 4.5`; the baseline profile
+remains unchanged.
 
 ## Architecture
 
@@ -361,23 +472,13 @@ which is all the ledger and the summary need.
 
 ## Testing
 
-Tests use `pytest`. Run the suite:
+Tests use `pytest`. Run the whole suite:
 
 ```bash
-.venv/bin/python -m pytest \
-  tests/test_automation_macos.py \
-  tests/test_dedup.py \
-  tests/test_image_pipeline.py \
-  tests/test_local_prompt_building.py \
-  tests/test_model_registry.py \
-  tests/test_pipeline_progress.py \
-  tests/test_runtime_lifecycle.py \
-  tests/test_visual_prompts.py \
-  tests/test_vram_budget.py \
-  tests/test_vram_orchestrator.py
+.venv/bin/python -m pytest tests/
 ```
 
-That set covers 461 tests and runs in under a minute without loading a model or
+That covers 599 tests and runs in under a minute without loading a model or
 touching the network. The main areas:
 
 | Area | File |
@@ -388,10 +489,23 @@ touching the network. The main areas:
 | Script de-duplication and enforcement | `tests/test_dedup.py`, `tests/test_visual_prompts.py` |
 | Local prompt construction and QA thresholds | `tests/test_local_prompt_building.py`, `tests/test_image_pipeline.py` |
 | Video/VRAM budget calculations | `tests/test_vram_budget.py`, `tests/test_vram_orchestrator.py` |
+| Generation profile validation and overrides | `tests/test_generation_profile.py`, `tests/test_configure_tool.py` |
+| Image-model resolution and interchangeability | `tests/test_model_interchangeability.py` |
+| Pipeline smoke-run configuration | `tests/test_pipeline_config.py` |
+| Real-script acceptance corpus | `tests/test_image_acceptance.py`, `tools/run_image_acceptance.py` |
+| Scene spec and post-processing invariants | `tests/test_scene_spec.py`, `tests/test_postprocess.py` |
 
-Some test files under `tests/` are standalone validation scripts from earlier
-iterations rather than `pytest` modules; they import older module paths and are
-not collected by the command above.
+Some files under `tests/` are standalone validation scripts rather than pytest
+modules. They are excluded from automatic collection because they perform
+live-service work, require PostgreSQL/Ollama, or reference historical generated
+projects. Run them directly only when their prerequisites are available:
+
+- `tests/test_pipeline_models.py`
+- `tests/test_langchain_chains.py`
+- `tests/test_vector_memory.py`
+- `tests/test_improvements.py`
+- `tests/test_option_a_layout.py`
+- `tests/test_video_rebuild.py`
 
 ## Development
 
@@ -401,6 +515,13 @@ python tools/generate_complete_video.py --dry-run
 
 # Inspect which models were discovered and selected
 python tools/model_setup.py --show
+
+# Inspect the effective image-generation configuration
+python tools/generate_complete_video.py --print-config
+python tools/generate_complete_video.py --list-profiles
+
+# Edit generation profiles interactively
+python tools/configure.py
 
 # Start the local LLM stack (MLX server + Ollama-compatible bridge)
 tools/start_llm.sh start
@@ -462,8 +583,9 @@ Known gaps in the current implementation, in rough priority order:
   and re-reads the checkpoint, but every step re-runs.
 - **Legacy test scripts need modernising.** The standalone validation scripts
   under `tests/` predate the `src/` layout and are not collected by `pytest`.
-- **Image model evaluation is in progress.** The pipeline runs FLUX.2 Klein;
-  a Qwen-Image alternative is being benchmarked but is not yet adopted.
+- **Qwen image acceptance is in progress.** The active path is Qwen-Image-2512;
+  the final 15-image quality set and end-to-end MP4 palette check are still
+  pending.
 - **TikTok publishing requires app approval.** The integration is implemented
   and refreshes tokens, but posting only works once the Content Posting API
   access is granted.

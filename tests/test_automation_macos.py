@@ -226,28 +226,61 @@ class TestRetryClassification:
 
 class TestPipelineTimeout:
     def test_default_timeout_exceeds_typical_run(self, automate):
-        """A full run takes ~80 min; a shorter ceiling kills it mid-generation."""
-        assert automate.PIPELINE_TIMEOUT >= 5400, (
-            f"PIPELINE_TIMEOUT={automate.PIPELINE_TIMEOUT}s is too low for a "
-            "run that generates 8 images sequentially"
-        )
+        """The shipped default must cover a full run.
 
-    def test_timeout_matches_server_ceiling(self, automate):
-        """automate.py and server.py supervise the same pipeline.
-
-        Parsed as text rather than imported: src.server pulls in FastAPI and
-        the full application graph, which is far too heavy for a unit test.
+        Reads the default from source rather than the module attribute:
+        ``automate.PIPELINE_TIMEOUT`` resolves the environment first, and a
+        local .env may legitimately raise it.
         """
         import re
 
-        server_src = (Path(__file__).resolve().parent.parent
-                      / "src" / "server.py").read_text(encoding="utf-8")
+        src = (Path(__file__).resolve().parent.parent
+               / "src" / "automate.py").read_text(encoding="utf-8")
         match = re.search(
+            r'PIPELINE_TIMEOUT\s*=\s*int\(os\.getenv\("PIPELINE_TIMEOUT",\s*"(\d+)"\)',
+            src,
+        )
+        assert match, "could not find the pipeline timeout default"
+        default = int(match.group(1))
+
+        assert default >= 5400, (
+            f"default PIPELINE_TIMEOUT={default}s is too low for a run that "
+            "generates 8 images sequentially"
+        )
+
+    def test_timeout_defaults_match_between_supervisors(self, automate):
+        """automate.py and server.py supervise the same pipeline.
+
+        Compares the two declaration defaults, not the environment-resolved
+        values: a local .env may raise one without the other being wrong, and
+        the invariant under test is that the shipped defaults agree.
+
+        Parsed as text because src.server pulls in FastAPI and the full
+        application graph, which is far too heavy for a unit test.
+        """
+        import re
+
+        repo = Path(__file__).resolve().parent.parent
+
+        automate_src = (repo / "src" / "automate.py").read_text(encoding="utf-8")
+        automate_match = re.search(
+            r'PIPELINE_TIMEOUT\s*=\s*int\(os\.getenv\("PIPELINE_TIMEOUT",\s*"(\d+)"\)',
+            automate_src,
+        )
+        assert automate_match, "could not find automate.py's timeout default"
+
+        server_src = (repo / "src" / "server.py").read_text(encoding="utf-8")
+        server_match = re.search(
             r'_PIPELINE_TIMEOUT_S\s*=\s*int\(os\.getenv\("PIPELINE_TIMEOUT",\s*"(\d+)"\)',
             server_src,
         )
-        assert match, "could not find the server's pipeline timeout default"
-        assert int(match.group(1)) == automate.PIPELINE_TIMEOUT
+        assert server_match, "could not find the server's pipeline timeout default"
+
+        assert int(server_match.group(1)) == int(automate_match.group(1)), (
+            "the shipped pipeline timeout defaults must agree; "
+            f"automate.py={automate_match.group(1)} "
+            f"server.py={server_match.group(1)}"
+        )
 
 
 # ── Power configuration ─────────────────────────────────────────────────────
