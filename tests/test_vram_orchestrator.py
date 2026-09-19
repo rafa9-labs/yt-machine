@@ -362,10 +362,12 @@ class TestResolutionConfig:
         assert config['generation_params']['guidance_scale'] == 4.0
 
     def test_generation_profile_selects_qwen(self):
-        from src.video.generation_profile import load_generation_profile
+        from src.video.generation_profile import load_generation_profile, model_match_key
         profile = load_generation_profile()
         assert profile['provider'] == 'mlxgen'
-        assert profile['model_id'] == 'AbstractFramework/qwen-image-2512-4bit'
+        # The profile names its model by a short match key; the resolved path
+        # comes from the registry, so the key is what this asserts.
+        assert "qwen-image-2512-4bit" in model_match_key(profile)
         assert profile['lora']['scale'] == pytest.approx(0.70)
 
     def test_enforcement_prefix_includes_sharp_focus(self):

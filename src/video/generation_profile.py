@@ -20,7 +20,11 @@ DEFAULT_PROFILE_PATH = (
     / "generation_profiles.json"
 )
 DEFAULT_PROFILE_NAME = "qwen_pixel_scene"
-QWEN_IMAGE_MODEL_ID = "AbstractFramework/qwen-image-2512-4bit"
+
+# NOTE: there is deliberately no hardcoded model constant. A profile names its
+# model via `model.match`, resolved against discovered MLX-Gen checkpoints by
+# resolve_profile_model(). Pinning one model id here would reintroduce the lock
+# that made swapping models impossible without editing code.
 
 # Fields a caller may override at runtime, and the coercion to apply.
 # Deliberately narrow: these are the sampling knobs that are safe to vary for
@@ -125,9 +129,58 @@ def _expand_profile_paths(profile: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def model_match_key(profile: Dict[str, Any]) -> str:
+    """Return the substring used to resolve this profile's model.
+
+    Accepts both the structured form and the legacy bare ``model_id``, so
+    profiles written before the model block existed keep loading.
+    """
+    model = profile.get("model")
+    if isinstance(model, dict):
+        return str(model.get("match") or "").strip()
+    # Legacy form: model_id held a repo id (qwen-image-2512-4bit) or a path.
+    legacy = str(profile.get("model_id") or "").strip()
+    return legacy.rsplit("/", 1)[-1] if legacy else ""
+
+
+def model_family(profile: Dict[str, Any]) -> str:
+    """Declared model family, for provenance and log messages."""
+    model = profile.get("model")
+    if isinstance(model, dict) and model.get("family"):
+        return str(model["family"])
+    return str(profile.get("family") or "")
+
+
+def model_display_name(profile: Dict[str, Any]) -> str:
+    """Human-readable model name for provenance and logs.
+
+    A HuggingFace cache path resolves to a snapshot hash, which tells an
+    operator nothing, so the repo directory is used instead when the path is
+    an HF cache layout. Local checkpoint folders keep their own name.
+    """
+    resolved = str(profile.get("resolved_model_path") or "")
+    if resolved:
+        path = Path(resolved)
+        # .../hub/models--<org>--<name>/snapshots/<hash> -> "<org>/<name>"
+        parts = path.parts
+        for index, part in enumerate(parts):
+            if part.startswith("models--"):
+                repo = part.replace("models--", "", 1).replace("--", "/")
+                return repo
+        return path.name
+    return model_match_key(profile)
+
+
 def validate_generation_profile(profile: Dict[str, Any]) -> None:
-    """Validate the invariants required by the Qwen production path."""
-    required = ("provider", "model_id", "width", "height", "steps",
+    """Validate a generation profile STRUCTURALLY.
+
+    Deliberately does not touch the model registry. This runs in the
+    interactive editor and in unit tests, both of which must work on a machine
+    where no image model has been downloaded yet — a profile is a description,
+    and whether the model it names is present is a separate question answered
+    by resolve_profile_model() at pipeline start.
+    """
+    required = ("provider", "width", "height", "steps",
                 "guidance", "seed_pool", "postprocess")
     missing = [key for key in required if key not in profile]
     if missing:
@@ -137,12 +190,13 @@ def validate_generation_profile(profile: Dict[str, Any]) -> None:
 
     if profile["provider"] != "mlxgen":
         raise GenerationProfileError(
-            f"Unsupported image provider {profile['provider']!r}; Qwen requires mlxgen"
+            f"Unsupported image provider {profile['provider']!r}; "
+            "local image generation requires mlxgen"
         )
-    if profile["model_id"] != QWEN_IMAGE_MODEL_ID:
+
+    if not model_match_key(profile):
         raise GenerationProfileError(
-            f"Image model {profile['model_id']!r} is not the selected Qwen model "
-            f"{QWEN_IMAGE_MODEL_ID!r}"
+            "Profile must name a model, via model.match or model_id"
         )
 
     for key in ("width", "height", "steps"):
@@ -153,15 +207,29 @@ def validate_generation_profile(profile: Dict[str, Any]) -> None:
         if value <= 0:
             raise GenerationProfileError(f"{key} must be positive")
 
-    # mlxgen reports dimension_multiple=16 for the Qwen latent route; a
-    # dimension that is not a multiple of 16 fails at generation time, which
-    # is a far more expensive way to learn about a typo.
-    for key in ("width", "height"):
-        value = int(profile[key])
-        if value % 16:
+    # Dimension constraints are model-specific: mlxgen reports a
+    # dimension_multiple per route that differs between families. The profile
+    # declares the constraint its model requires so a typo is caught here,
+    # without a registry lookup (this runs in the editor and in tests, where
+    # no model need be installed). resolve_profile_model() additionally
+    # verifies the declared value against the model's own capability report.
+    declared_multiple = profile.get("dimension_multiple")
+    if declared_multiple is not None:
+        try:
+            declared_multiple = int(declared_multiple)
+        except (TypeError, ValueError) as exc:
             raise GenerationProfileError(
-                f"{key} must be a multiple of 16 (got {value})"
-            )
+                "dimension_multiple must be an integer"
+            ) from exc
+        if declared_multiple <= 0:
+            raise GenerationProfileError("dimension_multiple must be positive")
+        for key in ("width", "height"):
+            value = int(profile[key])
+            if value % declared_multiple:
+                raise GenerationProfileError(
+                    f"{key} must be a multiple of {declared_multiple} "
+                    f"(got {value})"
+                )
 
     try:
         guidance = float(profile["guidance"])
@@ -218,6 +286,87 @@ def validate_generation_profile(profile: Dict[str, Any]) -> None:
         raise GenerationProfileError(
             "Pixel-art generation profiles must disable continuous zoom"
         )
+
+
+def resolve_profile_model(
+    profile: Dict[str, Any],
+    *,
+    probe_capabilities: bool = False,
+) -> Dict[str, Any]:
+    """Resolve a profile's model to a discovered MLX-Gen checkpoint.
+
+    Returns a dict describing the resolution so callers do not need to know
+    about the registry:
+
+        {"spec": ModelSpec, "path": str, "id": str}
+
+    Raises GenerationProfileError when nothing matches, naming the models that
+    were actually found so the message is actionable.
+
+    ``probe_capabilities`` additionally checks the model's own dimension
+    constraint when the runtime can report one. It is off by default because
+    probing launches the mlxgen CLI, which is far too slow to do per image.
+    """
+    from src.models.registry import (
+        PROVIDER_MLXGEN,
+        list_mlxgen_models,
+        resolve_mlxgen_model,
+    )
+
+    match = model_match_key(profile)
+    if not match:
+        raise GenerationProfileError(
+            "Profile does not name a model (model.match or model_id)"
+        )
+
+    spec = resolve_mlxgen_model(match)
+    if spec is None:
+        available = list_mlxgen_models()
+        if available:
+            names = "\n    ".join(s.id for s in available)
+            hint = f"\n  Discovered MLX-Gen models:\n    {names}"
+        else:
+            hint = ("\n  No MLX-Gen models were discovered. Check YT_MODEL_ROOTS "
+                    "or download a checkpoint.")
+        raise GenerationProfileError(
+            f"No MLX-Gen image model matches {match!r}.{hint}"
+        )
+
+    if spec.provider != PROVIDER_MLXGEN:
+        raise GenerationProfileError(
+            f"Resolved {spec.id!r} is provider {spec.provider!r}, not mlxgen"
+        )
+
+    if probe_capabilities:
+        _enforce_dimension_multiple(profile, spec)
+
+    return {"spec": spec, "path": spec.path or spec.id, "id": spec.id}
+
+
+def _enforce_dimension_multiple(profile: Dict[str, Any], spec) -> None:
+    """Reject dimensions the model cannot produce.
+
+    mlxgen reports ``dimension_multiple`` per route. Some families require a
+    multiple (Qwen's latent route reports 16) and others report none, in which
+    case no constraint is applied rather than inventing one.
+    """
+    from src.video.mlxgen_provider import MLXGenImageProvider
+
+    executable = (spec.metadata or {}).get("executable") or os.getenv("MLXGEN_BIN")
+    provider = MLXGenImageProvider(model_path=spec.path or spec.id,
+                                   executable=executable)
+    caps = provider.capabilities()
+    multiple = caps.get("dimension_multiple") if caps else None
+    if not multiple:
+        return
+    multiple = int(multiple)
+    for key in ("width", "height"):
+        value = int(profile[key])
+        if value % multiple:
+            raise GenerationProfileError(
+                f"{key} must be a multiple of {multiple} for this model "
+                f"(got {value})"
+            )
 
 
 def load_generation_profile(
@@ -286,7 +435,8 @@ def describe_profiles(path: Optional[Path] = None) -> list:
             lora = selected.get("lora") or {}
             entry.update({
                 "provider": selected.get("provider"),
-                "model_id": selected.get("model_id"),
+                "model_id": model_match_key(selected),
+                "model_family": model_family(selected),
                 "width": selected.get("width"),
                 "height": selected.get("height"),
                 "steps": selected.get("steps"),

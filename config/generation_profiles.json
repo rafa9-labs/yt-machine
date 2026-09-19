@@ -4,10 +4,13 @@
   "profiles": {
     "qwen_pixel_scene": {
       "provider": "mlxgen",
-      "family": "qwen-image",
-      "model_id": "AbstractFramework/qwen-image-2512-4bit",
+      "model": {
+        "match": "qwen-image-2512-4bit",
+        "family": "qwen-image"
+      },
       "width": 768,
       "height": 768,
+      "dimension_multiple": 16,
       "steps": 20,
       "guidance": 4.0,
       "lora": {
@@ -16,6 +19,29 @@
         "scale": 0.70,
         "trigger": "Pixel Art"
       },
+      "seed_pool": [42, 137, 891, 2048, 7341],
+      "postprocess": {
+        "logical_size": [192, 192],
+        "output_size": [768, 768],
+        "colors": 32,
+        "downsample": "box",
+        "upscale": "nearest"
+      },
+      "zoom": "disabled",
+      "provenance": true
+    },
+    "flux_klein_pixel_scene": {
+      "provider": "mlxgen",
+      "model": {
+        "match": "flux2-klein-base-9b-uncensored-8bit",
+        "family": "flux2-klein"
+      },
+      "width": 768,
+      "height": 768,
+      "steps": 8,
+      "guidance": 3.5,
+      "negative_prompt": null,
+      "lora": null,
       "seed_pool": [42, 137, 891, 2048, 7341],
       "postprocess": {
         "logical_size": [192, 192],

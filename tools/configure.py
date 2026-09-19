@@ -120,6 +120,7 @@ def print_profiles(path: Optional[Path] = None) -> None:
             continue
         print(f" {marker} {entry['name']}")
         print(f"      model    : {entry['model_id']} ({entry['provider']})")
+        print(f"      family   : {entry.get('model_family') or '(unspecified)'}")
         print(f"      sampling : {entry['width']}x{entry['height']}, "
               f"{entry['steps']} steps, guidance {entry['guidance']}")
         print(f"      lora     : {entry['lora_name']} (scale {entry['lora_scale']})")
@@ -205,6 +206,49 @@ def _ask_text(message: str, current: str, *, required: bool = False) -> str:
     return answer.strip()
 
 
+def _edit_model_block(profile: Dict[str, Any]) -> None:
+    """Choose which discovered image model this profile targets.
+
+    Switching models is the point of this field: the profile owns the model, so
+    selecting a different checkpoint here is all that is required. Discovery is
+    read-only and never loads weights, so this is safe to run at any time.
+    """
+    from src.models.registry import list_mlxgen_models
+
+    from src.video.generation_profile import model_family, model_match_key
+
+    current = model_match_key(profile)
+    try:
+        specs = list_mlxgen_models()
+    except Exception as exc:  # discovery must never break the editor
+        print(f"  Could not list models ({exc}); keeping {current!r}")
+        return
+
+    if not specs:
+        print("  No MLX-Gen models discovered. Check YT_MODEL_ROOTS.")
+        return
+
+    # Present the full path because an HF cache and a local folder can hold
+    # checkpoints with similar names, and the path is what actually runs.
+    choices = []
+    for spec in specs:
+        label = spec.path or spec.id
+        marker = "  (current)" if current and current.lower() in label.lower() else ""
+        choices.append(questionary.Choice(f"{label}{marker}", value=spec.id))
+    choices.append(questionary.Choice("Keep current", value=None))
+
+    selected = questionary.select(
+        f"Image model (currently {current!r})", choices=choices, style=QSTYLE
+    ).ask()
+    if selected is None:
+        return
+
+    label = selected
+    profile["model"] = {"match": label, "family": model_family(profile) or ""}
+    profile.pop("model_id", None)  # superseded by the model block
+    print(f"  Model set to {label}")
+
+
 def edit_profile(data: Dict[str, Any], name: str) -> bool:
     """Edit one profile in place. Returns True if anything changed."""
     profile = data["profiles"][name]
@@ -215,14 +259,29 @@ def edit_profile(data: Dict[str, Any], name: str) -> bool:
     print("  (Ctrl-C to abandon and return to the menu)\n")
 
     try:
+        if questionary.confirm("Change the model this profile targets?",
+                               default=False, style=QSTYLE).ask():
+            _edit_model_block(profile)
+
         if not questionary.confirm("Edit sampling and resolution?", default=True,
                                    style=QSTYLE).ask():
             return False
 
-        profile["width"] = _ask_int(
-            "Render width", int(profile.get("width", 768)), minimum=16, multiple_of=16)
-        profile["height"] = _ask_int(
-            "Render height", int(profile.get("height", 768)), minimum=16, multiple_of=16)
+        # The dimension constraint belongs to the model, not to every profile:
+        # Qwen's latent route needs multiples of 16, other families report no
+        # requirement. Prompt from the profile's declared value so the editor
+        # cannot create a profile its own validator would reject.
+        _declared = profile.get("dimension_multiple")
+        _align = int(_declared) if _declared else 1
+
+        def _size(message: str, current: int) -> int:
+            if _align <= 1:
+                return _ask_int(message, current, minimum=1)
+            return _ask_int(message, current, minimum=_align, multiple_of=_align)
+
+        hint = f" (multiple of {_align})" if _align > 1 else ""
+        profile["width"] = _size(f"Render width{hint}", int(profile.get("width", 768)))
+        profile["height"] = _size(f"Render height{hint}", int(profile.get("height", 768)))
         profile["steps"] = _ask_int(
             "Diffusion steps (more = slower, diminishing returns)",
             int(profile.get("steps", 20)), minimum=1)
