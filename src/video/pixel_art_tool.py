@@ -2555,9 +2555,11 @@ def generate_pixel_art(
         from src.video.generation_profile import (
             GenerationProfileError,
             load_generation_profile,
+            model_family,
             model_display_name,
             resolve_profile_model,
         )
+        from src.video.lora_registry import describe_lora, lora_matches_model
         from src.video.postprocess import process_pixel_art_file, write_provenance
         from src.video.scene_spec import STYLE_PIXEL_SCENE, from_visual_scene
 
@@ -2602,6 +2604,21 @@ def generate_pixel_art(
                 "success": False,
                 "error": f"Configured LoRA is missing: {lora_path}",
             }
+        if lora_path:
+            lora_spec = describe_lora(lora_path)
+            if lora_spec.error:
+                return {
+                    "success": False,
+                    "error": f"Configured LoRA is unreadable: {lora_spec.error}",
+                }
+            compatible, reason = lora_matches_model(
+                lora_spec, model_family(profile)
+            )
+            if not compatible:
+                return {
+                    "success": False,
+                    "error": f"Configured LoRA is incompatible: {reason}",
+                }
         if lora_path and not getattr(provider, "lora_paths", None):
             provider.set_loras([lora_path], [float(lora.get("scale", 1.0))])
 
