@@ -1236,6 +1236,62 @@ entries and `LLMInterface` methods have no caller on any pipeline path.
 
 ---
 
+### ADR-038 — Master and delivery are separate artifacts
+
+**Decision:** A run produces two video artifacts. The **master** is lossless
+4:4:4 H.264 at CRF 0 and is the archival record. The **delivery** copy is
+yuv420p H.264 High, encoded to a hard byte ceiling, and is what every
+provider receives. The delivery copy takes the canonical `video_<id>.mp4`
+name; the master is renamed `video_<id>.master.mp4`.
+
+**Why a separate artifact rather than one encode.** The palette guarantee and
+the size constraint are irreconcilable, and the measurements are unambiguous:
+
+| Encode of a real 32-colour frame | Decoded colours |
+|---|---|
+| source PNG | 32 |
+| yuv444p CRF 0 | **32** |
+| yuv420p (any CRF) | 4,696 |
+
+Chroma subsampling invents colours at every pixel edge, which is exactly what
+softens pixel art. But a lossless 1080×1920 master runs ~38 Mbit/s — a full
+run is ~400–500 MB — while Telegram's Bot API refuses anything over 50 MB and
+the TikTok and Instagram uploaders read the whole file into memory. Encoding
+one file that satisfies both is impossible, so the two requirements get two
+artifacts and the master is never degraded by a delivery concern.
+
+**Why the delivery stage is outside the assembler.** The assembler already has
+a three-path fallback chain; adding a second encode inside it would multiply
+that complexity and force every path to produce two files. A post-assembly
+stage is one function, one input, two outputs, independently testable, and it
+also fixes the memory spike in the publishers without touching them.
+
+**Why capped CRF rather than two-pass.** The bitrate is derived from the
+duration and the byte ceiling, then applied as `-maxrate`/`-bufsize` on top of
+a CRF. Quality stays constant on the simple frames that dominate pixel art,
+and the ceiling holds. Two-pass VBR reaches the same ceiling but doubles encode
+time and needs a stats file. When the ceiling cannot yield a usable bitrate,
+the stage reports that explicitly rather than emitting an unwatchable file.
+
+**Why the delivery copy takes the canonical name.** Every consumer —
+manifest, publish discovery, `server.py`, Telegram — already resolves
+`video_<id>.mp4`. Naming the delivery copy that way means none of them needed
+to change to receive the correct file. This inverted the naive naming and
+created a hazard: two discovery functions used different rules (first-in-glob
+vs newest-by-mtime), so with two MP4s present they could disagree and publish
+the master. Both now share one selector that prefers the delivery copy and
+excludes the master, falling back to the master only if delivery failed.
+
+**Trigger:** delivery runs only when the master exceeds the ceiling (default
+50 MB, matching Telegram). Below it, no second file is written and behaviour is
+byte-identical to before this decision. A failed transcode restores the
+canonical name and never fails the run — the master is always the artifact of
+record.
+
+**Status:** Held.
+
+---
+
 ### ADR-039 — Provenance is a per-image artifact, propagated with its image
 
 **Decision:** Every generated image carries a JSON sidecar named

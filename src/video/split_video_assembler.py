@@ -59,10 +59,18 @@ VIDEO_H = 1920
 TOP_H = 1152
 BOTTOM_H = 768
 FPS = 30
-# RGB lossless H.264 is intentional here. yuv420p chroma subsampling creates
-# new colours at every pixel edge and makes the scene layer visibly soft.
-PIXEL_VIDEO_CODEC = 'libx264rgb'
-PIXEL_VIDEO_PIXEL_FORMAT = 'rgb24'
+# Lossless 4:4:4 H.264 for the master. yuv420p chroma subsampling creates new
+# colours at every pixel edge and makes the scene layer visibly soft: measured
+# on a real 32-colour pixel-art frame, a yuv420p encode decodes to 4,696
+# colours. yuv444p keeps the palette exact (32 colours, verified through this
+# module's own filter chain) and, unlike the previous RGB encoder, produces a
+# standard H.264 profile rather than an RGB-specific one.
+#
+# CRF 0 is lossless and intentional for the master. It is NOT the artifact that
+# gets uploaded — see src/video/media_export.py for the size-bounded delivery
+# copy that consumers actually receive.
+PIXEL_VIDEO_CODEC = 'libx264'
+PIXEL_VIDEO_PIXEL_FORMAT = 'yuv444p'
 PIXEL_VIDEO_CRF = '0'
 
 SCENE_ZOOM_PROFILES = {
@@ -162,14 +170,6 @@ def _validate_mp4(path: str, ffmpeg_exe: str = None, *, require_audio: bool = Fa
         return {'valid': False, 'video_codec': None, 'audio_codec': None, 'error': str(e)}
 
 
-def _adaptive_crf(total_dur: float, base_crf: int = 20) -> int:
-    if total_dur <= 90:
-        return base_crf
-    elif total_dur <= 120:
-        return base_crf + 2
-    else:
-        return base_crf + 4
-
 def _render_avatar_ffmpeg(
     avatar_path: str,
     total_duration: float,
@@ -264,9 +264,10 @@ def _render_scene_opencv(
 
     total_frames = max(int(duration * FPS), 2)
 
-    # Do not pass the frame through an intermediate YUV codec. That conversion
-    # invents colours before the final encode, even when the source PNG has a
-    # bounded palette.
+    # Encode straight from the PNG with the scene codec. The frame is never
+    # routed through a lossy intermediate: this clip becomes part of the
+    # master, and any subsampled conversion here would invent colours before
+    # the master is even assembled.
     tmp_image_path = output_path.replace('.mp4', '_frame.png')
     if not cv2.imwrite(tmp_image_path, scene_frame):
         return False
@@ -812,7 +813,7 @@ def _assemble_pure_ffmpeg(
 
         stack_filter = (
             f'[0:v]pad={VIDEO_W}:{VIDEO_H}:0:0:color={bg_color}[padded];'
-            f'[padded][1:v]overlay=0:{TOP_H}:format=auto,format=rgb24[stacked]'
+            f'[padded][1:v]overlay=0:{TOP_H}:format=auto,format=yuv444p[stacked]'
         )
         stack_cmd = [
             ffmpeg_exe, '-y',
@@ -877,7 +878,7 @@ def _assemble_pure_ffmpeg(
             video_filter += f',fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}'
         else:
             video_filter = f'fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION}'
-        video_filter += ',format=rgb24'
+        video_filter += ',format=yuv444p'
 
         # ── 7. Mix audio (voiceover + music) ──
         mixed_audio_path = tempfile.mktemp(suffix='_audio.wav')
@@ -1237,9 +1238,9 @@ def build_split_video(
                 filter_parts = []
                 if overlay_exists:
                     filter_parts.append(f'[0:v][1:v]overlay=0:0:format=auto[bg]')
-                    filter_parts.append(f'[bg]fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION},format=rgb24[vout]')
+                    filter_parts.append(f'[bg]fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION},format=yuv444p[vout]')
                 else:
-                    filter_parts.append(f'[0:v]fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION},format=rgb24[vout]')
+                    filter_parts.append(f'[0:v]fade=t=out:st={total_dur - VIDEO_FADE_DURATION:.3f}:d={VIDEO_FADE_DURATION},format=yuv444p[vout]')
 
                 filter_str = ';'.join(filter_parts)
 
@@ -1462,6 +1463,7 @@ def build_split_video(
         return {
             "success": True,
             "path": str(out_path),
+            "master_path": str(out_path),
             "duration_seconds": round(total_dur, 2),
             "file_size_bytes": file_size,
             "file_size_mb": round(file_size / (1024 * 1024), 2),
@@ -1469,11 +1471,17 @@ def build_split_video(
             "fps": FPS,
             "scenes": len(image_paths),
             "subtitles": len(subtitle_clips),
+            "encode": {
+                "codec": PIXEL_VIDEO_CODEC,
+                "pix_fmt": PIXEL_VIDEO_PIXEL_FORMAT,
+                "crf": PIXEL_VIDEO_CRF,
+                "role": "master",
+            },
             "effects_applied": [
                 "full_screen_bg",
                 "static_pixel_scene",
                 "nearest_neighbor_scaling",
-                "rgb_lossless_encoding",
+                "yuv444_lossless_encoding",
                 "avatar_loop",
                 "title_overlay",
                 "karaoke_subtitles",

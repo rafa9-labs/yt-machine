@@ -2090,6 +2090,7 @@ try:
 
     if assembly_result.get('success'):
         final_video_path = assembly_result.get('path')
+        master_video_path = assembly_result.get('master_path', final_video_path)
         log.info("assembly.complete",
                  video=final_video_path,
                  duration_s=assembly_result.get('duration_seconds'),
@@ -2098,9 +2099,83 @@ try:
     else:
         log.error("assembly.failed", error=assembly_result.get('error'))
         final_video_path = None
+        master_video_path = None
+
+    # ── Delivery copy ──
+    # The assembler emits a lossless 4:4:4 master, which preserves the
+    # 32-colour pixel-art palette but runs ~38 Mbit/s. Delivery providers
+    # impose hard ceilings (Telegram refuses >50 MB), so every consumer
+    # receives a size-bounded yuv420p copy instead.
+    #
+    # Naming: the master is renamed to video_<id>.master.mp4 and the delivery
+    # copy takes the canonical video_<id>.mp4. Every downstream consumer
+    # (manifest, publish discovery, server, Telegram) already resolves the
+    # canonical name, so nothing needs to change to receive the upload copy.
+    if final_video_path:
+        try:
+            delivery_max_mb = resolve_delivery_max_mb(
+                os.environ.get('YT_DELIVERY_MAX_MB')
+            )
+            delivery_enabled = resolve_delivery_enabled(
+                os.environ.get('YT_DELIVERY_ENABLED')
+            )
+            master_bytes = Path(master_video_path).stat().st_size
+            delivery_max_bytes = delivery_max_mb * 1024 * 1024
+
+            if not delivery_enabled:
+                log.warning("delivery.disabled",
+                            note="master retained as the only artifact; "
+                                 "provider size limits are not enforced")
+            elif not needs_delivery(master_bytes, delivery_max_bytes):
+                # Small enough to serve as-is: no second file, and the
+                # canonical name already points at the only artifact. This
+                # is the pre-existing behaviour, preserved byte for byte.
+                log.info("delivery.not_needed",
+                         master_mb=round(master_bytes / (1024 * 1024), 2),
+                         limit_mb=delivery_max_mb)
+            else:
+                from src.video.media_export import transcode_for_delivery
+
+                canonical = Path(final_video_path)
+                master_target = canonical.with_name(
+                    f"{canonical.stem}.master{canonical.suffix}"
+                )
+                canonical.replace(master_target)
+                master_video_path = str(master_target)
+
+                delivery_result = transcode_for_delivery(
+                    master_target,
+                    canonical,
+                    max_bytes=delivery_max_bytes,
+                    crf=resolve_delivery_crf(os.environ.get('YT_DELIVERY_CRF')),
+                )
+                if delivery_result.get('success'):
+                    final_video_path = delivery_result['path']
+                    log.info("delivery.complete",
+                             video=final_video_path,
+                             master=master_video_path,
+                             size_mb=delivery_result.get('size_mb'),
+                             bitrate_kbps=delivery_result.get('bitrate_kbps'),
+                             attempts=delivery_result.get('attempts'))
+                else:
+                    # Delivery is a convenience; the master is the artifact.
+                    # Restore the canonical name so the run still completes and
+                    # the operator sees a specific reason rather than a silent
+                    # oversize upload.
+                    master_target.replace(canonical)
+                    master_video_path = str(canonical)
+                    log.warning("delivery.failed",
+                                error=delivery_result.get('error'),
+                                fallback="master")
+        except Exception as delivery_error:
+            log.warning("delivery.exception", error=str(delivery_error),
+                        fallback="master")
 
     if final_video_path:
-        _save_checkpoint("video_assembly", project_folder, {"final_video": final_video_path})
+        _save_checkpoint("video_assembly", project_folder, {
+            "final_video": final_video_path,
+            "master_video": master_video_path,
+        })
         _save_to_postgres("video_assembly", project_id, {
             "video_path": final_video_path,
             "duration": assembly_result.get('duration_seconds'),
@@ -2111,6 +2186,7 @@ except Exception as e:
     import traceback
     traceback.print_exc()
     final_video_path = None
+    master_video_path = None
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="video_assembly", duration_s=round(_step_duration, 2))
@@ -2177,7 +2253,12 @@ manifest = {
         'images': [str(Path(p).name) for p in generated_images],
         'provenance': provenance_names,
         'voiceover': 'voiceover.mp3',
-        'video': video_filename if final_video_path else None
+        # The canonical name is the delivery copy that providers receive. The
+        # master is recorded alongside it: same content, lossless 4:4:4, kept
+        # for archival and re-encoding.
+        'video': video_filename if final_video_path else None,
+        'master_video': (Path(master_video_path).name
+                         if master_video_path and final_video_path else None),
     },
     'image_generation': {
         'profile': (image_generation_profile or {}).get('name'),
