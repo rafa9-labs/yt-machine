@@ -6,7 +6,7 @@ soundfile>=0.13.0
 moviepy==1.0.3
 Pillow==12.3.0
 pexels-api==1.0.1
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 openai>=1.14.0
 fastmcp>=0.1.0
 opencv-python>=4.9.0
