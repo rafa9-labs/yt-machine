@@ -664,7 +664,7 @@ Tests use `pytest`. Run the whole suite:
 .venv/bin/python -m pytest tests/
 ```
 
-That covers 599 tests and runs in under a minute without loading a model or
+That covers 609 tests and runs in under a minute without loading a model or
 touching the network. The main areas:
 
 | Area | File |
@@ -680,18 +680,11 @@ touching the network. The main areas:
 | Pipeline smoke-run configuration | `tests/test_pipeline_config.py` |
 | Real-script acceptance corpus | `tests/test_image_acceptance.py`, `tools/run_image_acceptance.py` |
 | Scene spec and post-processing invariants | `tests/test_scene_spec.py`, `tests/test_postprocess.py` |
+| LLM response parsing (thinking tokens, JSON extraction) | `tests/test_llm_parsing.py` |
 
-Some files under `tests/` are standalone validation scripts rather than pytest
-modules. They are excluded from automatic collection because they perform
-live-service work, require PostgreSQL/Ollama, or reference historical generated
-projects. Run them directly only when their prerequisites are available:
-
-- `tests/test_pipeline_models.py`
-- `tests/test_langchain_chains.py`
-- `tests/test_vector_memory.py`
-- `tests/test_improvements.py`
-- `tests/test_option_a_layout.py`
-- `tests/test_video_rebuild.py`
+The suite is entirely offline: no model, network, database, or generated
+project is required, so it runs the same on a fresh clone as on a machine with
+models installed.
 
 ## Development
 

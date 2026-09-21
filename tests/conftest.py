@@ -1,15 +1,11 @@
-"""Collection policy for legacy manual integration scripts.
+"""Collection policy for tests.
 
-These files are executable checks, not pytest modules: they perform work at
-import time, require external services, or reference a historical generated
-project. Keep them runnable directly without letting them abort normal unit
-test collection.
+Everything under tests/ is a pytest module now. The former live-service
+scripts (test_pipeline_models.py, test_improvements.py, test_vector_memory.py,
+test_video_rebuild.py) were removed: they imported deleted module paths
+(video_server.*, brain.*, db.*) or asserted hardcoded model names that no
+longer exist. The parsing coverage they held is now in
+tests/test_llm_parsing.py.
 """
 
-
-collect_ignore = [
-    "test_improvements.py",
-    "test_pipeline_models.py",
-    "test_vector_memory.py",
-    "test_video_rebuild.py",
-]
+collect_ignore = []

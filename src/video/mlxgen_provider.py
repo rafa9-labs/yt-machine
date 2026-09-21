@@ -34,9 +34,10 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MLXGEN_BIN = os.getenv(
-    "MLXGEN_BIN", "/Users/rafa9-labs/AI/FluxSprites/.venv/bin/mlxgen"
-)
+# No hardcoded install path: mlxgen is installed per machine, so it is read
+# from MLXGEN_BIN (see .env.example). An empty value fails available() with
+# missing_reason() instead of silently pointing at another user's home dir.
+DEFAULT_MLXGEN_BIN = os.getenv("MLXGEN_BIN", "")
 DEFAULT_TIMEOUT_S = float(os.getenv("MLXGEN_TIMEOUT", "900"))
 
 
@@ -125,11 +126,23 @@ class MLXGenImageProvider:
         self.lora_paths = [str(p) for p in (paths or []) if p]
         self.lora_scales = [float(s) for s in (scales or [])][:len(self.lora_paths)]
 
+    def _executable_ok(self) -> bool:
+        """True when the mlxgen executable is configured and present.
+
+        An empty value must NOT be treated as a path: Path("").exists() is
+        True (it resolves to "."), which would make a missing MLXGEN_BIN look
+        installed right up to the subprocess launch.
+        """
+        return bool(self.executable) and Path(self.executable).is_file()
+
     def available(self) -> bool:
-        return Path(self.executable).exists() and Path(self.model_path).exists()
+        return self._executable_ok() and Path(self.model_path).exists()
 
     def missing_reason(self) -> str:
-        if not Path(self.executable).exists():
+        if not self._executable_ok():
+            if not self.executable:
+                return ("MLXGEN_BIN is not set — point it at your mlxgen "
+                        "executable (see .env.example)")
             return f"mlxgen executable not found at {self.executable}"
         if not Path(self.model_path).exists():
             return f"model folder not found at {self.model_path}"

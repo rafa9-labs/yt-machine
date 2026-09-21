@@ -146,18 +146,21 @@ one model producing a complete structured script.
 
 **Alternatives rejected:** Keeping the two-agent debate as a quality mechanism.
 
-**Rationale (from `src/brain/chains/debate.py` header):** The debate engine
-required two sequential LLM round-trips per story, each returning JSON that had
-to be parsed and merged. On a local model, this doubled latency and introduced
-two more JSON-parse failure points for a quality gain that was never measured.
+**Rationale (from the former `src/brain/chains/debate.py` header):** The debate
+engine required two sequential LLM round-trips per story, each returning JSON
+that had to be parsed and merged. On a local model, this doubled latency and
+introduced two more JSON-parse failure points for a quality gain that was never
+measured.
 
-**Evidence of the decision:** `DebateChain` still exists as working code
-(`src/brain/chains/debate.py:44`) and is tested
-(`tests/test_langchain_chains.py:56`), but **nothing in the pipeline imports
-it**. It is maintained dead code — a deliberate preservation rather than an
-oversight, since the module documents the multi-step-chain pattern.
+**Evidence of the decision:** the `DebateChain` module, the
+`src/collector/debate_engine.py` driver, and `tests/test_langchain_chains.py`
+were **removed** once nothing in the pipeline imported them. The
+`LLMInterface.debate_skeptic` / `debate_explainer` methods and their prompt
+entries remain, exercised only by tests — they are not on any pipeline path
+(see ADR-037).
 
-**Status:** Held. The `debate.py` module remains a candidate for removal.
+**Status:** Held. The removal was carried out rather than left as a standing
+candidate.
 
 ---
 
@@ -379,8 +382,8 @@ redundancy when written; it became essential when the model changed from a 4B
 model to a 27B one, where the parsing characteristics differ.
 
 **Status:** Held. Notably, only the *curation* chain is actually used by the
-pipeline today (ADR-024). `debate.py` and `news_analysis.py` chains are unused
-(ADR-002).
+pipeline today (ADR-024). The `debate.py` and `news_analysis.py` chains were
+unused (ADR-002) and have been removed.
 
 ---
 
@@ -1223,8 +1226,7 @@ exists because guessing from the *original* text is better than shipping a hole.
 abandoned (ADR-002, §11 row 1) and its modules (`src/collector/debate_engine.py`,
 `src/brain/chains/debate.py`, `src/brain/chains/news_analysis.py`) were removed
 as unreachable. The remaining `debate_skeptic` / `debate_explainer` prompt
-entries and `LLMInterface` methods are retained because `tests/test_pipeline_models.py`
-still exercises them — they are not on any pipeline path.
+entries and `LLMInterface` methods have no caller on any pipeline path.
 
 **Status:** Held.
 
@@ -1365,7 +1367,7 @@ Unresolved as of 2026-09-17, with the trade-off stated.
 | 2 | **Which LoRA** | Redmond (rank 32, 590 MB) vs Prithiv (rank 64, 1.18 GB) | Both validated structurally; the choice is visual and must be made by comparing rendered output |
 | 3 | **`--resume` semantics** | Implement step-skipping vs remove the flag | It currently reuses the project folder but re-runs every step — the name promises more than it delivers |
 | 4 | **Postgres** | Give it a consumer vs remove from default deployment | Currently provides no functioning capability (ADR-030) |
-| 5 | **Dead code** | Remove vs retain `debate.py`, `news_analysis.py` chain, Pexels import | Removed `debate.py`, `news_analysis.py` and `debate_engine.py` (unreachable; ADR-037). `src/video/assembler_tool.py` also removed — zero importers. `llm_interface` debate methods retained for `tests/test_pipeline_models.py`. The Pexels import (`tools/generate_complete_video.py`) remains in use |
+| 5 | **Dead code** | Remove vs retain `debate.py`, `news_analysis.py` chain, Pexels import | Removed `debate.py`, `news_analysis.py` and `debate_engine.py` (unreachable; ADR-037), plus `src/video/assembler_tool.py` (zero importers). The `llm_interface` debate methods and prompt entries remain, but now have no caller. The Pexels import (`tools/generate_complete_video.py`) remains in use |
 | 6 | **Vision QA** | Keep `skip_vlm=True` vs enable the 4B vision model | Disabled by default; the 3.3 GB model would fit in the post phase |
 | 7 | **Embedding role** | Pull `nomic-embed-text` vs stay disabled | Would re-enable cross-run topic memory (ADR-017) |
 | 8 | **Image count** | 8 (2×4) vs more scenes | More scenes multiply the dominant cost (image generation) linearly |
@@ -1418,7 +1420,7 @@ Commits that changed the architecture rather than fixing or tuning it.
 | Source | Used for |
 |---|---|
 | `git log` (117 commits, full bodies) | Timeline, decision dates, reversal evidence |
-| In-code `WHY:`/`RATIONALE:` blocks | `requirements.txt`, `providers.py`, `registry.py`, `profile.py`, `runtime.py`, `async_scraper.py`, `debate.py`, `ollama_mlx_bridge.py` |
+| In-code `WHY:`/`RATIONALE:` blocks | `requirements.txt`, `providers.py`, `registry.py`, `profile.py`, `runtime.py`, `async_scraper.py`, `ollama_mlx_bridge.py` |
 | `~/AI/FluxSprites/benchmarks/qwen-selection/` | Migration rationale, provenance methodology, sampling decisions |
 | `config/system_prompts.json` `model_config.note` | Timeout re-sizing rationale |
 | `src/models/memory.py` + `registry.py` calibration comments | 4 GB reserve derivation, anonymous-memory rules |

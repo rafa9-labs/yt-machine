@@ -57,7 +57,10 @@ playwright install chromium
 python -m spacy download en_core_web_sm
 ```
 
-## 2. WSL2 Memory Configuration
+## 2. WSL2 Memory Configuration (legacy — Windows only)
+
+Skip this section entirely on macOS. It applies only to the legacy
+Windows/WSL2 deployment documented in section 10.
 
 Edit `C:\Users\<you>\.wslconfig` on Windows:
 
@@ -151,40 +154,65 @@ blank keeps the run entirely local.
 
 | Variable | Description | Default |
 |---|---|---|
-| `WSL_USER` | Your WSL username (for Task Scheduler) | `rafa` |
 | `WOL_MAC` | Target PC MAC address for Wake-on-LAN | — |
-| `PIPELINE_TIMEOUT` | Pipeline timeout in seconds | `900` |
+| `PIPELINE_TIMEOUT` | Pipeline timeout in seconds | `14400` |
+| `IDLE_SLEEP_MIN` | Minutes idle before the Mac sleeps again | `20` |
+| `RUN_TIME` / `WAKE_TIME` | Daily launchd run time / pmset wake time | `06:00` / `05:50:00` |
 
 ### Optional toggles
 
 | Variable | Description | Default |
 |---|---|---|
-| `USE_KOKORO` | Use Kokoro TTS instead of ElevenLabs | `false` |
-| `USE_LOCAL_FLUX` | Use local FLUX for image generation | `auto` |
+| `USE_KOKORO` | Kokoro local TTS (`auto` = use when installed) | `auto` |
+| `USE_LOCAL_FLUX` | Use local FLUX/CUDA path (`auto` = when a GPU is present) | `auto` |
 | `LOCAL_FLUX_MIN_VRAM_GB` | Minimum free VRAM to use local FLUX | `14` |
 | `LOCAL_FLUX_EVICT_OLLAMA` | Evict Ollama from GPU before loading FLUX | `true` |
+| `SKIP_IMAGES` | Use placeholder images instead of generating (fast test runs) | `0` |
 
-## 4. Ollama Setup
+See `.env.example` for the complete list.
+
+## 4. Text model setup
+
+There is no single hardcoded model to pull: the pipeline discovers the models
+on your machine and you select one per role. That selection is written to
+`config/model_profile.json`, which the pipeline requires.
+
+```bash
+# See what was discovered (GGUF, MLX, Ollama, llama.cpp)
+.venv/bin/python tools/model_setup.py --show
+
+# Interactive role selection
+.venv/bin/python tools/model_setup.py
+
+# Or let it pick the best available non-interactively
+.venv/bin/python tools/model_setup.py --auto
+```
+
+Discovery scans `YT_MODEL_ROOTS` (see `.env.example`); with it unset it looks
+in `~/AI`, `~/models` and the HuggingFace cache.
+
+If you use Ollama as the serving backend:
 
 ```bash
 # Install Ollama (if not already installed)
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull the required model
-ollama pull hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest
-
-# Pull embedding model for topic deduplication
+# Embedding model for cross-run topic memory (optional — needs Postgres)
 ollama pull nomic-embed-text
 
-# Verify model is available
+# Verify what Ollama is serving
 ollama list
 ```
 
-## 5. PostgreSQL Setup
+## 5. PostgreSQL Setup (optional)
+
+Postgres is **optional**. JSON on disk is authoritative for the pipeline; the
+database is only needed for cross-run vector memory and the n8n dashboard.
+Without it the pipeline runs normally and logs that persistence is disabled
+(ADR-030).
 
 ```bash
-# Start PostgreSQL container (port 5433 to avoid conflicts)
-cd ~/yt-machine
+# Start the container (compose maps 5432:5432)
 docker compose -f infra/docker-compose.yml up -d postgres
 
 # Wait for it to be healthy
@@ -193,7 +221,9 @@ docker compose -f infra/docker-compose.yml ps
 # The pipeline auto-creates tables on first run via init_db()
 ```
 
-Note: The default `docker-compose.yml` uses port 5432 internally but the `.env` maps it to 5433 on the host to avoid conflicts with other PostgreSQL instances. If you need to change this, edit `infra/docker-compose.yml` ports mapping.
+If port 5432 is already taken by another PostgreSQL instance, change the host
+mapping in `infra/docker-compose.yml` (the `ports:` entry) and set
+`POSTGRES_PORT` in `.env` to match.
 
 ## 6. YouTube OAuth Setup
 
@@ -220,8 +250,8 @@ YouTube publishing requires a one-time OAuth2 authorization. This opens a browse
 ### Step 3: One-Time Authorization
 
 ```bash
-cd ~/yt-machine
-source venv/bin/activate
+cd yt-machine
+source .venv/bin/activate
 
 # Run the publisher in dry-run mode to trigger the OAuth flow
 python src/publish_video.py --platform youtube --dry-run
@@ -260,8 +290,8 @@ python src/publish_video.py --platform tiktok --dry-run
 ## 8. Manual Run
 
 ```bash
-cd ~/yt-machine
-source venv/bin/activate
+cd yt-machine
+source .venv/bin/activate
 
 # Generate video only (no publish)
 python tools/generate_complete_video.py
@@ -415,68 +445,35 @@ sudo pmset repeat cancel
 | Mac does not wake | pmset schedule missing | `sudo pmset repeat wakeorpoweron MTWRFSU 05:50:00` |
 | Mac stays awake all day | AC idle sleep is 0 | `python src/automate.py --configure-power 20` |
 
-## 10. Automation (legacy: Windows Task Scheduler)
+## 10. Automation — legacy Windows/WSL2 (removed)
 
-> This section documents the original Windows/WSL2 deployment. The macOS path
-> above is the supported setup for this machine.
+The original deployment scheduled the pipeline with Windows Task Scheduler and
+WSL2. That path is **no longer implemented**: `src/automate.py` targets macOS
+only (launchd + pmset, section 9), and no Windows task scripts remain in the
+repository. The migration is recorded in ADR-028.
 
-The pipeline can run automatically every day, even when the PC is asleep.
+The Windows/WSL2 install path in sections 1–2 still works for running the
+pipeline manually, but unattended daily scheduling requires macOS or your own
+scheduler. If you are porting this to Windows, the pieces to reproduce are:
 
-### Step 1: Put PC to Sleep (not shut down)
-
-Configure Windows power settings so the PC sleeps instead of shutting down. The Task Scheduler can wake from sleep.
-
-### Step 2: Create Scheduled Task
-
-From **Windows PowerShell** (not WSL):
-
-```powershell
-cd C:\Users\rafa\yt-machine
-python src/automate.py --install-schedule "08:00"
-```
-
-This creates a Windows Task Scheduler task called `GeopoliticalSentinel_DailyVideo` that runs daily at 08:00.
-
-### Step 3: Enable Wake-to-Run
-
-1. Open **Task Scheduler** (`taskschd.msc`)
-2. Find `GeopoliticalSentinel_DailyVideo`
-3. Right-click → **Properties**
-4. **Conditions** tab → check **"Wake the computer to run this task"**
-5. **Settings** tab → check **"Run task as soon as possible after a scheduled start is missed"**
-6. Click OK
-
-### Step 4: Set Idle Sleep Timer
-
-In Windows Power Settings, configure the PC to sleep after 30 minutes of idle. This way:
-- 08:00 → Task Scheduler wakes PC
-- 08:00-08:15 → Pipeline runs
-- 08:15+ → Publish to YouTube + TikTok
-- 08:15+ → Telegram notification sent
-- ~08:30 → PC goes back to sleep after idle timeout
-
-### Troubleshooting Automation
-
-| Problem | Solution |
-|---|---|
-| Task doesn't wake PC | Check BIOS: enable "Wake on LAN" or "Wake on Alarm" |
-| Task runs but pipeline fails | Check `output/logs/automate_YYYYMMDD.log` |
-| WSL command not found | Ensure `wsl` is in Windows PATH; try `wsl ~ -e bash ...` |
-| YouTube OAuth fails unattended | Run `--dry-run` once manually to cache the token |
-| TikTok returns 401 | Token expired; regenerate from TikTok Developer Portal |
+- a scheduler entry that runs `tools/run_daily.sh` (or the equivalent
+  `python src/automate.py --generate --publish`)
+- a wake mechanism that starts the machine before the run
+- an idle-sleep timer so the host returns to sleep afterwards
 
 ## 11. Troubleshooting Common Errors
 
 | Error | Cause | Fix |
 |---|---|---|
-| `Ollama 404: model not found` | Model not pulled | `ollama pull hf.co/TrevorJS/gemma-4-26B-A4B-it-uncensored-GGUF:latest` |
+| `Model not found` / LLM 404 | No model selected, or the server is not serving it | `.venv/bin/python tools/model_setup.py --show`, then select one |
+| `MLXGEN_BIN is not set` | Local image backend not configured | Set `MLXGEN_BIN` in `.env` (see `.env.example`) |
 | `CLIP 77-token truncation warning` | FLUX CLIP encoder truncates long prompts | Expected and harmless; scene content is front-loaded |
 | `CUDA out of memory` | VRAM too low | Set `USE_LOCAL_FLUX=false` in `.env` or increase `LOCAL_FLUX_MIN_VRAM_GB` |
-| `psycopg2.OperationalError: connection refused` | PostgreSQL not running | `docker compose -f infra/docker-compose.yml up -d postgres` |
-| `Port 5433 already in use` | Another PostgreSQL on 5433 | Change `POSTGRES_PORT` in `.env` or stop the other instance |
+| `psycopg2.OperationalError: connection refused` | PostgreSQL not running (it is optional) | Start it, or leave it stopped — the pipeline runs without it |
+| `Port 5432 already in use` | Another PostgreSQL instance | Change the host mapping in `infra/docker-compose.yml` and `POSTGRES_PORT` in `.env` |
 | `FAL 401 Unauthorized` | Invalid or expired FAL_KEY | Check `.env` FAL_KEY value |
 | `ElevenLabs 401` | Invalid API key | Check `.env` ELEVEN_LABS_KEY |
-| JSON truncation from Ollama | Model hit context limit | Already mitigated with `num_ctx=32768`; retry with shorter prompt |
+| JSON truncation from the LLM | Model hit context limit | Already mitigated with `num_ctx=32768`; retry with a shorter prompt |
 | `nomic-embed-text not found` | Embedding model not pulled | `ollama pull nomic-embed-text` |
 | `nvidia-cudnn-cu12 not installed` | cuDNN missing | `pip install nvidia-cudnn-cu12` (optional, speeds up faster-whisper) |
 
@@ -490,23 +487,25 @@ In Windows Power Settings, configure the PC to sleep after 30 minutes of idle. T
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     SCRIPT GENERATION                        │
-│  Ollama (gemma-4-26B) → LangChain → script evaluator        │
-│  2 stories × 4 segments each + greeting + closing            │
+│  Local LLM (selected via model_profile.json) → LangChain    │
+│  → script evaluator. 2 stories × 4 beats, no greeting,       │
+│  CTA-free closing (ADR-019)                                  │
 └─────────────────────────┬───────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     MEDIA GENERATION                         │
-│  TTS: ElevenLabs (primary) / Kokoro / Edge TTS              │
-│  Images: Local FLUX GGUF (primary) / fal.ai (fallback)      │
+│  TTS: Kokoro (primary) / ElevenLabs / Edge TTS              │
+│  Images: MLX-Gen local (Qwen-Image + pixel LoRA)            │
 │  Subtitles: faster-whisper word timestamps → ASS burn-in    │
-│  Title: persistent overlay (4-8 words from story topics)     │
+│  Title: persistent overlay (from story topics)               │
 └─────────────────────────┬───────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     VIDEO ASSEMBLY                           │
-│  Split-screen: scene (60%) + avatar (40%)                   │
-│  Ken Burns zoom, ASS subtitles, audio mastering              │
-│  Output: 1080×1920 vertical MP4, ~65-70 seconds              │
+│  Split-screen: scene (60%) + avatar (40%)                    │
+│  Static grid-preserving scenes, ASS subtitles,               │
+│  ffmpeg audio mastering                                      │
+│  Output: 1080×1920 vertical MP4, typically 100-130s          │
 └─────────────────────────┬───────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -520,11 +519,13 @@ In Windows Power Settings, configure the PC to sleep after 30 minutes of idle. T
 
 | File | Purpose |
 |---|---|
-| `.env` | All environment variables (gitignored) |
+| `.env` | All environment variables (gitignored — see `.env.example`) |
+| `config/model_profile.json` | Selected model per role (gitignored; written by `tools/model_setup.py`) |
 | `config/system_prompts.json` | LLM system prompts (Mask persona, visual generator, etc.) |
-| `config/image_style.json` | FLUX prompt style, CLIP tags, color palette, negative prompt |
-| `infra/docker-compose.yml` | PostgreSQL + n8n containers |
-| `src/automate.py` | Master automation script (WOL + pipeline + publish + notify) |
+| `config/generation_profiles.json` | Image sampling profiles (Qwen / FLUX Klein) |
+| `config/image_style.json` | Prompt style, palette, negative prompt, split layout |
+| `infra/docker-compose.yml` | PostgreSQL + n8n containers (optional) |
+| `src/automate.py` | Master automation (schedule/wake/power, generate, publish, notify) |
 | `src/publish_video.py` | YouTube + TikTok + Instagram publisher |
 | `tools/generate_complete_video.py` | Full pipeline entry point |
-| `tools/run_daily.sh` | Bash wrapper for Task Scheduler |
+| `tools/run_daily.sh` | launchd wrapper for the daily run |

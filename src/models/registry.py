@@ -54,9 +54,11 @@ PROVIDER_MLXGEN = "mlxgen"
 
 DEFAULT_OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 DEFAULT_LLAMACPP_URL = "http://127.0.0.1:8080"
-DEFAULT_MLXGEN_BIN = os.getenv(
-    "MLXGEN_BIN", "/Users/rafa9-labs/AI/FluxSprites/.venv/bin/mlxgen"
-)
+# No hardcoded install path: the mlxgen executable is machine-specific, so it
+# is read from MLXGEN_BIN (see .env.example). An empty value fails the
+# availability check with an actionable message rather than pointing at
+# somebody else's home directory.
+DEFAULT_MLXGEN_BIN = os.getenv("MLXGEN_BIN", "")
 
 # Regex for GGUF quantization tags in file names (Q4_K_M, IQ3_XXS, F16 ...)
 _QUANT_RE = re.compile(r"\b(IQ\d(?:_[A-Z0-9]+)*|Q\d(?:_[A-Z0-9]+)*|F16|F32|BF16)\b", re.IGNORECASE)
@@ -320,7 +322,6 @@ def default_scan_roots() -> List[str]:
         Path.home() / "AI",
         Path.home() / "models",
         Path.home() / ".cache" / "huggingface" / "hub",
-        Path("/Users/rafa9-labs/AI"),
     ]
     return [str(p) for p in candidates if p.exists()]
 

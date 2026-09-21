@@ -111,7 +111,10 @@ class LLMInterface:
             '', text, flags=re.IGNORECASE
         )
         text = re.sub(r'<think\b.*?</think\s*>?', '', text, flags=re.DOTALL)
-        text = re.sub(r'</?think[^>]*>?', '', text)
+        # Strip a bare <think>/</think> tag marker, but require the closing
+        # angle bracket: without it, `[^>]*` runs to the end of an unclosed
+        # `<think` + reasoning block and deletes the JSON payload with it.
+        text = re.sub(r'</?think[^>]*>', '', text)
 
         text = re.sub(r'```(?:json)?\s*', '', text)
         text = re.sub(r'```\s*', '', text)
