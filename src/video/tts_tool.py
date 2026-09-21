@@ -32,7 +32,9 @@ server = FastMCP("tts-tool")
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "output" / "audio"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ElevenLabs TTS — primary engine (highest quality natural voice)
+# ElevenLabs TTS — cloud fallback. Engine order in generate_voiceover() is
+# Kokoro (local, free) → ElevenLabs → Edge TTS → silent. These constants only
+# configure the ElevenLabs step; they are not the primary path.
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "G2BYBzpEHIacF1Bva0XL")
 ELEVENLABS_MODEL = "eleven_multilingual_v2"
 ELEVENLABS_SETTINGS = {

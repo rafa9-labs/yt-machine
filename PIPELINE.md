@@ -489,16 +489,19 @@ stop text model → verify reclamation → start image phase
 ```
 
 Fatal exits: `exit(4)` if the MLX-Gen provider is unavailable, `exit(5)` if the
-image phase cannot start. Optional LoRA attach:
+image phase cannot start. LoRA attachment comes from the generation profile:
 
 ```python
-_lora_path = os.environ.get("MLXGEN_LORA_PATH", "")
-if _lora_path and Path(_lora_path).exists():
-    mlx_provider.set_loras([_lora_path], [float(os.environ.get("MLXGEN_LORA_SCALE", "0.8"))])
+lora = image_generation_profile.get("lora") or {}
+lora_path = lora.get("path")
+if lora_path and not Path(lora_path).exists():
+    print(f"\nFATAL: Configured LoRA is missing — {lora_path}")
+    sys.exit(4)
+if lora_path:
+    mlx_provider.set_loras([lora_path], [float(lora.get("scale", 1.0))])
 ```
 
-**Never auto-downloads multi-GB weights mid-run.** If the LoRA file is absent
-it logs `mlxgen.lora_missing` and proceeds without it.
+A configured-but-missing adapter is a hard failure, not a silent downgrade.
 
 ### STEP 5 — `pixel_art`
 
@@ -611,17 +614,19 @@ lock, phase → idle).
 FPS = 30 · background pad colour 0x0A0519
 ```
 
-### 7.2 Ken Burns per beat
+### 7.2 Camera motion — disabled for the pixel-art profile
 
-| Beat | Zoom | Intent |
-|---|---|---|
-| HOOK | 1.08 → 1.02 | pull back — reveal the situation |
-| MECHANISM | 1.06 → 1.01 | slow settle — explain |
-| TRUTH | 1.01 → 1.07 | push in — emphasise |
-| FALLOUT | 1.05 → 1.01 | pull back — consequence |
+`SCENE_ZOOM_PROFILES` is retained as a **naming table only**: the four beats
+still carry their labels (`HOOK`, `MECHANISM`, `TRUTH`, `FALLOUT`) for logs and
+callers, but every `zoom_start`/`zoom_end` is `1.0` and `pan_x` is `0.0`.
 
-The motion differs per beat so four scenes of a story do not feel like the
-same shot.
+Continuous camera motion is intentionally disabled. Fractional resampling of a
+background that was generated on a strict logical grid creates shimmer, and
+that grid is what makes the pixel art read as pixel art. The scene still
+changes every beat, and the beat change itself carries the rhythm.
+
+The only zoom/pan implementation lived in `src/video/assembler_tool.py`, which
+was removed — it had zero importers, and `build_split_video` never called it.
 
 ### 7.3 Subtitles (ASS)
 
@@ -811,9 +816,10 @@ Qwen-Image 2512:
 1. `tools/model_setup.py` discovers MLX-Gen checkpoints by structural scan
    (`scan_mlxgen_models`) — the Qwen snapshot in the HF cache is already
    discoverable
-2. `config/model_profile.json` `roles.image` points at the new checkpoint path
-3. `MLXGEN_LORA_PATH` / `MLXGEN_LORA_SCALE` attach the chosen LoRA — **and
-   only now does the LoRA actually do something**, because
+2. the active generation profile's `model.match` names the checkpoint, resolved
+   per-image through the registry
+3. `lora.path` / `lora.scale` in the same profile attach the chosen adapter —
+   **and only now does the LoRA actually do something**, because
    `_strip_lora_triggers()` stops stripping when `_MLXGEN_PROVIDER.lora_paths`
    is non-empty
 4. Negative prompts become available again, so `NEGATIVE_PROMPT` from
@@ -892,11 +898,14 @@ crashed run as permanent, wedging the daily job forever.
 | TTS | — | — | 4 engines |
 | assembly | `max(300, duration × 5)` | — | 3 paths |
 
-**Whole-run ceiling:** `PIPELINE_TIMEOUT` — **7200 s (120 min)** in both
-`src/automate.py` and `src/server.py`. This was previously 900 s (15 min) in
-`automate.py`, which killed every scheduled run mid-generation (a real run
-takes ~78 min). The mismatch with `server.py`'s 7200 s is what made the bug
-visible; a test now asserts the two agree.
+**Whole-run ceiling:** `PIPELINE_TIMEOUT` — **14400 s (240 min)** in both
+`src/automate.py` and `src/server.py`. The value has been raised twice: 900 s
+to 7200 s, then to 14400 s, after the earlier ceilings were observed killing
+real runs. A test asserts the two modules declare the same default.
+
+The 78 minutes measured in §1 is a happy path; runs are dominated by image
+generation and LLM latency, both of which vary with machine and model. Size
+this above your own expected worst case.
 
 Per-task timeouts are also declared in `config/system_prompts.json` →
 `model_config.call_timeouts` (`dedup_comparison`, `news_processor`,
@@ -1019,14 +1028,20 @@ launchctl kickstart gui/$(id -u)/com.rafa9labs.ytmachine   # run now
 ```bash
 # Model serving
 OLLAMA_HOST=http://localhost:11434
-USE_LOCAL_FLUX=false              # false = use MLX-Gen provider instead
+USE_LOCAL_FLUX=auto               # auto (default) enables when a CUDA GPU is present.
+                                  # true/1/yes force it; false/0/no disable it.
 TARGET_APP=Default                # resolution preset from image_style.json size_map
 
-# Image LoRA (only applied if the file exists)
-MLXGEN_LORA_PATH=                 # e.g. ~/AI/FluxSprites/loras/qwen-redmond/[...].safetensors
-MLXGEN_LORA_SCALE=0.8
-MLXGEN_STEPS=8                    # per-image diffusion steps
-MLXGEN_GUIDANCE=3.5
+# Image backend executable. Machine-specific, so it stays in .env; an unset
+# value fails the availability check rather than defaulting to a path.
+MLXGEN_BIN=/usr/local/bin/mlxgen
+MLXGEN_TIMEOUT=900
+
+# Image model + sampling live in the generation profile, not in .env:
+# change config/generation_profiles.json or run tools/configure.py.
+#   model            profile.model.match
+#   steps / guidance profile.steps / profile.guidance
+#   LoRA path/scale  profile.lora.path / profile.lora.scale
 
 # Publishing
 YOUTUBE_PRIVACY=public            # private | unlisted | public
@@ -1035,10 +1050,9 @@ TIKTOK_TOKEN_FILE=credentials/tiktok_token.json
 # Scheduling
 RUN_TIME=06:00
 WAKE_TIME=05:50:00
-PIPELINE_TIMEOUT=7200             # MUST exceed the ~80 min run time
+PIPELINE_TIMEOUT=14400            # MUST exceed the expected run time
 
 # Pipeline
-PIPELINE_VERSION=v1
 LOG_FORMAT=console                # or json
 LOG_LEVEL=INFO
 ```
@@ -1071,17 +1085,22 @@ debugging.
 |---|---|---|
 | 1 | **`--resume` does not resume.** Checkpoint is written and logged but never consulted to skip steps | Every resumed run re-runs everything from news fetch |
 | 2 | **`trending_context` output is unused** downstream | Wasted computation, no behaviour change |
-| 3 | **`debate.py` and `news_analysis.py` chains are dead code.** The pipeline imports only the curation chain | Misleading module layout |
+| 3 | **`llm_interface` debate methods have no caller.** `debate_skeptic` / `debate_explainer` and their prompt entries remain, but the chain modules that used them (`chains/debate.py`, `chains/news_analysis.py`, `collector/debate_engine.py`) were removed as dead code | Unused methods and two prompt entries; not on any pipeline path (ADR-002, ADR-037) |
 | 4 | **`fetch_vertical_footage` is imported but never called** (step 6 removed) | Dead import; Pexels path untested |
-| 5 | **TTS docstring contradicts the code.** Docstring says ElevenLabs primary; code tries Kokoro first | Misleading for operators |
-| 6 | **`build_timeline` has no step banner**; visual-prompts banner shares the counter without its own step name | Cosmetic log inconsistency |
-| 7 | **`PREROLL_OFFSET` comment says ~1 s; constant is 0.3 s** | Minor |
-| 8 | **`_advance_phase` is in-memory only** — not persisted, not consulted on resume | Phase regression guards do not survive a restart |
-| 9 | **Vector memory effectively disabled**: `nomic-embed-text` is not pulled and `roles.embedding` is `null` | Topic dedup across runs does not happen |
-| 10 | **Postgres not running.** All `_save_to_postgres` calls log warnings | Progress tracking unavailable; JSON files remain authoritative |
-| 11 | **Qwen-Image at 20 steps costs ~10 min/image** vs FLUX.2 Klein's ~5.5 min at 8 steps | 8 scenes would take ~80 min of image time alone — step tuning is mandatory before switching |
-| 12 | **`lora_status: mapped-unvalidated`** for Qwen | Adapter compatibility was validated manually and recorded; mlxgen's own gate skips absolute local paths |
-| 13 | **Telegram not configured** (empty token/chat id) — all notifications silently skipped | No run status until credentials are added |
+| 5 | **`build_timeline` has no step banner**; visual-prompts banner shares the counter without its own step name | Cosmetic log inconsistency |
+| 6 | **`PREROLL_OFFSET` comment says ~1 s; constant is 0.3 s** | Minor |
+| 7 | **`_advance_phase` is in-memory only** — not persisted, not consulted on resume | Phase regression guards do not survive a restart |
+| 8 | **Vector memory effectively disabled**: `nomic-embed-text` is not pulled and `roles.embedding` is `null` | Topic dedup across runs does not happen |
+| 9 | **Postgres not running.** All `_save_to_postgres` calls log warnings | Progress tracking unavailable; JSON files remain authoritative |
+| 10 | **Qwen-Image at 20 steps costs ~10 min/image** vs FLUX.2 Klein's ~5.5 min at 8 steps | 8 scenes would take ~80 min of image time alone — step tuning is mandatory before switching |
+| 11 | **`lora_status: mapped-unvalidated`** for Qwen | Adapter compatibility was validated manually and recorded; mlxgen's own gate skips absolute local paths |
+| 12 | **Telegram not configured** (empty token/chat id) — all notifications silently skipped | No run status until credentials are added |
+
+Resolved since an earlier revision of this table: the `tts_tool` comment that
+called ElevenLabs the primary engine while the code tried Kokoro first has been
+corrected; the `debate.py` / `news_analysis.py` dead chains have been deleted
+(ADR-002, ADR-037); `MLXGEN_LORA_*` variables documented here never existed —
+LoRA configuration is profile-driven.
 
 ---
 
