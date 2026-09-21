@@ -1,4 +1,4 @@
-requests>=2.31.0
+requests>=2.33.0
 feedparser==6.0.10
 # NOTE: edge-tts 6.1.9 hard-pins certifi==2023.07.22, which is unsatisfiable
 # alongside langchain-openai (needs certifi>=2024.6.2). The >= range lets the
