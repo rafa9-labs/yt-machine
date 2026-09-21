@@ -1142,8 +1142,12 @@ Qwen-Image is viable at 8–12 steps is the open question the benchmark must
 answer.
 
 **Migration cost from the pipeline's perspective:** near zero. The provider
-abstraction means the swap is a change to `config/model_profile.json`
-(`roles.image`) plus `MLXGEN_LORA_PATH`. No pipeline code changes.
+abstraction means the swap is a change to the generation profile
+(`config/generation_profiles.json`: `model.match` and `lora.*`), resolved
+per-image through the registry. No pipeline code changes. (At the time of
+writing this ADR that role was split across `config/model_profile.json`
+`roles.image` and a `MLXGEN_LORA_PATH` environment variable; both were later
+consolidated into the generation profile.)
 
 ---
 

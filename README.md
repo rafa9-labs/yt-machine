@@ -641,8 +641,10 @@ change cannot break the format.
 
 **Change the visual style.** `config/image_style.json` holds the style suffix,
 negative prompt, brand palette, per-category LoRA settings, and the split-screen
-layout. Attach a LoRA with `MLXGEN_LORA_PATH`; it is applied only if the file
-already exists on disk, so a run never downloads model weights mid-flight.
+layout. The active adapter is declared in the generation profile
+(`config/generation_profiles.json` → `lora.path` / `lora.scale`, editable with
+`tools/configure.py`); it is applied only if the file already exists on disk, so
+a run never downloads model weights mid-flight.
 
 **Change the news sources.** Edit `config/rss_feeds.json`. Each feed carries a
 category used by the rotation system and the scoring pass.
@@ -664,7 +666,7 @@ Tests use `pytest`. Run the whole suite:
 .venv/bin/python -m pytest tests/
 ```
 
-That covers 609 tests and runs in under a minute without loading a model or
+That covers 624 tests and runs in under a minute without loading a model or
 touching the network. The main areas:
 
 | Area | File |
