@@ -9,8 +9,6 @@ test collection.
 
 collect_ignore = [
     "test_improvements.py",
-    "test_langchain_chains.py",
-    "test_option_a_layout.py",
     "test_pipeline_models.py",
     "test_vector_memory.py",
     "test_video_rebuild.py",
