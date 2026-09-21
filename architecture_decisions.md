@@ -1200,6 +1200,36 @@ no evidence a comparison was made. See open decision 1b.
 
 ---
 
+### ADR-037 — Verification is layered, and the layers fail differently
+
+**Decision:** Keep validation split across two layers with distinct failure
+semantics, rather than consolidating it into one gate.
+
+| Layer | Mechanism | Failure mode | Where |
+|---|---|---|---|
+| 1 — Deterministic | Code checks on structured data | Rejects, or repairs from source text | `src/collector/prompt_validator.py`, `src/collector/geopolitical_validator.py`, `src/collector/geopolitical_accuracy.py`, `src/brain/script_evaluator.py`, `src/brain/llm_interface.py::_extract_json` |
+| 2 — LLM recovery | A second model pass over unusable output | Retries, or substitutes a validated shape | missing-segment recovery, `_validate_closing` + CTA quarantine, `_validate_curation_fidelity` |
+
+**Rationale:** the two layers contain different classes of defect. Layer 1
+catches *malformed or ungrounded* output where the correct behaviour is to
+reject (ADR-021) or to repair deterministically from the source text. Layer 2
+handles output that is well-formed but wrong — a truncated story, a closing
+that drifted into a call to action, curation that silently rewrote rather than
+reformatted (ADR-024). Collapsing them would force one policy on both, and the
+two policies are deliberately opposite: layer 1 must never guess, layer 2
+exists because guessing from the *original* text is better than shipping a hole.
+
+**Explicitly not part of this layer:** the Skeptic/Explainer debate. It was
+abandoned (ADR-002, §11 row 1) and its modules (`src/collector/debate_engine.py`,
+`src/brain/chains/debate.py`, `src/brain/chains/news_analysis.py`) were removed
+as unreachable. The remaining `debate_skeptic` / `debate_explainer` prompt
+entries and `LLMInterface` methods are retained because `tests/test_pipeline_models.py`
+still exercises them — they are not on any pipeline path.
+
+**Status:** Held.
+
+---
+
 ## 10. Why the pipeline is composed this way
 
 Beyond the individual decisions, the *shape* of the pipeline follows from four
@@ -1335,7 +1365,7 @@ Unresolved as of 2026-09-17, with the trade-off stated.
 | 2 | **Which LoRA** | Redmond (rank 32, 590 MB) vs Prithiv (rank 64, 1.18 GB) | Both validated structurally; the choice is visual and must be made by comparing rendered output |
 | 3 | **`--resume` semantics** | Implement step-skipping vs remove the flag | It currently reuses the project folder but re-runs every step — the name promises more than it delivers |
 | 4 | **Postgres** | Give it a consumer vs remove from default deployment | Currently provides no functioning capability (ADR-030) |
-| 5 | **Dead code** | Remove vs retain `debate.py`, `news_analysis.py` chain, Pexels import | Retained as documentation of patterns; costs maintenance attention |
+| 5 | **Dead code** | Remove vs retain `debate.py`, `news_analysis.py` chain, Pexels import | Removed `debate.py`, `news_analysis.py` and `debate_engine.py` (unreachable; ADR-037). `src/video/assembler_tool.py` also removed — zero importers. `llm_interface` debate methods retained for `tests/test_pipeline_models.py`. The Pexels import (`tools/generate_complete_video.py`) remains in use |
 | 6 | **Vision QA** | Keep `skip_vlm=True` vs enable the 4B vision model | Disabled by default; the 3.3 GB model would fit in the post phase |
 | 7 | **Embedding role** | Pull `nomic-embed-text` vs stay disabled | Would re-enable cross-run topic memory (ADR-017) |
 | 8 | **Image count** | 8 (2×4) vs more scenes | More scenes multiply the dominant cost (image generation) linearly |
