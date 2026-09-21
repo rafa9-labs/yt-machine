@@ -34,6 +34,9 @@ credentials/
 # Output (generated videos, images, audio, manifests)
 output/
 
+# Unused large audio asset (superseded by news-yt.mp3)
+assets/avatar/music/Fluidscape.mp3
+
 # Training data & ML cache
 training_data/
 .accelerate/
