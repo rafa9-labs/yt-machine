@@ -55,9 +55,14 @@ def process_pixel_art(
 
 
 def count_colors(image: Image.Image) -> int:
-    """Count unique RGB colours in an image."""
+    """Count unique RGB colours in an image.
+
+    ``Image.getdata`` is deprecated (removal in Pillow 14) in favour of
+    ``get_flattened_data``; fall back for Pillow versions that predate it.
+    """
     rgb = image.convert("RGB")
-    return len(set(rgb.getdata()))
+    getter = getattr(rgb, "get_flattened_data", None) or rgb.getdata
+    return len(set(getter()))
 
 
 def process_pixel_art_file(
