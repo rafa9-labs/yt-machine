@@ -1236,6 +1236,56 @@ entries and `LLMInterface` methods have no caller on any pipeline path.
 
 ---
 
+### ADR-039 — Provenance is a per-image artifact, propagated with its image
+
+**Decision:** Every generated image carries a JSON sidecar named
+`<image>.provenance.json`, written next to the image. The pipeline copies it
+into the project folder alongside the image it describes, and the manifest
+records both.
+
+**Why this is an ADR and not an implementation detail.** The record is what
+makes an image reproducible: which checkpoint, which adapter, which seed, and
+which post-processing produced it. A record that exists only in the shared
+scratch directory (`output/images/`) is not part of the deliverable — the
+project folder is what gets archived, inspected, and attached to a bug report.
+An artifact meant for audit but stored outside the audited artifact does not
+function.
+
+**What went wrong before this decision:** the sidecar was written correctly on
+every successful generation, but the pipeline's copy step moved only the PNG.
+Six sidecars existed on disk in the scratch directory while every project
+folder held zero, so provenance looked unimplemented. It was implemented and
+unreachable.
+
+**The guard.** A sidecar is a shareable file, so `src/video/provenance.py`
+applies a deny-list on every write: key names matching credential patterns
+(`*_key`, `token`, `secret`, `password`, …) and values matching known provider
+formats (`ghp_`, `hf_`, `sk-`, `AKIA`, PEM headers, …) are redacted. The check
+is value-based as well as key-based, because a credential pasted under an
+innocent key name is still a credential. `assert_no_secrets` is the strict
+form and is asserted in tests, so a future caller that passes
+`os.getenv("FAL_KEY")` fails CI rather than leaking into an artifact.
+
+**Scope of a record.** Per-image sidecars hold the generation facts (model,
+provider, profile, prompts, sampling, LoRA, post-processing). The run-level
+record in `manifest.json` holds what belongs to the whole run: project id,
+status, git commit, LLM identifier, TTS engine/voice, assembly settings, and
+the provenance filenames. Partial and failed runs still produce the run-level
+record with `status: incomplete`, because knowing what a failed run attempted
+is the point of recording it.
+
+**Alternatives rejected:**
+- *One run-level record only* — loses per-image seeding, which is the field
+  that makes a single bad frame reproducible.
+- *Provenance in the database* — the JSON store is authoritative (ADR-030);
+  Postgres is optional and may not be running.
+- *Refuse to write on any secret rather than redact* — a run that has already
+  produced images would lose its record entirely over one bad key name.
+
+**Status:** Held.
+
+---
+
 ## 10. Why the pipeline is composed this way
 
 Beyond the individual decisions, the *shape* of the pipeline follows from four

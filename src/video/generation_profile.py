@@ -238,6 +238,17 @@ def validate_generation_profile(profile: Dict[str, Any]) -> None:
     if guidance <= 0:
         raise GenerationProfileError("guidance must be positive")
 
+    # Provenance is optional and defaults to on. It is validated here so the
+    # setting is a declared part of the profile contract rather than a value
+    # consumed with a silent fallback at the generation site, and so a
+    # mistyped value ("yes"/"enabled") is rejected instead of being read as
+    # truthy by accident.
+    provenance = profile.get("provenance", True)
+    if not isinstance(provenance, bool):
+        raise GenerationProfileError(
+            f"provenance must be a boolean (got {provenance!r})"
+        )
+
     seeds = profile["seed_pool"]
     if not isinstance(seeds, list) or not seeds:
         raise GenerationProfileError("seed_pool must be a non-empty list")
@@ -444,6 +455,7 @@ def describe_profiles(path: Optional[Path] = None) -> list:
                 "lora_name": lora.get("name"),
                 "lora_scale": lora.get("scale"),
                 "zoom": selected.get("zoom"),
+                "provenance": selected.get("provenance", True),
             })
         except GenerationProfileError as exc:
             entry["valid"] = False
