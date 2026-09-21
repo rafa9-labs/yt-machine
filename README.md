@@ -113,7 +113,7 @@ pip install -r requirements-macos.txt
 **Configure**
 
 ```bash
-cp config/.env.example .env
+cp .env.example .env
 ```
 
 All keys are optional for a local-only run. Set them when you need the
@@ -163,7 +163,7 @@ count.
 
 ## Configuration
 
-Environment variables live in `.env`; `config/.env.example` documents all of
+Environment variables live in `.env`; `.env.example` documents all of
 them. The settings that most affect behaviour:
 
 | Variable | Purpose |
