@@ -74,18 +74,44 @@ Restart WSL: `wsl --shutdown` in PowerShell, then reopen WSL.
 Copy the example and fill in your values:
 
 ```bash
-cp config/.env.example .env
+cp .env.example .env
 nano .env
 ```
 
+`.env` is git-ignored — never commit real keys. Almost everything is optional
+for a local-only run; the two you are most likely to need are `OLLAMA_HOST`
+(required) and `MLXGEN_BIN` (your local image backend).
+
 ### Required variables
+
+The pipeline is local-first: only the local LLM endpoint is genuinely required.
 
 | Variable | Description | Example |
 |---|---|---|
-| `ELEVEN_LABS_KEY` | ElevenLabs API key for TTS | `sk_...` |
-| `FAL_KEY` | fal.ai API key for cloud image generation fallback | `key-...` |
+| `OLLAMA_HOST` | Local LLM endpoint (required) | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Model used for script work | `qwen3:14b` |
+| `MLXGEN_BIN` | Path to your local image backend executable | `/usr/local/bin/mlxgen` |
+| `YT_MODEL_ROOTS` | Where your downloaded models live | `~/AI/models` |
+
+### Optional cloud keys
+
+Set these only if you want the corresponding cloud capability. Leaving them
+blank keeps the run entirely local.
+
+| Variable | Description | Example |
+|---|---|---|
+| `ELEVEN_LABS_KEY` | ElevenLabs API key for TTS fallback | `sk_...` |
+| `FAL_KEY` | fal.ai key for cloud image generation fallback | `key-...` |
+| `PEXELS_API_KEY` | Pexels key for stock-footage fallback | `...` |
+| `ZHIPUAI_API_KEY` | ZhipuAI GLM vision key for `tools/image_curator.py` | `...` |
+| `HF_TOKEN` | HuggingFace token for gated model downloads | `hf_...` |
+
+### Database (optional — JSON on disk is authoritative)
+
+| Variable | Description | Example |
+|---|---|---|
 | `POSTGRES_HOST` | PostgreSQL host | `localhost` |
-| `POSTGRES_PORT` | PostgreSQL port | `5433` |
+| `POSTGRES_PORT` | PostgreSQL port | `5432` |
 | `POSTGRES_USER` | PostgreSQL user | `yt_machine` |
 | `POSTGRES_PASSWORD` | PostgreSQL password | `your_password` |
 | `POSTGRES_DB` | PostgreSQL database | `yt_machine` |
