@@ -105,3 +105,81 @@ def needs_delivery(master_bytes: int, max_bytes: int) -> bool:
     delivery stage existed.
     """
     return master_bytes > max_bytes
+
+
+# ── retention ─────────────────────────────────────────────────────────
+#
+# Storage lifecycle for output/projects/ and output/images/. See
+# src/video/retention.py for the policy and its safety rules.
+#
+# DEFAULT IS REPORT-ONLY ("report"): a run reports what could be reclaimed and
+# deletes nothing. Deletion requires an explicit mode or the --cleanup CLI
+# action. This matches the project's stance against silent destructive
+# behaviour — deleting generated output is the sharpest version of that.
+DEFAULT_RETENTION_DAYS = 30
+DEFAULT_RETENTION_KEEP_LAST = 3
+DEFAULT_RETENTION_MODE = "report"
+
+_RETENTION_MODES = ("off", "report", "full", "delivery_only")
+_RETENTION_DAYS_CEILING = 3650
+_RETENTION_KEEP_LAST_CEILING = 1000
+
+
+def resolve_retention_enabled(raw: str | None) -> bool:
+    """Whether retention participates at all. Defaults to on (in report mode)."""
+    if raw is None or not str(raw).strip():
+        return True
+    return str(raw).strip().lower() in ("true", "1", "yes", "on")
+
+
+def resolve_retention_days(raw: str | None, default: int = DEFAULT_RETENTION_DAYS) -> int:
+    """Age window in days."""
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"YT_RETENTION_DAYS must be an integer from 0 to "
+            f"{_RETENTION_DAYS_CEILING}; got {raw!r}"
+        ) from exc
+    if not 0 <= value <= _RETENTION_DAYS_CEILING:
+        raise ValueError(
+            f"YT_RETENTION_DAYS must be an integer from 0 to "
+            f"{_RETENTION_DAYS_CEILING}; got {raw!r}"
+        )
+    return value
+
+
+def resolve_retention_keep_last(
+    raw: str | None, default: int = DEFAULT_RETENTION_KEEP_LAST
+) -> int:
+    """Minimum number of most-recent projects to retain regardless of age."""
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"YT_RETENTION_KEEP_LAST must be an integer from 0 to "
+            f"{_RETENTION_KEEP_LAST_CEILING}; got {raw!r}"
+        ) from exc
+    if not 0 <= value <= _RETENTION_KEEP_LAST_CEILING:
+        raise ValueError(
+            f"YT_RETENTION_KEEP_LAST must be an integer from 0 to "
+            f"{_RETENTION_KEEP_LAST_CEILING}; got {raw!r}"
+        )
+    return value
+
+
+def resolve_retention_mode(raw: str | None, default: str = DEFAULT_RETENTION_MODE) -> str:
+    """One of off | report | full | delivery_only."""
+    if raw is None or not str(raw).strip():
+        return default
+    value = str(raw).strip().lower()
+    if value not in _RETENTION_MODES:
+        raise ValueError(
+            f"YT_RETENTION_MODE must be one of "
+            f"{', '.join(_RETENTION_MODES)}; got {raw!r}"
+        )
+    return value

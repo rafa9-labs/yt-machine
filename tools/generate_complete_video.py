@@ -35,6 +35,7 @@ os.environ['PYTHONUNBUFFERED'] = '1'
 import sys
 import json
 import time
+import atexit
 import asyncio
 import threading
 from pathlib import Path
@@ -711,6 +712,31 @@ else:
     log.info("project.create", folder=str(project_folder), project_id=project_id)
 
 log = log.bind(project_id=project_id)
+
+
+def _discard_empty_project_folder() -> None:
+    """Remove the project folder if startup aborted before it was populated.
+
+    The folder is created early because later steps write into it, but several
+    gates can abort immediately afterwards: the pre-pipeline resource check
+    (``sys.exit(1)``) and the text-model start (which raises ``RuntimeError``
+    when memory is insufficient). Each abort previously left a permanent empty
+    ``output/projects/video_<id>/`` behind — five had accumulated.
+
+    A resumed project is never touched, because ``project_folder`` then comes
+    from ``--resume`` and holds prior state.
+    """
+    if checkpoint and args.resume:
+        return
+    from src.video.retention import discard_folder_if_empty
+
+    if discard_folder_if_empty(project_folder):
+        log.info("project.discard_empty", folder=str(project_folder))
+
+
+# Restore the invariant on any early exit, including the uncaught RuntimeError
+# from the memory guard, which is not routed through sys.exit().
+atexit.register(_discard_empty_project_folder)
 
 greeting_label = ('Morning' if datetime.now().hour < 12
                   else 'Afternoon' if datetime.now().hour < 18
