@@ -87,6 +87,27 @@ structural guarantees the language model cannot be relied on to produce.
 - **Publishing with idempotency** — YouTube Shorts via OAuth2 and TikTok via the
   Content Posting API, with a publish ledger that prevents double-posting.
 
+## Generated Examples
+
+YT Machine has been used to generate and publish complete short-form videos.
+These outputs are the final artifacts produced by the collect → research →
+script → visuals → voice → assembly workflow described above.
+
+[Watch generated videos on YouTube →](https://www.youtube.com/@GeoPoliticsMasker)
+
+The public channel currently lists five videos generated through the YT Machine
+pipeline. These examples were produced with earlier versions of YT Machine and
+are included as historical demonstrations of end-to-end pipeline output.
+
+Selected examples:
+
+- [The UAE just broke OPEC.](https://www.youtube.com/shorts/I50zWGVe-RM)
+- [China's $1T mistake?](https://www.youtube.com/shorts/il8h7OCC3P4)
+- [The Drone Strategy Flattening Kyiv + The Hidden Deal in Taiwan](https://www.youtube.com/shorts/II7I45mgX3E)
+
+For the engineering context behind the source code and architecture, see the
+[YT Machine case study on Rafa9 Labs](https://www.rafa9-labs.com/projects/yt-machine).
+
 ## Quick Start
 
 **Prerequisites**
