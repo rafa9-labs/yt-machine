@@ -1282,8 +1282,8 @@ CRITICAL RULES:
         _prelim_words = count_narrated_words(script)
         
         if _prelim_words < MIN_WORDS:
-            log.info("validate.too_short", words=_prelim_words, min=MIN_WORDS,
-                     note="requesting expansion")
+            log.info("[VALIDATE] Script too short: %d words (min %d) — requesting expansion",
+                     _prelim_words, MIN_WORDS)
             
             for retry_attempt in range(3):
                 expand_prompt = (
@@ -1330,12 +1330,12 @@ CRITICAL RULES:
                                 script = expand_script
                                 script['greeting'] = greeting
                                 stories = script.get('stories', [])
-                                log.info("validate.expanded", words=_exp_words,
-                                         attempts=retry_attempt + 1)
+                                log.info("[VALIDATE] Expansion retry %d success — %d words",
+                                         retry_attempt + 1, _exp_words)
                                 break
                             else:
-                                log.info("validate.expansion_short", words=_exp_words,
-                                         min=MIN_WORDS, attempt=retry_attempt + 1)
+                                log.info("[VALIDATE] Expansion retry %d: %d words — still short (min %d)",
+                                         retry_attempt + 1, _exp_words, MIN_WORDS)
                                 # Keep trying with updated count
                                 _prelim_words = _exp_words
         
@@ -1343,13 +1343,13 @@ CRITICAL RULES:
         # Counted with the shared helper so this is the same quantity the
         # pipeline reports and narrates — including the closing.
         _final_words = count_narrated_words(script)
-        log.info("validate.word_count", words=_final_words,
-                 min=MIN_WORDS, max=MAX_WORDS)
+        log.info("[VALIDATE] Final word count: %d words (target %d-%d)",
+                 _final_words, MIN_WORDS, MAX_WORDS)
 
         # ═══ VALIDATION 3b: MAX_WORDS ceiling (script too long) ═══
         if _final_words > MAX_WORDS:
-            log.info("validate.too_long", words=_final_words, max=MAX_WORDS,
-                     note="requesting compression")
+            log.info("[VALIDATE] Script too long: %d words (max %d) — requesting compression",
+                     _final_words, MAX_WORDS)
 
             for retry_attempt in range(3):
                 compress_prompt = (
@@ -1422,19 +1422,18 @@ CRITICAL RULES:
                             # computed and then discarded by an assignment that
                             # restored the stale count.)
                             _final_words = count_narrated_words(script)
-                            log.info("validate.compressed", words=_final_words,
-                                     attempts=retry_attempt + 1)
+                            log.info("[VALIDATE] Compression retry %d success — %d words after enforcement",
+                                     retry_attempt + 1, _final_words)
                             break
                         else:
-                            log.info("validate.compression_short", words=compress_words,
-                                     max=MAX_WORDS, attempt=retry_attempt + 1)
+                            log.info("[VALIDATE] Compression retry %d: %d words — still over %d",
+                                     retry_attempt + 1, compress_words, MAX_WORDS)
 
             if _final_words > MAX_WORDS:
                 # Enforcement is advisory at this point: the script ships, but
                 # the overshoot is recorded rather than hidden.
-                log.warning("validate.over_budget", words=_final_words,
-                            max=MAX_WORDS,
-                            note="using best available after compression attempts")
+                log.warning("[VALIDATE] Could not compress below %d — using best available (%d words)",
+                            MAX_WORDS, _final_words)
 
         # ═══ VALIDATION 3c: Per-segment word count enforcement ═══
         # Reuses BEAT_WORD_RANGES so the per-beat check and the compression
@@ -1450,11 +1449,11 @@ CRITICAL RULES:
                 text = story.get(field, '')
                 wc = len(text.split()) if text else 0
                 if wc > hi:
-                    log.info("validate.beat_over", story=i + 1, field=field,
-                             words=wc, max=hi)
+                    log.info("[VALIDATE] Story %d %s: %d words (max %d) — over segment limit",
+                             i + 1, field, wc, hi)
                 elif wc > 0 and wc < lo:
-                    log.info("validate.beat_under", story=i + 1, field=field,
-                             words=wc, min=lo)
+                    log.info("[VALIDATE] Story %d %s: %d words (min %d) — under segment limit",
+                             i + 1, field, wc, lo)
         
         # ── Build segment timeline from part_1/part_2 format ──
         # Each segment maps to an image: [segment_text, image_index]
@@ -2104,8 +2103,8 @@ ORIGINAL STORY NARRATIONS:
                   f"(got {len(curated_structures) if curated_structures else 0}). "
                   f"Curator output lacks [HOOK]/[MECHANISM]/[REAL_TALK]/[FALLOUT] markers — "
                   f"falling back to original narration (no curation applied).")
-            log.warning("curation.no_markers", got=len(curated_structures) if curated_structures else 0,
-                        expected=len(story_bodies))
+            log.warning("[CURATOR] Output lacks markers: got %d structures, expected %d",
+                        len(curated_structures) if curated_structures else 0, len(story_bodies))
             return self._reassemble_script(script, story_bodies)
         
         # ── PER-STORY FIDELITY CHECK ──
