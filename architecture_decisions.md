@@ -1214,8 +1214,17 @@ semantics, rather than consolidating it into one gate.
 
 | Layer | Mechanism | Failure mode | Where |
 |---|---|---|---|
-| 1 — Deterministic | Code checks on structured data | Rejects, or repairs from source text | `src/collector/prompt_validator.py`, `src/collector/geopolitical_validator.py`, `src/collector/geopolitical_accuracy.py`, `src/brain/script_evaluator.py`, `src/brain/llm_interface.py::_extract_json` |
+| 1 — Deterministic | Code checks on structured data | Rejects, or repairs from source text | `src/collector/geopolitical_validator.py`, `src/collector/geopolitical_accuracy.py`, `src/brain/script_evaluator.py`, `src/brain/llm_interface.py::_extract_json` |
 | 2 — LLM recovery | A second model pass over unusable output | Retries, or substitutes a validated shape | missing-segment recovery, `_validate_closing` + CTA quarantine, `_validate_curation_fidelity` |
+
+**Correction (this revision):** an earlier version of this table listed
+`src/collector/prompt_validator.py` as a live Layer-1 module. It is not — the
+module has no importer anywhere in the repository. The claim was written from a
+secondary report without verifying reachability, which is the same class of
+error the audit that produced this ADR was meant to catch. The live
+deterministic checkers are the two listed above plus the synthesizer's own
+enforcement, which now reads its budget from `src/video/pipeline_config.py`.
+`prompt_validator.py` is recorded as unreachable code, not as a layer.
 
 **Rationale:** the two layers contain different classes of defect. Layer 1
 catches *malformed or ungrounded* output where the correct behaviour is to

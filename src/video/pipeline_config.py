@@ -2,10 +2,168 @@
 
 from __future__ import annotations
 
+import re
+
 
 DEFAULT_NUM_STORIES = 2
 IMAGES_PER_STORY = 4
 DEFAULT_NUM_IMAGES = DEFAULT_NUM_STORIES * IMAGES_PER_STORY
+
+
+# ── script length budget ──────────────────────────────────────────────
+#
+# WHY THIS LIVES HERE AND NOT IN llm_interface
+# The synthesizer previously hardcoded MIN_WORDS=130 / MAX_WORDS=170 while the
+# prompt asked for "150-170 words", and the per-segment limits summed to
+# 112-197. Three budgets, mutually inconsistent, so a script could satisfy one
+# and violate another — which is how real runs came out at 296-325 words
+# (~118-130s) while the enforcement believed it was targeting 130-170.
+#
+# One derivation, one band. Changing the target duration changes the word
+# budget automatically, so the two cannot drift apart again.
+#
+# 2.5 words/second is the conversion the pipeline already uses everywhere
+# (`word_count / 2.5`), so the budget and the duration estimate agree by
+# construction rather than by coincidence.
+WORDS_PER_SECOND = 2.5
+TARGET_VIDEO_SECONDS = (60, 70)
+MIN_WORDS = int(TARGET_VIDEO_SECONDS[0] * WORDS_PER_SECOND)   # 150
+MAX_WORDS = int(TARGET_VIDEO_SECONDS[1] * WORDS_PER_SECOND)   # 175
+
+
+# Per-beat word budget, per story. Ranges, not fixed values — the synthesizer
+# needs room to write naturally.
+#
+# WHY A TABLE
+# The previous compression instruction trimmed part_1/part_2 while telling the
+# model to leave real_talk, fallout and segue "as-is". Those locked fields were
+# 106 words on the reference run and the minimum trimmed parts were 80, so the
+# best achievable total was 186 against a 170 ceiling — the instruction could
+# never reach its own target, which is why every retry failed. Every field now
+# has an explicit range, and `beat_budget_bounds()` proves the ranges are
+# compatible with the global band below.
+BEAT_WORD_RANGES = {
+    "part_1_narration": (20, 23),
+    "part_2_narration": (24, 29),
+    "real_talk": (14, 17),
+    "fallout": (12, 15),
+    "segue": (6, 10),          # story 1 only
+}
+
+
+def _beat_budget_arithmetic():
+    """Import-time check: the per-beat ranges must fit the global band.
+
+    A mismatch here is a configuration error that would silently make
+    enforcement unsatisfiable, which is exactly the defect this table replaced.
+    Raising at import is deliberate: it fails on the first test run rather than
+    producing over-long scripts months later.
+    """
+    stories = DEFAULT_NUM_STORIES
+    per_story_lo = sum(
+        lo for field, (lo, _) in BEAT_WORD_RANGES.items() if field != "segue"
+    )
+    per_story_hi = sum(
+        hi for field, (_, hi) in BEAT_WORD_RANGES.items() if field != "segue"
+    )
+    segue_lo, segue_hi = BEAT_WORD_RANGES["segue"]
+    # Segues exist between stories: one fewer than the story count.
+    segue_count = max(stories - 1, 0)
+
+    lowest = per_story_lo * stories + segue_lo * segue_count
+    highest = per_story_hi * stories + segue_hi * segue_count
+
+    if highest < MAX_WORDS or lowest > MIN_WORDS:
+        raise ValueError(
+            "beat word ranges cannot reach the global band: beats span "
+            f"{lowest}-{highest} words but the target band is "
+            f"{MIN_WORDS}-{MAX_WORDS}. Adjust BEAT_WORD_RANGES or "
+            "TARGET_VIDEO_SECONDS."
+        )
+
+
+def beat_budget_bounds() -> dict:
+    """Lowest/highest totals the per-beat ranges can produce, and the band."""
+    stories = DEFAULT_NUM_STORIES
+    per_story_lo = sum(
+        lo for field, (lo, _) in BEAT_WORD_RANGES.items() if field != "segue"
+    )
+    per_story_hi = sum(
+        hi for field, (_, hi) in BEAT_WORD_RANGES.items() if field != "segue"
+    )
+    segue_lo, segue_hi = BEAT_WORD_RANGES["segue"]
+    segue_count = max(stories - 1, 0)
+    return {
+        "lowest": per_story_lo * stories + segue_lo * segue_count,
+        "highest": per_story_hi * stories + segue_hi * segue_count,
+        "min_words": MIN_WORDS,
+        "max_words": MAX_WORDS,
+    }
+
+
+_beat_budget_arithmetic()
+
+
+# Fields that are SPOKEN. Order mirrors the segment timeline.
+#
+# The closing is included deliberately. It was previously omitted from the
+# enforcement counter while `full_text` (built from the segment timeline)
+# includes it, so the counter and the artifact disagreed by the length of the
+# closing — 20 words on the reference run. Counting what is actually narrated
+# is the only way the enforcement can bound the real duration.
+_NARRATED_FIELDS = ("part_1_narration", "part_2_narration", "real_talk",
+                    "fallout", "segue")
+
+# Story separator markers ("....") carry a pause, not words. They are present
+# in `full_text` and in the segment timeline, so every word count must exclude
+# them or the reported duration is inflated by the number of separators.
+_SEPARATOR_RE = re.compile(r"\.{3,}")
+
+
+def count_spoken_words(text: str | None) -> int:
+    """Words in a narration string, excluding separator markers.
+
+    Use this when only the assembled text is available (the pipeline rebuilds
+    `full_text` at several stages). Use :func:`count_narrated_words` when the
+    structured script is available.
+    """
+    if not text:
+        return 0
+    return len(_SEPARATOR_RE.sub(" ", text).split())
+
+
+def count_narrated_words(script: dict | None) -> int:
+    """Words that will be spoken, including the closing.
+
+    Single source of truth for "how long is this script". Used by the
+    synthesizer's enforcement and by the pipeline when it records
+    ``script['word_count']``, so the number being validated and the number
+    being reported are the same quantity.
+
+    Prefers the segment timeline when it exists: that is the authoritative
+    narration order, and it is what `full_text` is derived from. Before the
+    timeline is built (inside the synthesizer's enforcement) the structured
+    story fields are counted instead. The two agree — verified on real
+    manifests — because the timeline is generated from those fields.
+    """
+    if not isinstance(script, dict):
+        return 0
+
+    timeline = script.get("segment_timeline")
+    if isinstance(timeline, list) and timeline:
+        joined = " ".join(
+            seg.get("text", "") for seg in timeline if isinstance(seg, dict)
+        )
+        return count_spoken_words(joined)
+
+    parts = [script.get("greeting", ""), script.get("intro_hook", "")]
+    for story in script.get("stories", []) or []:
+        if not isinstance(story, dict):
+            continue
+        for field in _NARRATED_FIELDS:
+            parts.append(story.get(field, ""))
+    parts.append(script.get("closing", ""))
+    return count_spoken_words(" ".join(p for p in parts if p))
 
 
 def resolve_image_limit(raw: str | None, maximum: int = DEFAULT_NUM_IMAGES) -> int:

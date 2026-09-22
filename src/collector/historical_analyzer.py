@@ -40,13 +40,11 @@ class HistoricalAnalyzer:
             Dictionary with historical parallels and their details
         """
         topic = news_analysis.get('topic', '')
-        shift_vector = news_analysis.get('shift_vector', '')
-        
+
         prompt = f"""Analyze this 2026 news event and identify 2-3 relevant historical parallels from the past 50 years.
 
 CURRENT EVENT (2026):
 Topic: {topic}
-Shift Vector: {shift_vector}
 
 Article excerpt:
 {article_text[:1500]}
@@ -104,7 +102,7 @@ Be historically accurate. Only include events with clear parallels."""
         
         if not result or 'parallels' not in result:
             print("⚠️  Historical analysis failed - using fallback")
-            return self._get_fallback_parallels(topic, shift_vector)
+            return self._get_fallback_parallels(topic)
         
         # Limit to max_parallels
         if len(result['parallels']) > max_parallels:
@@ -112,14 +110,17 @@ Be historically accurate. Only include events with clear parallels."""
         
         return result
     
-    def _get_fallback_parallels(self, topic: str, shift_vector: str) -> Dict[str, Any]:
+    def _get_fallback_parallels(self, topic: str) -> Dict[str, Any]:
         """
-        Fallback historical parallels based on topic keywords
-        
+        Fallback historical parallels based on topic keywords.
+
+        Branches on `topic` only. It previously also accepted a `shift_vector`
+        argument that the body never read — the parameter was vestigial and has
+        been removed along with the field itself.
+
         Args:
             topic: News topic
-            shift_vector: Geopolitical shift vector
-            
+
         Returns:
             Basic historical parallels dictionary
         """
