@@ -43,7 +43,7 @@ USAGE:
     log.error("step.failed", step="news_fetch", error=str(e))
 
     # Bind context (all future logs include this):
-    log = log.bind(project_id=1776133524, pipeline_version="v2")
+    log = log.bind(project_id=1776133524)
     log.info("step.complete", step="script_synthesis")  # includes project_id
 
 ENV TOGGLES:

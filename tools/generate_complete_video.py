@@ -1082,7 +1082,7 @@ _step_banner("SCRIPT SYNTHESIS (LLM)")
 _step_start = time.time()
 
 try:
-    log.info("script.generating", format="multi_news_3_stories")
+    log.info("script.generating", stories=NUM_STORIES, images_per_story=IMAGES_PER_STORY)
     print("\n  [LLM] Generating script (this may take 30-120s)...", flush=True)
     script = None
     for _synth_attempt in range(3):
@@ -2229,8 +2229,6 @@ _step_banner("PROJECT SUMMARY")
 manifest = {
     'project_id': project_id,
     'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-    'format': 'multi_news_3',
-    'pipeline_version': 'unified',
     'articles': [
         {
             'title': a.get('title'),
