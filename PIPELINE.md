@@ -581,6 +581,12 @@ asset paths, TTS timestamps, project folder), updates
 final Postgres status, stores topic vectors (best-effort), then delivers the
 video to Telegram.
 
+The manifest also carries a run-level `provenance` block: project id, status
+(`complete` / `incomplete`), git commit, generation-profile identity, LLM
+identifier, TTS engine and voice, assembly settings, and the list of per-image
+provenance filenames. `assets.provenance` lists the sidecars copied into
+`images/` — see §7.7.
+
 **Telegram delivery:** `sendVideo` multipart, `parse_mode=HTML`,
 `supports_streaming=true`, 120 s timeout. Caption = hook title (≤60 chars) +
 date + first 3 lines of the YouTube description + up to 8 hashtags, truncated
@@ -686,6 +692,41 @@ re-normalise the mix and duck the narration.
    that describes it
 
 (The code comment says "~1s"; the constant is 0.3.)
+
+### 7.7 Provenance sidecars
+
+Every generated image carries a JSON sidecar next to it, named
+`<image>.provenance.json`. The generator writes it beside the scratch PNG in
+`output/images/`; the pipeline copies it into the project folder with the
+image it describes, so the record travels with the deliverable:
+
+```
+output/projects/video_<id>/images/
+  story_1_part1_scene_….png
+  story_1_part1_scene_….provenance.json
+```
+
+The sidecar records `model`, `provider`, `generation_profile`, both prompts
+(`prompt` as sent, `original_prompt` before sanitisation), the `sampling` block
+(steps, guidance, seed, width, height), the `lora` block (name, path, scale),
+the `postprocess` block (input/output sizes, colours requested and written,
+resampling), any rewritten text requests, deferred text, and the geopolitical
+accuracy score. The pipeline adds `project_id`, `scene`, and
+`processed_output` when copying.
+
+**Secrets.** A sidecar is a shareable file, so `src/video/provenance.py`
+redacts credential-shaped keys and values on every write. Key names matching
+`*_key`, `token`, `secret`, `password`, `credential`, and similar are redacted,
+and so are values matching known provider formats (`ghp_`, `hf_`, `sk-`,
+`AKIA`, PEM headers, …). The value check exists because a credential pasted
+under an innocent key name is still a credential.
+
+**Lifecycle.** Sidecars are written per-image as each image is accepted, so a
+partially failed run still records the images it did produce. The run-level
+record in `manifest.json` is written at finalization with
+`status: "complete"` or `"incomplete"`. Set `"provenance": false` in a
+generation profile to disable sidecars; the key is validated (boolean only)
+and defaults to enabled, including for profiles written before it existed.
 
 ---
 
@@ -1042,6 +1083,7 @@ MLXGEN_TIMEOUT=900
 #   model            profile.model.match
 #   steps / guidance profile.steps / profile.guidance
 #   LoRA path/scale  profile.lora.path / profile.lora.scale
+#   provenance       profile.provenance (boolean, default true)
 
 # Publishing
 YOUTUBE_PRIVACY=public            # private | unlisted | public

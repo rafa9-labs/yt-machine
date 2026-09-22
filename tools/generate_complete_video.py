@@ -474,6 +474,7 @@ from src.video.tts_tool import generate_voiceover
 from src.video.split_video_assembler import build_split_video
 from src.video.visual_qa import validate_image, adjust_prompt_for_retry
 from src.video.model_orchestrator import ModelOrchestrator
+from src.video.provenance import build_run_provenance
 
 # ── MODEL PROFILE + SEQUENTIAL RUNTIME ──────────────────────────────
 # The profile decides which models serve text/image. The runtime enforces
@@ -1589,6 +1590,7 @@ _step_start = time.time()
 
 try:
     generated_images = []
+    provenance_names = []
     image_folder = project_folder / "images"
     image_folder.mkdir(exist_ok=True)
 
@@ -1736,6 +1738,30 @@ try:
                 dst_path = image_folder / dst_filename
                 shutil.copy2(src_path, dst_path)
 
+                # Carry the provenance sidecar into the project folder with the
+                # image it describes. The generator writes it next to the
+                # scratch PNG in output/images/; without this the record only
+                # exists outside the deliverable, and the project folder is
+                # what gets archived, inspected, and shipped.
+                provenance_name = None
+                source_provenance = art_result.get('provenance_path')
+                if source_provenance and Path(source_provenance).exists():
+                    try:
+                        from src.video.postprocess import (
+                            read_provenance,
+                            write_provenance,
+                        )
+
+                        payload = read_provenance(Path(source_provenance)) or {}
+                        payload['project_id'] = project_id
+                        payload['scene'] = scene_name
+                        payload['processed_output'] = str(dst_path)
+                        sidecar = write_provenance(dst_path, payload)
+                        provenance_name = sidecar.name
+                    except Exception as prov_error:
+                        log.warning("provenance.propagate_failed",
+                                    scene=scene_name, error=str(prov_error))
+
                 qa_result = validate_image(
                     str(dst_path), current_prompt,
                     skip_vlm=True,
@@ -1744,6 +1770,8 @@ try:
 
                 if qa_result['pass']:
                     generated_images.append(str(dst_path))
+                    if provenance_name:
+                        provenance_names.append(provenance_name)
                     print(f"  [IMG {scene_idx+1}/{NUM_IMAGES}] {scene_name} OK (attempt {attempt+1})")
                     log.info("pixel_art.accepted", scene=scene_name, attempt=attempt + 1,
                              reason=qa_result.get('reason', 'pass'))
@@ -1808,6 +1836,7 @@ except Exception as e:
     import traceback
     traceback.print_exc()
     generated_images = []
+    provenance_names = []
 
 _step_duration = time.time() - _step_start
 log.info("step.complete", step="pixel_art", duration_s=round(_step_duration, 2),
@@ -2146,12 +2175,16 @@ manifest = {
     'platform_metadata': platform_metadata,
     'assets': {
         'images': [str(Path(p).name) for p in generated_images],
+        'provenance': provenance_names,
         'voiceover': 'voiceover.mp3',
         'video': video_filename if final_video_path else None
     },
     'image_generation': {
         'profile': (image_generation_profile or {}).get('name'),
-        'model': (image_generation_profile or {}).get('model_id'),
+        # Profiles name their model via model.match; model_match_key() is the
+        # accessor that understands both that and the legacy model_id form.
+        # Reading model_id directly always yielded None on current profiles.
+        'model': model_match_key(image_generation_profile or {}),
         'lora': ((image_generation_profile or {}).get('lora') or {}).get('name'),
         'seed_pool': (image_generation_profile or {}).get('seed_pool'),
         'postprocess': (image_generation_profile or {}).get('postprocess'),
@@ -2162,6 +2195,19 @@ manifest = {
         'engine': tts_result.get('engine', 'unknown'),
         'estimated_duration_seconds': tts_result.get('estimated_duration_seconds', 0),
     },
+    'provenance': build_run_provenance(
+        project_id=project_id,
+        profile=image_generation_profile or {},
+        tts_result=tts_result or {},
+        llm_model=llm.default_model if llm else None,
+        assembly=assembly_result if final_video_path else None,
+        assets={
+            'images': provenance_names,
+            'voiceover': 'voiceover.mp3',
+            'video': video_filename if final_video_path else None,
+        },
+        status='complete' if final_video_path else 'incomplete',
+    ),
     'project_folder': str(project_folder)
 }
 

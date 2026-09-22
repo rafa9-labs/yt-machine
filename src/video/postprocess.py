@@ -102,9 +102,39 @@ def process_pixel_art_file(
 
 
 def write_provenance(path: Path, payload: Dict[str, Any]) -> Path:
-    """Write a JSON sidecar next to a generated image."""
+    """Write a JSON sidecar next to a generated image.
+
+    The payload is passed through the provenance secret guard first: a sidecar
+    is a shareable artifact, so a credential that reached this function is
+    redacted rather than persisted. See src/video/provenance.py for why this
+    is a value check as well as a key-name check.
+    """
+    from src.video.provenance import redact_secrets
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     sidecar = path.with_suffix(".provenance.json")
-    sidecar.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    safe_payload = redact_secrets(payload)
+    sidecar.write_text(
+        json.dumps(safe_payload, indent=2, ensure_ascii=True), encoding="utf-8"
+    )
     return sidecar
+
+
+def read_provenance(path: Path) -> Optional[Dict[str, Any]]:
+    """Read a provenance sidecar for a generated image, or None.
+
+    Accepts either the image path or the sidecar path. Returns None when no
+    sidecar exists or it is unreadable, so a caller can treat provenance as
+    optional rather than guarding every call.
+    """
+    candidate = Path(path)
+    if candidate.suffix != ".json":
+        candidate = candidate.with_suffix(".provenance.json")
+    if not candidate.is_file():
+        return None
+    try:
+        loaded = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
