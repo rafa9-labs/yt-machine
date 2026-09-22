@@ -97,10 +97,28 @@ def _find_ffmpeg() -> str:
     return None
 
 
-def _validate_mp4(path: str, ffmpeg_exe: str = None) -> dict:
-    """
-    Validate an MP4 file has both video and audio streams with a valid moov atom.
-    Returns {'valid': bool, 'video_codec': str|None, 'audio_codec': str|None, 'error': str|None}
+def _validate_mp4(path: str, ffmpeg_exe: str = None, *, require_audio: bool = False) -> dict:
+    """Validate an MP4 has a usable video stream and a readable moov atom.
+
+    Returns
+        {'valid': bool, 'video_codec': str|None, 'audio_codec': str|None, 'error': str|None}
+
+    WHY ``require_audio`` IS OPT-IN
+        This function gates two different artifact classes. Intermediate files
+        — the concatenated scene track and the stacked scene+avatar composite —
+        are video-only by construction: scenes come from a single still-image
+        loop, and the stack step passes ``-an``. Requiring audio unconditionally
+        would reject them and break the assembly chain.
+
+        A *deliverable* is different. The voiceover and music are the whole
+        soundtrack, so a final MP4 with no audio stream is a broken artifact.
+        That is reachable: the MoviePy fallback catches an AudioFileClip
+        failure and calls ``set_audio(None)``, writing a silent file. Before
+        ``require_audio`` existed this passed validation and shipped. Final
+        call sites therefore opt in explicitly.
+
+    Audio detection itself always runs, so ``audio_codec`` is populated for
+    every caller regardless of the requirement.
     """
     if not ffmpeg_exe:
         ffmpeg_exe = _find_ffmpeg()
@@ -132,6 +150,13 @@ def _validate_mp4(path: str, ffmpeg_exe: str = None) -> dict:
         if not video_codec:
             return {'valid': False, 'video_codec': None, 'audio_codec': audio_codec,
                     'error': f'no video stream found (stderr had {len(result.stderr)} chars)'}
+        if require_audio and not audio_codec:
+            # A final artifact with no audio is unusable: the narration and
+            # music are the entire soundtrack. Fail with a distinguishable
+            # reason so the caller (and the log) names the actual problem
+            # rather than reporting a generic invalid file.
+            return {'valid': False, 'video_codec': video_codec, 'audio_codec': None,
+                    'error': 'no audio stream found (require_audio=True)'}
         return {'valid': True, 'video_codec': video_codec, 'audio_codec': audio_codec, 'error': None}
     except Exception as e:
         return {'valid': False, 'video_codec': None, 'audio_codec': None, 'error': str(e)}
@@ -921,7 +946,7 @@ def _assemble_pure_ffmpeg(
             return False
 
         # ── 9. Validate output ──
-        validation = _validate_mp4(str(out_path), ffmpeg_exe)
+        validation = _validate_mp4(str(out_path), ffmpeg_exe, require_audio=True)
         if not validation['valid']:
             print(f"  [PURE-FF] Output validation FAILED: {validation['error']}")
             try:
@@ -1126,7 +1151,7 @@ def build_split_video(
                 music_path=str(MUSIC_PATH) if MUSIC_PATH.exists() else None,
             )
             if pure_ok:
-                validation = _validate_mp4(str(out_path), ffmpeg_exe)
+                validation = _validate_mp4(str(out_path), ffmpeg_exe, require_audio=True)
                 if validation['valid']:
                     export_ok = True
                     print(f"  [SPLIT] Pure-ffmpeg assembly validated (v:{validation['video_codec']} a:{validation['audio_codec']})")
@@ -1237,7 +1262,7 @@ def build_split_video(
                 try:
                     final_result = subprocess.run(final_cmd, capture_output=True, timeout=composite_timeout, text=True)
                     if final_result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 1000:
-                        validation = _validate_mp4(str(out_path), ffmpeg_exe)
+                        validation = _validate_mp4(str(out_path), ffmpeg_exe, require_audio=True)
                         if validation['valid']:
                             export_ok = True
                             print(f"  [SPLIT] ffmpeg composite OK ({out_path.stat().st_size / (1024*1024):.1f}MB, v:{validation['video_codec']} a:{validation['audio_codec']})")
@@ -1354,7 +1379,7 @@ def build_split_video(
 
             # Validate moviepy output
             if ffmpeg_exe and out_path.exists() and out_path.stat().st_size > 1000:
-                moviepy_validation = _validate_mp4(str(out_path), ffmpeg_exe)
+                moviepy_validation = _validate_mp4(str(out_path), ffmpeg_exe, require_audio=True)
                 if moviepy_validation['valid']:
                     export_ok = True
                     print(f"  [SPLIT] moviepy export validated (v:{moviepy_validation['video_codec']} a:{moviepy_validation['audio_codec']})")
@@ -1397,7 +1422,7 @@ def build_split_video(
 
         # Final validation
         if ffmpeg_exe:
-            final_val = _validate_mp4(str(out_path), ffmpeg_exe)
+            final_val = _validate_mp4(str(out_path), ffmpeg_exe, require_audio=True)
             if not final_val['valid']:
                 print(f"  [SPLIT] FINAL VALIDATION FAILED: {final_val['error']}")
                 try:
