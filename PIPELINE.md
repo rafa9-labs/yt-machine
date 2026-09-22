@@ -189,7 +189,7 @@ pushed into swap. Semantic dedup now happens later, inside
 | Video compositing | **ffmpeg** (primary), **moviepy** (fallback) | ffmpeg's `zoompan`/`overlay`/`subtitles` filters render a 1080×1920 100 s video in ~90 s on CPU. moviepy spawns a Python process per clip and was 5–10× slower; it survives only as path 3 of a 3-path fallback chain |
 | Subtitles | **ASS** (Advanced SubStation Alpha) | The only subtitle format that supports per-word animated colour transitions (`{\t()}`) without re-encoding per frame. Karaoke highlighting is written as one `Dialogue` line per 5-word phrase with timed colour interpolation |
 | Word timestamps | **faster-whisper** (`base`, int8/CPU) | Gives word-level timing needed for the karaoke effect. Runs on CPU because the GPU is unloaded after the image phase. Falls back to calibrated even-distribution if unavailable |
-| Video encode | **libx264**, CRF 20/22/24 adaptive | CRF scales with duration (≤90 s → 20, ≤120 s → 22, else 24) to keep the ~20–32 MB file under Telegram's 50 MB cap |
+| Video encode | **libx264 yuv444p CRF 0** (master) | Lossless 4:4:4 keeps the 32-colour pixel-art palette exact; a subsampled encode decodes it back to thousands of colours. The master is archival and is **not** what gets uploaded — see §7.8 for the size-bounded delivery copy |
 | TTS (primary) | **Kokoro 82M** (local) | Free, local, GPU/CPU, no API key, no rate limit. Voice `am_adam` for "authoritative" |
 | TTS (tier 2) | **ElevenLabs** `eleven_multilingual_v2` | Premium quality when `ELEVEN_LABS_KEY` is set. Not primary because it costs money and adds a network dependency to an otherwise offline pipeline |
 | TTS (tier 3) | **Edge TTS** | Free Microsoft voices. Last resort before silence |
@@ -220,7 +220,7 @@ pushed into swap. Semantic dedup now happens later, inside
 | TikTok upload | TikTok **Content Posting API** via `requests` | Official Direct Post endpoint. Refresh token flow added because access tokens expire in ~24 h |
 | Scheduling | **launchd** + **pmset** | launchd's `StartCalendarInterval` fires missed jobs when the Mac wakes (cron cannot). `pmset` is the only way to schedule a hardware wake |
 | Wake/sleep control | **caffeinate**, **pmset** | `caffeinate -s` holds the machine awake for the ~80 min run; AC idle sleep (20 min) puts it back down afterwards |
-| Notifications | Telegram Bot API via `requests` | Status + video delivery (50 MB limit, 20–32 MB files fit) |
+| Notifications | Telegram Bot API via `requests` | Status + video delivery (50 MB hard limit; the delivery copy is sized to fit — §7.8) |
 
 ### 4.5 Why not the alternatives
 
@@ -590,7 +590,7 @@ provenance filenames. `assets.provenance` lists the sidecars copied into
 **Telegram delivery:** `sendVideo` multipart, `parse_mode=HTML`,
 `supports_streaming=true`, 120 s timeout. Caption = hook title (≤60 chars) +
 date + first 3 lines of the YouTube description + up to 8 hashtags, truncated
-to 1024 chars. Hard 50 MB limit — observed outputs are 20–32 MB.
+to 1024 chars. Hard 50 MB limit; the delivery copy is encoded to fit (§7.8).
 
 Finally: `llm.unload_model()` → `orchestrator.phase_cleanup()` →
 `runtime.finish()` (idempotent: stop text model, reap stragglers, release
@@ -652,19 +652,23 @@ was removed — it had zero importers, and `build_split_video` never called it.
 1. **Pure ffmpeg** (`_assemble_pure_ffmpeg`) — scenes rendered by OpenCV
    (`_render_scene_opencv`) or ffmpeg `zoompan`; avatar loop rendered by
    ffmpeg; concat demuxer; pad+overlay stack; ASS burn-in via `subtitles='…'`;
-   fade; audio mix. Final encode:
-   `-c:v libx264 -preset fast -crf <adaptive> -pix_fmt yuv420p -profile:v high
-   -level 4.0 -bf 2 -movflags +faststart -c:a aac -b:a 192k -ar 44100 -ac 2`
+   fade; audio mix. Final encode uses the master codec:
+   `-c:v libx264 -pix_fmt yuv444p -crf 0 -preset fast -movflags +faststart
+   -c:a aac -b:a 192k -ar 44100 -ac 2`
 2. **moviepy overlay pre-render** — only if pure ffmpeg fails and overlays
    exist. Base render CRF 18; overlays as VP9 alpha WebM composited with
    ffmpeg `overlay=0:0`
-3. **Full moviepy** — `libx264`, `ultrafast`, 8 threads, same audio chain
+3. **Full moviepy** — same master codec and audio chain
 
-**Adaptive CRF** keeps output size bounded: ≤90 s → 20, ≤120 s → 22, else 24.
+All three paths write the **master**: lossless 4:4:4, no size control, because
+compressing here would defeat the palette guarantee that the master exists to
+provide. Size discipline belongs to the delivery stage instead (§7.8).
 
-Every path's output passes `_validate_mp4` (checks for both video and audio
-streams and rejects `moov atom not found` / `Invalid data`). An invalid file is
-deleted and the next path runs.
+Every path's output passes `_validate_mp4`, which rejects
+`moov atom not found` / `Invalid data` and requires a video stream. An invalid
+file is deleted and the next path runs. (Note: the docstring claims it checks
+for an audio stream too; it currently only requires video — audio absence is
+caught downstream by the publisher and player.)
 
 ### 7.5 Audio mix
 
@@ -727,6 +731,59 @@ record in `manifest.json` is written at finalization with
 `status: "complete"` or `"incomplete"`. Set `"provenance": false` in a
 generation profile to disable sidecars; the key is validated (boolean only)
 and defaults to enabled, including for profiles written before it existed.
+
+---
+
+### 7.8 Master and delivery artifacts
+
+A run produces two artifacts with different contracts:
+
+| Artifact | Name | Format | Purpose |
+|---|---|---|---|
+| Master | `video_<id>.master.mp4` | libx264 / yuv444p / CRF 0 | Archival. Keeps the 32-colour palette exactly |
+| Delivery | `video_<id>.mp4` | libx264 / yuv420p / High | Upload. Size-bounded for providers |
+
+**Why two files.** The palette guarantee and the size constraint are
+irreconcilable: a lossless 1080×1920 master runs ~38 Mbit/s, so a full run is
+~400–500 MB, while Telegram's Bot API refuses anything over 50 MB and the
+TikTok and Instagram uploaders read the entire file into memory. Measured on a
+real 32-colour frame, a yuv420p encode decodes back to 4,696 colours — so the
+master must stay 4:4:4 and the delivery copy must accept that damage.
+
+**When delivery runs.** Only when the master exceeds `YT_DELIVERY_MAX_MB`
+(default 50). Below the ceiling no second file is written and the canonical
+name keeps pointing at the master, so short runs behave exactly as they did
+before this stage existed.
+
+**How the size is guaranteed.** The video bitrate is derived, not guessed:
+
+```
+video_kbps = (max_bytes × 8 / duration) − audio_kbps   (with container slack)
+```
+
+The encode caps that bitrate (`-maxrate` / `-bufsize`) on top of a CRF, so
+quality stays constant on the simple frames that dominate pixel art while the
+byte ceiling holds. Two-pass VBR reaches the same ceiling but doubles encode
+time and needs a stats file. If the ceiling cannot yield a usable bitrate
+(a very long video in a small budget), the stage reports that explicitly
+rather than emitting an unwatchable file, and if a single attempt overshoots,
+one retry runs at a tighter CRF before reporting failure.
+
+**Naming.** The delivery copy takes the canonical `video_<id>.mp4` and the
+master is renamed to `.master.mp4`. Every consumer — manifest,
+`publish_video.find_latest_video`, `automate.find_latest_video`, `server.py`,
+Telegram — already resolves the canonical name, so nothing needed to change to
+receive the upload copy. Both discovery functions share one selector that
+prefers the delivery copy and excludes `.master.mp4`, and falls back to the
+master if delivery failed or was disabled (publishing something beats
+publishing nothing).
+
+**Failure behaviour.** Delivery is a convenience; the master is the artifact.
+A failed transcode restores the canonical name, logs a specific reason, and
+never fails the run.
+
+**Configuration:** `YT_DELIVERY_ENABLED` (default true),
+`YT_DELIVERY_MAX_MB` (default 50), `YT_DELIVERY_CRF` (default 20).
 
 ---
 

@@ -57,9 +57,26 @@ def test_process_pixel_art_file_writes_metadata(tmp_path):
 
 
 def test_encoded_scene_clip_preserves_palette(tmp_path):
-    """The scene codec must not undo the PNG palette guarantee."""
+    """The scene codec must not undo the PNG palette guarantee.
+
+    Scene clips become part of the lossless master, so this is the point where
+    a subsampled encode would silently soften the art. The master codec is
+    yuv444p/CRF-0 precisely because yuv420p decodes a 32-colour frame back to
+    thousands of colours. Compressed delivery copies are produced separately
+    and are expected to lose the exact palette; the master is not.
+    """
     if not _find_ffmpeg():
         pytest.skip("ffmpeg is required for encoded-scene validation")
+
+    from src.video.split_video_assembler import (
+        PIXEL_VIDEO_CRF,
+        PIXEL_VIDEO_PIXEL_FORMAT,
+    )
+
+    assert PIXEL_VIDEO_PIXEL_FORMAT == "yuv444p", (
+        "the master must stay 4:4:4; yuv420p subsampling invents colours"
+    )
+    assert PIXEL_VIDEO_CRF == "0", "the master must stay lossless"
 
     source_path = tmp_path / "scene.png"
     video_path = tmp_path / "scene.mp4"

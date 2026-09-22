@@ -290,6 +290,14 @@ def _kill_process_group(process: subprocess.Popen) -> None:
 
 
 def find_latest_video() -> str | None:
+    """Newest deliverable video across all projects.
+
+    Uses the same selector as publish_video.find_latest_video so the two
+    cannot disagree about which artifact to upload: within a project the
+    canonical delivery copy wins over the .master.mp4 archival file.
+    """
+    from publish_video import _select_deliverable
+
     projects_dir = PROJECT_ROOT / "output" / "projects"
     if not projects_dir.exists():
         return None
@@ -300,13 +308,13 @@ def find_latest_video() -> str | None:
     for project_dir in sorted(projects_dir.iterdir()):
         if not project_dir.is_dir():
             continue
-        for mp4 in project_dir.glob("*.mp4"):
-            if "TEMP" in mp4.name:
-                continue
-            mtime = mp4.stat().st_mtime
-            if mtime > latest_mtime:
-                latest_mtime = mtime
-                latest = str(mp4)
+        chosen = _select_deliverable(list(project_dir.glob("*.mp4")))
+        if not chosen:
+            continue
+        mtime = chosen.stat().st_mtime
+        if mtime > latest_mtime:
+            latest_mtime = mtime
+            latest = str(chosen)
 
     return latest
 

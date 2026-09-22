@@ -32,3 +32,76 @@ def resolve_image_limit(raw: str | None, maximum: int = DEFAULT_NUM_IMAGES) -> i
             f"YT_IMAGE_LIMIT must be an integer from 1 to {maximum}; got {raw!r}"
         )
     return value
+
+
+# ── delivery copy ─────────────────────────────────────────────────────
+#
+# The assembler produces a lossless master (~38 Mbit/s). Delivery providers
+# impose hard ceilings — Telegram refuses anything over 50 MB — so a separate
+# size-bounded copy is produced for upload. See src/video/media_export.py.
+DEFAULT_DELIVERY_MAX_MB = 50
+DEFAULT_DELIVERY_CRF = 20
+
+# Telegram's Bot API cap is 50 MB and is the tightest of the consumers, which
+# is why DEFAULT_DELIVERY_MAX_MB is that number rather than something larger.
+_DELIVERY_MAX_MB_CEILING = 2000
+
+
+def resolve_delivery_enabled(raw: str | None) -> bool:
+    """Whether to produce a size-bounded delivery copy.
+
+    Defaults to on. Anything in the falsey set disables it, matching the
+    convention of the other boolean toggles (USE_LOCAL_FLUX, USE_KOKORO), so
+    an operator is not surprised by a new value being truthy.
+    """
+    if raw is None or not str(raw).strip():
+        return True
+    return str(raw).strip().lower() in ("true", "1", "yes", "on")
+
+
+def resolve_delivery_max_mb(raw: str | None, default: int = DEFAULT_DELIVERY_MAX_MB) -> int:
+    """Resolve the delivery size ceiling in megabytes.
+
+    Rejects non-integers and out-of-range values so a typo cannot silently
+    disable the size guard or produce an unusable copy.
+    """
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"YT_DELIVERY_MAX_MB must be an integer from 1 to "
+            f"{_DELIVERY_MAX_MB_CEILING}; got {raw!r}"
+        ) from exc
+    if not 1 <= value <= _DELIVERY_MAX_MB_CEILING:
+        raise ValueError(
+            f"YT_DELIVERY_MAX_MB must be an integer from 1 to "
+            f"{_DELIVERY_MAX_MB_CEILING}; got {raw!r}"
+        )
+    return value
+
+
+def resolve_delivery_crf(raw: str | None, default: int = DEFAULT_DELIVERY_CRF) -> int:
+    """Resolve the delivery CRF. 0-51 is the x264 range; 18-28 is useful."""
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"YT_DELIVERY_CRF must be an integer from 0 to 51; got {raw!r}"
+        ) from exc
+    if not 0 <= value <= 51:
+        raise ValueError(f"YT_DELIVERY_CRF must be an integer from 0 to 51; got {raw!r}")
+    return value
+
+
+def needs_delivery(master_bytes: int, max_bytes: int) -> bool:
+    """Whether a master needs a delivery copy.
+
+    Below the ceiling the master is served directly and no second file is
+    written, so short runs keep the exact behaviour they had before the
+    delivery stage existed.
+    """
+    return master_bytes > max_bytes

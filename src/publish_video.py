@@ -51,6 +51,40 @@ YOUTUBE_PRIVACY = os.getenv("YOUTUBE_PRIVACY", "public").strip().lower()
 
 # ── Video Discovery ──────────────────────────────────────────────────────────
 
+def _select_deliverable(video_files) -> "Path | None":
+    """Pick the file to upload from a project's MP4s.
+
+    A project can hold more than one MP4: the lossless master
+    (`video_<id>.master.mp4`) is the archival artifact, and the size-bounded
+    delivery copy (`video_<id>.mp4`) is what providers should receive. The
+    delivery copy is always the one to publish — the master exceeds
+    Telegram's 50 MB cap and is read fully into memory by the TikTok and
+    Instagram uploaders.
+
+    Fails closed: if a master is the only candidate (delivery failed, or
+    YT_DELIVERY_ENABLED was turned off) it is still returned, because
+    publishing something is better than silently publishing nothing — the
+    provider will reject an oversize file with a clear error.
+    """
+    candidates = [f for f in video_files if "TEMP" not in f.name]
+    if not candidates:
+        return None
+
+    deliveries = [
+        f for f in candidates
+        if not f.name.endswith(".master.mp4")
+    ]
+    if deliveries:
+        # Prefer the canonical video_<id>.mp4 over any other artifact.
+        canonical = [f for f in deliveries if f.name.endswith(".mp4")
+                     and ".master." not in f.name]
+        chosen = sorted(canonical or deliveries)
+        return chosen[0]
+
+    masters = [f for f in candidates if f.name.endswith(".master.mp4")]
+    return sorted(masters)[0] if masters else None
+
+
 def find_latest_video() -> dict:
     """Find the most recent completed video in output/projects/."""
     projects_dir = Path("output/projects")
@@ -65,17 +99,7 @@ def find_latest_video() -> dict:
             continue
         
         manifest_path = project_dir / "manifest.json"
-        video_files = list(project_dir.glob("*.mp4"))
-        
-        if not video_files:
-            continue
-        
-        # Find the main video (not temp files)
-        main_video = None
-        for vf in video_files:
-            if "TEMP" not in vf.name:
-                main_video = vf
-                break
+        main_video = _select_deliverable(list(project_dir.glob("*.mp4")))
         
         if not main_video:
             continue
