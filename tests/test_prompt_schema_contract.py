@@ -82,20 +82,11 @@ class TestPromptSchemaAgreement:
 
 
 class TestRetiredFieldsStayRetired:
-    # Modules verified as unreachable from the pipeline (no importer anywhere).
-    # They may still mention retired fields; they cannot execute. If one of
-    # these is ever wired back in, the dead-code inventory in PIPELINE.md §13
-    # is the place to revisit — and this exemption list must shrink with it.
-    UNREACHABLE_MODULES = {
-        "src/collector/prompt_generator.py",
-        "src/collector/prompt_validator.py",
-        "src/collector/visual_extractor.py",
-        "src/collector/salience_extractor.py",
-        "src/collector/historical_analyzer.py",
-        "src/collector/script_parser.py",
-        "src/collector/action_mapping.py",
-        "src/collector/historical_equipment_db.py",
-    }
+    # Empty: the eight unreachable collector modules this list used to exempt
+    # have been deleted. Keep the list and the test that validates it, so any
+    # future module claiming "unreachable, therefore exempt" has to be declared
+    # here and proven to have no importer.
+    UNREACHABLE_MODULES: set = set()
 
     def test_no_reachable_code_reads_the_retired_analysis_fields(self):
         """Retired fields must not be read by anything the pipeline can call.

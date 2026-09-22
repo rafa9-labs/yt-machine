@@ -1243,7 +1243,7 @@ debugging.
 | 12 | **Telegram not configured** (empty token/chat id) — all notifications silently skipped | No run status until credentials are added |
 | 13 | **Retired prompt fields are still requested by the analysis prompt** — resolved for `shift_vector`, `pixel_art_prompts`, `ticker_headlines`; the prompt now asks only for the five fields `NewsAnalysis` carries | Resolved in this revision (see below) |
 | 14 | **Storage grows ~140-180 GB/year** with no automatic reclamation. Retention exists (`src/video/retention.py`, ADR-040) but defaults to **report-only** | Disk fills over ~2 years at one run/day unless `--cleanup` is run deliberately. Run `python src/automate.py --cleanup-dry-run` to see what is reclaimable |
-| 15 | **Unreachable collector modules (~3,200 lines)** — `prompt_generator.py` (606), `prompt_validator.py` (494), `visual_extractor.py` (298), `historical_equipment_db.py` (264), `action_mapping.py` (191), `historical_analyzer.py` (189), `salience_extractor.py` (108), and `script_parser.py` (1075) via `prompt_generator` | No runtime impact — nothing imports them from the pipeline. Maintenance drag and a misleading signal about what is live. Retained pending a deliberate decision: some may be reference implementations. See ADR-037's correction regarding `prompt_validator.py` |
+| 15 | **Unreachable methods remain in `llm_interface`** — `extract_visual_elements` (39 lines), `warmup_model` (16), `_get_time_greeting` (10). All have zero callers and no removed-module dependencies | No runtime impact. Left out of the dead-code removal PR to keep it scoped; safe to delete in a later cleanup. Verified by AST reference scan |
 
 ### Word budget (resolved in this revision)
 
@@ -1292,6 +1292,41 @@ so LangChain's parser discarded them on every run:
 The prompt, the manifest, and the dead analyzer's signature no longer reference
 them. The prompt now states that every requested key must exist and extra keys
 must not be added.
+
+### Dead code removed (resolution of the earlier gap 15)
+
+Eight collector modules (~3,200 lines) were deleted, along with the code they
+kept alive. They were abandoned by a single commit, `8f44941` (2026-04-08,
+"prevent curation hallucination + visual prompt alignment"), which replaced the
+rule-based prompt pipeline with the LLM-based `generate_visual_prompts()` that
+is still in use (ADR-022). The diff removed the imports and added the
+replacement; the modules were left behind.
+
+| Removed | Lines | Its job now lives in |
+|---|---:|---|
+| `script_parser.py` | 1,075 | `llm_interface.segment_timeline` |
+| `prompt_generator.py` | 606 | `llm_interface.generate_visual_prompts()` |
+| `prompt_validator.py` | 494 | `geopolitical_validator` (live) + `_score_prompt_specificity` |
+| `visual_extractor.py` | 298 | `military_equipment_db` via `geopolitical_validator` (live) |
+| `historical_equipment_db.py` | 264 | no successor — inert data |
+| `action_mapping.py` | 191 | no successor |
+| `historical_analyzer.py` | 190 | no successor (6-act era) |
+| `salience_extractor.py` | 108 | no successor |
+| `LLMInterface.synthesize_script` | 158 | `synthesize_multi_news_script` |
+| `debate_skeptic` / `debate_explainer` | 42 | abandoned per ADR-002 |
+| 4 orphaned config prompts | 28 | — |
+
+**Safety, verified not assumed.** An AST walk of the import graph from all six
+real entrypoints (`generate_complete_video.py`, `automate.py`, `server.py`,
+`pipeline_api.py`, `rerun_video.py`, `publish_video.py`) reached none of them.
+Removing the roots orphaned exactly zero further modules:
+`military_equipment_db` and `geopolitical_accuracy` stay live via
+`geopolitical_validator`, which `pixel_art_tool` imports.
+
+**What survived deliberately.** `script_synthesizer` remains in
+`model_config.call_timeouts` — that key is live for per-task timeout routing
+(`task_name` indexes `call_timeouts`, never `prompts`). Only its `prompts`
+entry was removed.
 
 ---
 
