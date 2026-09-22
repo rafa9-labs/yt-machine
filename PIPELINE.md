@@ -1104,6 +1104,53 @@ python src/automate.py --remove-schedule          # unload + delete agent
 launchctl kickstart gui/$(id -u)/com.rafa9labs.ytmachine   # run now
 ```
 
+### 11.4 Storage retention
+
+`output/projects/` accumulates one folder per run (~380–500 MB: a lossless
+master plus its delivery copy), which is roughly **140–180 GB/year** at one run
+per day. `output/images/` accumulates per-image scratch. Neither was reclaimed
+before ADR-040.
+
+**Retention is report-only by default.** Every automation run prints what could
+be reclaimed and deletes nothing:
+
+```
+retention[report]: 3 project(s), 12 scratch file(s) would reclaim 412.3MB (4 protected)
+Output: 1.2GB across 9 project(s)
+```
+
+Deletion requires an explicit action:
+
+```bash
+# Preview — exact plan, nothing deleted
+python src/automate.py --cleanup-dry-run
+python src/automate.py --cleanup-dry-run delivery_only
+
+# Apply
+python src/automate.py --cleanup                    # full: remove whole projects
+python src/automate.py --cleanup delivery_only      # masters only
+```
+
+| Mode | Effect | Reclaims |
+|---|---|---|
+| `report` | plan only (default) | nothing |
+| `full` | remove whole old projects | all bytes of that project |
+| `delivery_only` | remove only the lossless `.master.mp4` | ~93 % of the project, keeping the publishable delivery copy, manifest, scripts, images and provenance |
+| `off` | disable retention entirely | nothing |
+
+**Protections** — these hold at every setting, including `keep_last=0` and a
+zero-day window:
+
+- the **newest publishable project** is never removed; publishing discovery
+  resolves it and would otherwise fail
+- the most recent `YT_RETENTION_KEEP_LAST` projects (default 3)
+- every project inside `YT_RETENTION_DAYS` (default 30)
+- recent scratch images, so `tools/collect_best_images.py` keeps working as a
+  LoRA curation source
+
+`delivery_only` is never a default: the master is the archival record that
+preserves the exact palette (ADR-038). Discarding it is an explicit choice.
+
 ---
 
 ## 12. Configuration reference
@@ -1194,6 +1241,8 @@ debugging.
 | 10 | **Qwen-Image at 20 steps costs ~10 min/image** vs FLUX.2 Klein's ~5.5 min at 8 steps | 8 scenes would take ~80 min of image time alone — step tuning is mandatory before switching |
 | 11 | **`lora_status: mapped-unvalidated`** for Qwen | Adapter compatibility was validated manually and recorded; mlxgen's own gate skips absolute local paths |
 | 12 | **Telegram not configured** (empty token/chat id) — all notifications silently skipped | No run status until credentials are added |
+| 13 | **The synthesizer's word-count enforcement does not match real output.** It validates a 130-170 word band and counts a different field set than what is narrated; the reference run narrated 325 words while its own counter saw 305 | The compression retry may not be engaging. Scripts are longer than the prompt targets; the band is currently descriptive, not enforced |
+| 14 | **Storage grows ~140-180 GB/year** with no automatic reclamation. Retention exists (`src/video/retention.py`, ADR-040) but defaults to **report-only** | Disk fills over ~2 years at one run/day unless `--cleanup` is run deliberately. Run `python src/automate.py --cleanup-dry-run` to see what is reclaimable |
 
 Resolved since an earlier revision of this table: the `tts_tool` comment that
 called ElevenLabs the primary engine while the code tried Kokoro first has been

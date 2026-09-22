@@ -1342,6 +1342,79 @@ is the point of recording it.
 
 ---
 
+### ADR-040 — Output retention is planned, then applied
+
+**Decision:** Storage lifecycle lives in `src/video/retention.py` with planning
+and mutation as separate functions. `plan_retention()` inspects and decides and
+**never writes**; `apply_retention()` executes a plan it is given. The default
+mode is **report**: a run reports what could be reclaimed and deletes nothing.
+Deletion requires an explicit `--cleanup` action or an explicit config opt-in.
+
+**Why.**
+Two directories grow without bound and nothing reclaimed them:
+
+| Directory | Contents | Growth |
+|---|---|---|
+| `output/projects/` | one folder per run: lossless master + delivery copy | ~140–180 GB/year at one run/day |
+| `output/images/` | per-image scratch: processed PNG, raw PNG, provenance sidecar | unbounded; 43 MB accumulated from normal use |
+
+Five empty project directories had also accumulated from runs that aborted
+between folder creation and the pre-pipeline resource check.
+
+**Why planning is separated from applying.** Deleting generated output is
+irreversible, and the safety rules are subtle enough that a caller intending
+only to inspect must not be able to delete by accident. The split also makes
+the destructive path testable: `plan_retention` accepts an injected `now`, so
+every age boundary is deterministic rather than dependent on wall-clock timing.
+
+**Why report-only is the default.** The codebase's §12 anti-patterns record
+that silent guessing is the failure mode to avoid; deleting data is the
+sharpest version of it. A run that quietly removed a user's output would be
+worse than one that fills a disk, because disk pressure is visible and
+recoverable while deleted output is not. Enabling automatic cleanup is a
+deliberate act.
+
+**What is protected, and why each rule exists:**
+
+| Rule | Reason |
+|---|---|
+| Newest publishable project | `publish_video.find_latest_video`, `automate.find_latest_video` and the server's `/latest` all resolve the newest project holding an MP4. Verified by deleting projects in order: discovery degrades to the next one and only raises `FileNotFoundError` when none remain |
+| `keep_last` most-recent projects | A burst of runs must not evict everything inside the window |
+| Projects inside the age window | The window is the operator's stated tolerance |
+| Recent scratch images | `tools/collect_best_images.py` feeds LoRA training from this directory — it is a curation source, not garbage. Immediate delete-after-generation would destroy that workflow |
+| A sidecar is pruned only with its image | A provenance record must not outlive what it describes, nor be removed while the image remains |
+
+**Scope of ownership.** The pipeline only claims files it wrote. Ad-hoc files in
+`output/images/` — probe videos, benchmark clips from shell experiments — are
+not matching pipeline output names and are therefore left alone rather than
+swept incidentally.
+
+**`delivery_only` mode.** Drops the large lossless master while keeping the
+delivery copy plus the manifest, scripts, images and provenance that explain
+the run, reclaiming most of the bytes without losing the publishable artifact.
+It is opt-in and never the default: the master is the archival record that
+preserves the exact 32-colour palette (ADR-038), and discarding it is a
+decision an operator makes explicitly, not one a default makes silently.
+
+**Empty-directory cleanup.** A run creates its project folder before the
+pre-pipeline resource check, which can abort via `sys.exit(1)` or raise from
+the memory guard. An `atexit` hook removes the folder **only when it is empty**,
+so a folder containing work is never touched and a resumed project is never
+treated as startup residue.
+
+**Alternatives rejected:**
+- *Delete after generation* — destroys the LoRA curation source.
+- *Silent automatic pruning* — irreversible and invisible; contradicts §12.
+- *Age window without `keep_last`* — a run burst could evict everything.
+- *Path-based deletion without root containment* — a symlinked or crafted entry
+  could redirect a deletion outside the retention tree; every target is now
+  resolved and checked to be inside the root, with refusals reported.
+
+**Status:** Held. Automatic cleanup will be considered only after the report
+output has been exercised across real runs and proven trustworthy.
+
+---
+
 ## 10. Why the pipeline is composed this way
 
 Beyond the individual decisions, the *shape* of the pipeline follows from four

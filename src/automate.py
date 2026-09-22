@@ -682,9 +682,146 @@ def run_full_automation(
     _log("=" * 60)
     _log("AUTOMATION COMPLETE")
     _log(f"Pipeline: {'SUCCESS' if pipeline_result['success'] else 'FAILED'}")
+
+    # Storage report. Always informational — no deletion happens here; cleanup
+    # requires the explicit --cleanup flag. Reporting the plan on every run is
+    # what makes the growth visible before it becomes a problem.
+    try:
+        storage = retention_report()
+        report["storage"] = storage
+        _log(storage["summary"])
+        usage = storage["usage"]
+        _log(f"Output: {usage['bytes'] / (1024 * 1024):.1f}MB across "
+             f"{usage['projects']} project(s)")
+    except Exception as storage_err:
+        # Storage reporting must never fail an otherwise successful run.
+        _log(f"Storage report unavailable: {storage_err}")
+
     _log("=" * 60)
 
     return report
+
+
+def retention_report() -> dict:
+    """Plan retention for the output tree. Never deletes.
+
+    Used by the run summary and by --cleanup-dry-run so the same numbers are
+    reported in both places.
+    """
+    from src.video.retention import directory_usage, plan_retention, summarise_plan
+    from src.video.pipeline_config import (
+        resolve_retention_days,
+        resolve_retention_enabled,
+        resolve_retention_keep_last,
+        resolve_retention_mode,
+    )
+
+    root = PROJECT_ROOT / "output"
+    usage = directory_usage(root)
+    if not resolve_retention_enabled(os.environ.get("YT_RETENTION_ENABLED")):
+        return {"usage": usage, "plan": None, "summary": "retention: disabled by config"}
+
+    plan = plan_retention(
+        root,
+        max_age_days=resolve_retention_days(os.environ.get("YT_RETENTION_DAYS")),
+        keep_last=resolve_retention_keep_last(os.environ.get("YT_RETENTION_KEEP_LAST")),
+        mode=resolve_retention_mode(os.environ.get("YT_RETENTION_MODE")),
+    )
+    return {"usage": usage, "plan": plan, "summary": summarise_plan(plan)}
+
+
+def _run_cleanup(mode: str | None, *, dry_run: bool) -> int:
+    """CLI entry for `--cleanup [MODE]` / `--cleanup-dry-run`.
+
+    Deleting output is irreversible, so the flow always prints the plan before
+    acting and reports exactly what was removed. A dry run stops after the plan.
+    """
+    from src.video.retention import apply_retention, directory_usage, plan_retention
+    from src.video.pipeline_config import (
+        resolve_retention_days,
+        resolve_retention_keep_last,
+        resolve_retention_mode,
+    )
+
+    root = PROJECT_ROOT / "output"
+    before = directory_usage(root)
+    _log("=" * 60)
+    _log("OUTPUT RETENTION")
+    _log("=" * 60)
+    _log(f"Current output: {before['bytes'] / (1024 * 1024):.1f}MB "
+         f"across {before['projects']} project(s)")
+
+    requested = mode or resolve_retention_mode(os.environ.get("YT_RETENTION_MODE"))
+    if dry_run:
+        # plan_retention never writes regardless of mode, so planning in the
+        # requested mode is an exact preview of what --cleanup would remove.
+        plan = plan_retention(
+            root,
+            max_age_days=resolve_retention_days(os.environ.get("YT_RETENTION_DAYS")),
+            keep_last=resolve_retention_keep_last(os.environ.get("YT_RETENTION_KEEP_LAST")),
+            mode=requested,
+        )
+        _print_plan(plan)
+        _log("DRY RUN — nothing was deleted")
+        return 0
+
+    plan = plan_retention(
+        root,
+        max_age_days=resolve_retention_days(os.environ.get("YT_RETENTION_DAYS")),
+        keep_last=resolve_retention_keep_last(os.environ.get("YT_RETENTION_KEEP_LAST")),
+        mode=requested,
+    )
+    _print_plan(plan)
+
+    if not plan["projects"] and not plan["scratch"]:
+        _log("Nothing to remove.")
+        return 0
+
+    result = apply_retention(plan)
+    removed = (len(result["removed_projects"]) + len(result["removed_masters"])
+               + len(result["removed_scratch"]))
+    _log(f"Removed {removed} item(s), freed "
+         f"{result['freed_bytes'] / (1024 * 1024):.1f}MB")
+    if result["missing"]:
+        _log(f"  {len(result['missing'])} item(s) had already disappeared "
+             f"(skipped)")
+    if result["skipped_outside_root"]:
+        _log(f"  {len(result['skipped_outside_root'])} item(s) refused: outside "
+             f"the output root")
+
+    after = directory_usage(root)
+    _log(f"Output now: {after['bytes'] / (1024 * 1024):.1f}MB "
+         f"across {after['projects']} project(s)")
+    return 0
+
+
+def _print_plan(plan: dict) -> None:
+    """Human-readable plan, so a deletion is never silent."""
+    mode = plan.get("mode")
+    if not plan["projects"] and not plan["scratch"]:
+        _log(f"Plan [{mode}]: nothing eligible "
+             f"({len(plan.get('protected', []))} protected)")
+        return
+    _log(f"Plan [{mode}] — {plan['reclaimable_bytes'] / (1024 * 1024):.1f}MB "
+         f"reclaimable:")
+    for item in plan["projects"]:
+        name = Path(item["path"]).name
+        verb = "remove project" if item["action"] == "remove_project" else "remove master"
+        _log(f"  {verb}: {name} "
+             f"({item['bytes'] / (1024 * 1024):.1f}MB, {item['age_days']}d old)")
+    for item in plan["scratch"][:10]:
+        _log(f"  remove scratch: {Path(item['path']).name} "
+             f"({item['age_days']}d old)")
+    if len(plan["scratch"]) > 10:
+        _log(f"  ... and {len(plan['scratch']) - 10} more scratch file(s)")
+    protected = plan.get("protected", [])
+    if protected:
+        reasons = {}
+        for entry in protected:
+            reasons.setdefault(entry["reason"].split("(")[0].strip(), 0)
+            reasons[entry["reason"].split("(")[0].strip()] += 1
+        for reason, count in sorted(reasons.items()):
+            _log(f"  protected ({reason}): {count}")
 
 
 def main():
@@ -731,10 +868,29 @@ Examples:
                         help="Show AC/battery sleep settings")
     parser.add_argument("--show-schedule", action="store_true",
                         help="Show launchd agent state and pmset wake schedule")
+    parser.add_argument("--cleanup", nargs="?", const="full", default=None,
+                        choices=["full", "delivery_only"], metavar="MODE",
+                        help="Apply output retention. MODE is 'full' (remove "
+                             "whole projects) or 'delivery_only' (remove only "
+                             "lossless masters). Without this flag retention "
+                             "only reports. --cleanup-dry-run previews.")
+    parser.add_argument("--cleanup-dry-run", nargs="?", const="full", default=None,
+                        choices=["full", "delivery_only"], metavar="MODE",
+                        help="Report what retention would remove, then exit "
+                             "without deleting anything. Accepts the same MODE "
+                             "values as --cleanup so a specific plan can be "
+                             "previewed.")
     parser.add_argument("--no-notify", action="store_true",
                         help="Skip Telegram status notifications")
 
     args = parser.parse_args()
+
+    # Retention is report-only unless --cleanup is given. Handled before the
+    # automation flow so a preview never depends on a pipeline run.
+    if args.cleanup_dry_run is not None:
+        return _run_cleanup(args.cleanup_dry_run, dry_run=True)
+    if args.cleanup is not None:
+        return _run_cleanup(args.cleanup, dry_run=False)
 
     global NOTIFY_ENABLED
     if args.no_notify:
