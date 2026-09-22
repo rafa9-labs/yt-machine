@@ -11,6 +11,18 @@ import time
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
+# Script length budget. Derived from the target video duration in one place so
+# the enforcement band, the prompt text and the reported duration cannot drift
+# apart (they previously did: 130-170 enforced, 150-170 requested, 112-197 in
+# the per-segment limits, and real output at 296-325 words).
+from src.video.pipeline_config import (
+    BEAT_WORD_RANGES,
+    MAX_WORDS as SCRIPT_MAX_WORDS,
+    MIN_WORDS as SCRIPT_MIN_WORDS,
+    WORDS_PER_SECOND,
+    count_narrated_words,
+)
+
 log = logging.getLogger(__name__)
 
 class LLMInterface:
@@ -1456,36 +1468,40 @@ CRITICAL RULES:
                 print(f"  [VALIDATE] Story {i+1} real_talk fallback injected")
         
         # ══════════════════════════════════════════════════════════════
-        # VALIDATION 3: Word count enforcement (130-170 words)
+        # VALIDATION 3: Word count enforcement
         # ══════════════════════════════════════════════════════════════
-        MIN_WORDS = 130
-        
+        # The band is imported from pipeline_config and derived from the target
+        # video duration. Counting goes through count_narrated_words so the
+        # number validated here is the same one the pipeline will report and
+        # narrate — including the closing, which the old counter omitted.
+        MIN_WORDS = SCRIPT_MIN_WORDS
+        MAX_WORDS = SCRIPT_MAX_WORDS
+        _BEAT_LO = {f: lo for f, (lo, _) in BEAT_WORD_RANGES.items()}
+        _BEAT_HI = {f: hi for f, (_, hi) in BEAT_WORD_RANGES.items()}
+
         # Build a preliminary full_text to count words
-        _prelim_parts = []
-        _prelim_parts.append(script.get('greeting', greeting))
-        _prelim_parts.append(script.get('intro_hook', ''))
-        for s in stories:
-            _prelim_parts.append(s.get('part_1_narration', ''))
-            _prelim_parts.append(s.get('part_2_narration', ''))
-            _prelim_parts.append(s.get('real_talk', ''))
-            _prelim_parts.append(s.get('fallout', ''))
-            _prelim_parts.append(s.get('segue', ''))
-        _prelim_text = ' '.join(filter(None, _prelim_parts))
-        _prelim_words = len(_prelim_text.split())
+        _prelim_words = count_narrated_words(script)
         
         if _prelim_words < MIN_WORDS:
-            print(f"  [VALIDATE] Script too short: {_prelim_words} words (min {MIN_WORDS}) — requesting expansion")
+            log.info("validate.too_short", words=_prelim_words, min=MIN_WORDS,
+                     note="requesting expansion")
             
             for retry_attempt in range(3):
                 expand_prompt = (
                     f"The script you generated is only {_prelim_words} words. "
-                    f"It MUST be 150-170 words total. Currently it is TOO SHORT.\n\n"
+                    f"It MUST be {MIN_WORDS}-{MAX_WORDS} words total. Currently it is TOO SHORT.\n\n"
                     f"Current script JSON:\n{json.dumps(script, indent=2, ensure_ascii=False)[:3000]}\n\n"
-                    f"EXPAND each story's part_1_narration to 18-22 words, part_2_narration to 22-28 words. "
-                    f"EXPAND each real_talk to 12-16 words, fallout to 10-14 words. "
+                    f"EXPAND each story's part_1_narration to "
+                    f"{_BEAT_LO['part_1_narration']}-{_BEAT_HI['part_1_narration']} words, "
+                    f"part_2_narration to "
+                    f"{_BEAT_LO['part_2_narration']}-{_BEAT_HI['part_2_narration']} words. "
+                    f"EXPAND each real_talk to "
+                    f"{_BEAT_LO['real_talk']}-{_BEAT_HI['real_talk']} words, "
+                    f"fallout to {_BEAT_LO['fallout']}-{_BEAT_HI['fallout']} words. "
                     f"Add MORE specific facts, names, numbers, and original metaphors.\n"
                     f"Keep the SAME story topics and angles — just make them LONGER and MORE DETAILED.\n"
-                    f"Target: 150-170 words total. Currently: {_prelim_words} words. Need at least {MIN_WORDS - _prelim_words} more.\n\n"
+                    f"Target: {MIN_WORDS}-{MAX_WORDS} words total. Currently: {_prelim_words} words. "
+                    f"Need at least {MIN_WORDS - _prelim_words} more.\n\n"
                     f"Return ONLY the corrected JSON with all {num_stories} stories expanded."
                 )
                 expand_response = self.generate(
@@ -1515,43 +1531,48 @@ CRITICAL RULES:
                                 script = expand_script
                                 script['greeting'] = greeting
                                 stories = script.get('stories', [])
-                                print(f"  [VALIDATE] Expansion retry {retry_attempt+1} success — {_exp_words} words")
+                                log.info("validate.expanded", words=_exp_words,
+                                         attempts=retry_attempt + 1)
                                 break
                             else:
-                                print(f"  [VALIDATE] Expansion retry {retry_attempt+1}: {_exp_words} words — still short")
+                                log.info("validate.expansion_short", words=_exp_words,
+                                         min=MIN_WORDS, attempt=retry_attempt + 1)
                                 # Keep trying with updated count
                                 _prelim_words = _exp_words
         
         # Final word count (always runs, regardless of whether expansion happened)
-        _final_parts = [script.get('greeting', ''), script.get('intro_hook', '')]
-        for s in script.get('stories', []):
-            _final_parts.append(s.get('part_1_narration', ''))
-            _final_parts.append(s.get('part_2_narration', ''))
-            _final_parts.append(s.get('real_talk', ''))
-            _final_parts.append(s.get('fallout', ''))
-            _final_parts.append(s.get('segue', ''))
-        _final_words = len(' '.join(filter(None, _final_parts)).split())
-        print(f"  [VALIDATE] Final word count: {_final_words} words (target: {MIN_WORDS}-170)")
-        
+        # Counted with the shared helper so this is the same quantity the
+        # pipeline reports and narrates — including the closing.
+        _final_words = count_narrated_words(script)
+        log.info("validate.word_count", words=_final_words,
+                 min=MIN_WORDS, max=MAX_WORDS)
+
         # ═══ VALIDATION 3b: MAX_WORDS ceiling (script too long) ═══
-        MAX_WORDS = 170
         if _final_words > MAX_WORDS:
-            print(f"  [VALIDATE] Script too long: {_final_words} words (max {MAX_WORDS}) — requesting compression")
-            
+            log.info("validate.too_long", words=_final_words, max=MAX_WORDS,
+                     note="requesting compression")
+
             for retry_attempt in range(3):
                 compress_prompt = (
                     f"The script you generated is {_final_words} words. "
-                    f"It MUST be 150-170 words total. Currently it is TOO LONG.\n\n"
+                    f"It MUST be {MIN_WORDS}-{MAX_WORDS} words total. Currently it is TOO LONG.\n\n"
                     f"Current script JSON:\n{json.dumps(script, indent=2, ensure_ascii=False)[:3000]}\n\n"
-                    f"COMPRESS each story to fit 150-170 words total:\n"
-                    f"- part_1_narration: trim to 18-22 words (punchy hook only)\n"
-                    f"- part_2_narration: trim to 22-28 words (mechanism, facts only)\n"
-                    f"- real_talk: keep as-is (already short)\n"
-                    f"- fallout: keep as-is (already short)\n"
-                    f"- segue: keep as-is\n\n"
+                    f"COMPRESS every field to fit {MIN_WORDS}-{MAX_WORDS} words total. "
+                    f"Every field MUST be shortened where it exceeds its range:\n"
+                    f"- part_1_narration: trim to "
+                    f"{_BEAT_LO['part_1_narration']}-{_BEAT_HI['part_1_narration']} words (punchy hook only)\n"
+                    f"- part_2_narration: trim to "
+                    f"{_BEAT_LO['part_2_narration']}-{_BEAT_HI['part_2_narration']} words (mechanism, facts only)\n"
+                    f"- real_talk: trim to "
+                    f"{_BEAT_LO['real_talk']}-{_BEAT_HI['real_talk']} words (keep the flat, quiet tone)\n"
+                    f"- fallout: trim to "
+                    f"{_BEAT_LO['fallout']}-{_BEAT_HI['fallout']} words (keep ONE forward consequence)\n"
+                    f"- segue: trim to "
+                    f"{_BEAT_LO['segue']}-{_BEAT_HI['segue']} words (keep the named entity from story 2)\n\n"
                     f"Remove filler words, redundant phrases, and any sentence that doesn't add NEW information.\n"
                     f"Keep the SAME story topics and angles — just make every sentence SHORTER and SHARPER.\n"
-                    f"Target: 150-170 words total. Currently: {_final_words} words. Need to cut at least {_final_words - MAX_WORDS} words.\n\n"
+                    f"Target: {MIN_WORDS}-{MAX_WORDS} words total. Currently: {_final_words} words. "
+                    f"Need to cut at least {_final_words - MAX_WORDS} words.\n\n"
                     f"Return ONLY the corrected JSON with all {num_stories} stories compressed."
                 )
                 compress_response = self.generate(
@@ -1596,31 +1617,33 @@ CRITICAL RULES:
                             script = self._enforce_fallout(script, news_analyses)
                             script = self._enforce_greeting(script)
                             stories = script.get('stories', [])
-                            # Recount after enforcement
-                            _ef_parts = [script.get('greeting', ''), script.get('intro_hook', '')]
-                            for s in stories:
-                                for f in ('part_1_narration', 'part_2_narration', 'real_talk', 'fallout', 'segue'):
-                                    _ef_parts.append(s.get(f, ''))
-                            _final_words = len(' '.join(filter(None, _ef_parts)).split())
-                            print(f"  [VALIDATE] Compression retry {retry_attempt+1} success — {_final_words} words after enforcement")
-                            _final_words = compress_words
+                            # Recount AFTER enforcement: those steps can change
+                            # length, so the pre-enforcement `compress_words` is
+                            # stale by this point. (This value was previously
+                            # computed and then discarded by an assignment that
+                            # restored the stale count.)
+                            _final_words = count_narrated_words(script)
+                            log.info("validate.compressed", words=_final_words,
+                                     attempts=retry_attempt + 1)
                             break
                         else:
-                            print(f"  [VALIDATE] Compression retry {retry_attempt+1}: {compress_words} words — still over {MAX_WORDS}")
-            
+                            log.info("validate.compression_short", words=compress_words,
+                                     max=MAX_WORDS, attempt=retry_attempt + 1)
+
             if _final_words > MAX_WORDS:
-                print(f"  [VALIDATE] Could not compress below {MAX_WORDS} — using best available ({_final_words} words)")
-        
+                # Enforcement is advisory at this point: the script ships, but
+                # the overshoot is recorded rather than hidden.
+                log.warning("validate.over_budget", words=_final_words,
+                            max=MAX_WORDS,
+                            note="using best available after compression attempts")
+
         # ═══ VALIDATION 3c: Per-segment word count enforcement ═══
-        SEGMENT_LIMITS = {
-            'part_1_narration': (15, 25),
-            'part_2_narration': (20, 32),
-            'real_talk': (10, 18),
-            'fallout': (8, 16),
-            'segue': (6, 15),
-            'greeting': (2, 15),
-            'intro_hook': (5, 15),
-        }
+        # Reuses BEAT_WORD_RANGES so the per-beat check and the compression
+        # instruction cannot disagree — they previously used different numbers
+        # (this block: 15-25/20-32/10-18/8-16; the prompt: 18-22/22-28/12-16/10-14).
+        SEGMENT_LIMITS = dict(BEAT_WORD_RANGES)
+        SEGMENT_LIMITS['greeting'] = (0, 15)
+        SEGMENT_LIMITS['intro_hook'] = (0, 15)
         for i, story in enumerate(script.get('stories', [])):
             for field, (lo, hi) in SEGMENT_LIMITS.items():
                 if field in ('greeting', 'intro_hook'):
@@ -1628,9 +1651,11 @@ CRITICAL RULES:
                 text = story.get(field, '')
                 wc = len(text.split()) if text else 0
                 if wc > hi:
-                    print(f"  [VALIDATE] Story {i+1} {field}: {wc} words (max {hi}) — over segment limit")
+                    log.info("validate.beat_over", story=i + 1, field=field,
+                             words=wc, max=hi)
                 elif wc > 0 and wc < lo:
-                    print(f"  [VALIDATE] Story {i+1} {field}: {wc} words (min {lo}) — under segment limit")
+                    log.info("validate.beat_under", story=i + 1, field=field,
+                             words=wc, min=lo)
         
         # ── Build segment timeline from part_1/part_2 format ──
         # Each segment maps to an image: [segment_text, image_index]
@@ -1900,9 +1925,14 @@ CRITICAL RULES:
         # VALIDATE CLOSING: Ensure full_text ends with subscribe/CTA
         script['full_text'] = self._validate_closing(script['full_text'])
         
-        # Calculate accurate word count and duration
-        script['word_count'] = len(script['full_text'].split())
-        script['estimated_duration'] = int(script['word_count'] / 2.5)
+        # Calculate accurate word count and duration.
+        # count_narrated_words() is the same function the enforcement band uses,
+        # so the number validated, the number reported, and the number the
+        # manifest records are one quantity. It excludes timeline separator
+        # markers ("...."), which are pauses rather than spoken words — which is
+        # why it can differ slightly from len(full_text.split()).
+        script['word_count'] = count_narrated_words(script)
+        script['estimated_duration'] = int(script['word_count'] / WORDS_PER_SECOND)
         
         print(f"  [MULTI-NEWS] Script: {len(script['stories'])} stories, {script['word_count']} words, ~{script['estimated_duration']}s")
         print(f"  [MULTI-NEWS] Timeline: {len(segment_timeline)} segments → {len(script['stories']) * 4} images")

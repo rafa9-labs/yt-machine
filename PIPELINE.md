@@ -1230,7 +1230,7 @@ debugging.
 | # | Gap | Impact |
 |---|---|---|
 | 1 | **`--resume` does not resume.** Checkpoint is written and logged but never consulted to skip steps | Every resumed run re-runs everything from news fetch |
-| 2 | **`trending_context` output is unused** downstream | Wasted computation, no behaviour change |
+| 2 | **`trending_context` output is unused** downstream | Wasted computation, no behaviour change. Verified as expected: no action |
 | 3 | **`llm_interface` debate methods have no caller.** `debate_skeptic` / `debate_explainer` and their prompt entries remain, but the chain modules that used them (`chains/debate.py`, `chains/news_analysis.py`, `collector/debate_engine.py`) were removed as dead code | Unused methods and two prompt entries; not on any pipeline path (ADR-002, ADR-037) |
 | 4 | **`fetch_vertical_footage` is imported but never called** (step 6 removed) | Dead import; Pexels path untested |
 | 5 | **`build_timeline` has no step banner**; visual-prompts banner shares the counter without its own step name | Cosmetic log inconsistency |
@@ -1241,14 +1241,57 @@ debugging.
 | 10 | **Qwen-Image at 20 steps costs ~10 min/image** vs FLUX.2 Klein's ~5.5 min at 8 steps | 8 scenes would take ~80 min of image time alone — step tuning is mandatory before switching |
 | 11 | **`lora_status: mapped-unvalidated`** for Qwen | Adapter compatibility was validated manually and recorded; mlxgen's own gate skips absolute local paths |
 | 12 | **Telegram not configured** (empty token/chat id) — all notifications silently skipped | No run status until credentials are added |
-| 13 | **The synthesizer's word-count enforcement does not match real output.** It validates a 130-170 word band and counts a different field set than what is narrated; the reference run narrated 325 words while its own counter saw 305 | The compression retry may not be engaging. Scripts are longer than the prompt targets; the band is currently descriptive, not enforced |
+| 13 | **Retired prompt fields are still requested by the analysis prompt** — resolved for `shift_vector`, `pixel_art_prompts`, `ticker_headlines`; the prompt now asks only for the five fields `NewsAnalysis` carries | Resolved in this revision (see below) |
 | 14 | **Storage grows ~140-180 GB/year** with no automatic reclamation. Retention exists (`src/video/retention.py`, ADR-040) but defaults to **report-only** | Disk fills over ~2 years at one run/day unless `--cleanup` is run deliberately. Run `python src/automate.py --cleanup-dry-run` to see what is reclaimable |
+| 15 | **Unreachable collector modules (~3,200 lines)** — `prompt_generator.py` (606), `prompt_validator.py` (494), `visual_extractor.py` (298), `historical_equipment_db.py` (264), `action_mapping.py` (191), `historical_analyzer.py` (189), `salience_extractor.py` (108), and `script_parser.py` (1075) via `prompt_generator` | No runtime impact — nothing imports them from the pipeline. Maintenance drag and a misleading signal about what is live. Retained pending a deliberate decision: some may be reference implementations. See ADR-037's correction regarding `prompt_validator.py` |
 
-Resolved since an earlier revision of this table: the `tts_tool` comment that
-called ElevenLabs the primary engine while the code tried Kokoro first has been
-corrected; the `debate.py` / `news_analysis.py` dead chains have been deleted
-(ADR-002, ADR-037); `MLXGEN_LORA_*` variables documented here never existed —
-LoRA configuration is profile-driven.
+### Word budget (resolved in this revision)
+
+Gap 13 previously read "the synthesizer's word-count enforcement does not match
+real output". The root cause was **three mutually inconsistent budgets**:
+
+| Budget | Value | Source before the fix |
+|---|---|---|
+| Enforced | 130–170 | `llm_interface.MIN_WORDS` / `MAX_WORDS` |
+| Prompt asked for | 150–170 | `system_prompts.json` |
+| Per-segment limits | 112–197 | `SEGMENT_LIMITS`, advisory only |
+| **Real output** | **296–325** | measured |
+
+Two further defects compounded it: the counter excluded the closing while
+`full_text` included it (305 counted vs 325 narrated), and the compression
+instruction was **unsatisfiable** — it locked `fallout`/`segue`/`real_talk`
+(106 words on the reference run) while demanding a total that those locked
+fields alone exceeded, so no retry could ever succeed.
+
+All budgets now derive from one place, `src/video/pipeline_config.py`:
+
+```python
+WORDS_PER_SECOND = 2.5            # the rate the pipeline already assumed
+TARGET_VIDEO_SECONDS = (60, 70)
+MIN_WORDS, MAX_WORDS = 150, 175
+BEAT_WORD_RANGES = {...}          # per-beat ranges, sum proven compatible
+```
+
+`beat_budget_bounds()` asserts at import that the per-beat ranges can reach the
+global band, so an inconsistency fails the first test run instead of producing
+over-long scripts silently. `count_narrated_words()` is the single counter, used
+by the enforcement, the `word_count` the manifest records, and the duration
+estimate. The compression instruction now permits trimming every field.
+
+### Retired prompt fields (resolved in this revision)
+
+The analysis prompt requested three fields that `NewsAnalysis` does not carry,
+so LangChain's parser discarded them on every run:
+
+- `shift_vector` — its only reader was `historical_analyzer.py`, which is
+  unreachable and whose fallback accepted the argument without using it
+- `pixel_art_prompts` — superseded by the dedicated `visual_prompt_generator`
+  step (ADR-022)
+- `ticker_headlines` — no consumer since the ticker overlay was removed
+
+The prompt, the manifest, and the dead analyzer's signature no longer reference
+them. The prompt now states that every requested key must exist and extra keys
+must not be added.
 
 ---
 

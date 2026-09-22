@@ -104,6 +104,9 @@ from src.video.pipeline_config import (
     DEFAULT_NUM_IMAGES,
     IMAGES_PER_STORY,
     DEFAULT_NUM_STORIES,
+    WORDS_PER_SECOND,
+    count_narrated_words,
+    count_spoken_words,
     resolve_image_limit,
 )
 
@@ -763,8 +766,8 @@ if DRY_RUN:
     script = llm._dedup_inter_story_phrases(script)
     script = llm._enforce_fallout(script, news_analyses)
     script = llm._ensure_greeting_in_fulltext(script)
-    script['word_count'] = len(script['full_text'].split())
-    script['estimated_duration'] = int(script['word_count'] / 2.5)
+    script['word_count'] = count_narrated_words(script)
+    script['estimated_duration'] = int(script['word_count'] / WORDS_PER_SECOND)
 
     # Build segment timeline (same as real pipeline)
     segment_timeline = []
@@ -1131,6 +1134,9 @@ try:
     script['greeting'] = ''
 
     if not full_script:
+        # Legacy-shape fallback (mini_hook/body/punchline/transition). The
+        # 2x4 synthesizer always sets full_text, so this is a safety net for a
+        # script that arrived in the pre-ADR-004 shape.
         parts = []
         for story in script.get('stories', []):
             parts.append(story.get('mini_hook', ''))
@@ -1145,8 +1151,14 @@ try:
         full_script = ' '.join(filter(None, parts))
         script['full_text'] = full_script
 
-    script['word_count'] = len(full_script.split())
-    script['estimated_duration'] = int(len(full_script.split()) / 2.5)
+    # Recount with the shared helper rather than len(full_text.split()).
+    # count_narrated_words is what the synthesizer's enforcement band uses, and
+    # it excludes timeline separator markers ("...."), which are pauses rather
+    # than spoken words. Counting full_text here previously overwrote the
+    # synthesizer's number with a different one, so the enforced count and the
+    # reported count could disagree.
+    script['word_count'] = count_narrated_words(script)
+    script['estimated_duration'] = int(script['word_count'] / WORDS_PER_SECOND)
 
     log.info("script.synthesized",
              duration_s=script.get('estimated_duration', 0),
@@ -1240,8 +1252,8 @@ try:
     script = llm._dedup_inter_story_phrases(script)
     script = llm._enforce_fallout(script, news_analyses)
     script = llm._ensure_greeting_in_fulltext(script)
-    script['word_count'] = len(script.get('full_text', full_script).split())
-    script['estimated_duration'] = int(script['word_count'] / 2.5)
+    script['word_count'] = count_spoken_words(script.get('full_text', full_script))
+    script['estimated_duration'] = int(script['word_count'] / WORDS_PER_SECOND)
     full_script = script.get('full_text', full_script)
 
     # Save updated script (timeline built AFTER evaluation — single source of truth)
@@ -1368,8 +1380,8 @@ try:
         else:
             script['full_text'] = curated_text
             full_script = curated_text
-        script['word_count'] = len(full_script.split())
-        script['estimated_duration'] = int(len(full_script.split()) / 2.5)
+        script['word_count'] = count_spoken_words(full_script)
+        script['estimated_duration'] = int(script['word_count'] / WORDS_PER_SECOND)
 
         curated_file = project_folder / "script_curated.txt"
         curated_file.write_text(curated_text, encoding='utf-8')
@@ -1484,8 +1496,8 @@ if closing:
     segment_timeline.append({'text': closing, 'image_idx': (len(stories) - 1) * IMAGES_PER_STORY + 3, 'label': 'closing'})
 
 script['segment_timeline'] = segment_timeline
-script['word_count'] = len(script.get('full_text', full_script).split())
-script['estimated_duration'] = int(script['word_count'] / 2.5)
+script['word_count'] = count_spoken_words(script.get('full_text', full_script))
+script['estimated_duration'] = int(script['word_count'] / WORDS_PER_SECOND)
 full_script = script.get('full_text', full_script)
 
 script_file = project_folder / "script.txt"
@@ -2259,7 +2271,11 @@ manifest = {
         {
             'title': a.get('title'),
             'url': a.get('link'),
-            'source': a.get('feed_name')
+            # Two scrapers, two field names. The async scraper (primary) sets
+            # RSSArticle.source from the feed title; the sync fallback sets
+            # feed_name. Reading only feed_name produced null for every
+            # article on the primary path, which is every run.
+            'source': a.get('source') or a.get('feed_name'),
         }
         for a in articles
     ],
@@ -2267,7 +2283,6 @@ manifest = {
         {
             'topic': a.get('topic'),
             'impact_score': a.get('impact_score'),
-            'shift_vector': a.get('shift_vector')
         }
         for a in news_analyses
     ],
