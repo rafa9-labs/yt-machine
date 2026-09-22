@@ -861,7 +861,7 @@ def _assemble_pure_ffmpeg(
                     print(f"  [PURE-FF] ASS generated ({len(ass_content)} chars, hook={bool(hook_text)}, subs={bool(word_timestamps)})")
                 else:
                     print(f"  [PURE-FF] WARNING: ASS generation returned empty content")
-                    log.warning("assembly.ass_empty", reason="generate_ass_subtitles returned empty string")
+                    log.warning("assembly.ass_empty: generate_ass_subtitles returned empty string")
             except Exception as e:
                 print(f"  [PURE-FF] ASS generation failed: {e}")
                 ass_path = None
